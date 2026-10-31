@@ -494,7 +494,6 @@ fn office_repo(env: &TestEnv) -> PathBuf {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn plan_section_1_scenario_commit_blocked_then_passes() {
     let env = TestEnv::new();
     let repo = office_repo(&env);
@@ -524,7 +523,6 @@ fn plan_section_1_scenario_commit_blocked_then_passes() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn pinned_repo_with_env_override_is_blocked() {
     let env = TestEnv::new();
     let repo = office_repo(&env);
@@ -540,7 +538,6 @@ fn pinned_repo_with_env_override_is_blocked() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn warn_mode_lets_the_commit_through() {
     let env = TestEnv::new();
     let repo = office_repo(&env);
@@ -555,7 +552,6 @@ fn warn_mode_lets_the_commit_through() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn corrupt_profiles_fail_open_unless_block_strict() {
     let env = TestEnv::new();
     let repo = office_repo(&env);
@@ -573,7 +569,6 @@ fn corrupt_profiles_fail_open_unless_block_strict() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn unresolved_repo_is_allowed_with_one_time_hint() {
     let env = TestEnv::new();
     env.set_global("user.email", PERSONAL);
@@ -590,7 +585,6 @@ fn unresolved_repo_is_allowed_with_one_time_hint() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn push_blocks_exactly_the_wrong_commit() {
     let env = TestEnv::new();
     write_profiles(&env);
@@ -651,7 +645,6 @@ fn push_blocks_exactly_the_wrong_commit() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn clone_pins_to_owner_profile() {
     let env = TestEnv::new();
     write_profiles(&env);
@@ -682,7 +675,6 @@ fn clone_pins_to_owner_profile() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn install_reinstall_verify_uninstall_roundtrip() {
     let env = TestEnv::new();
     let git = env.git_handle();
@@ -743,7 +735,6 @@ fn install_reinstall_verify_uninstall_roundtrip() {
 }
 
 #[test]
-#[ignore = "needs Phase 1 merged"]
 fn uninstall_without_previous_unsets_hooks_path() {
     let env = TestEnv::new();
     let git = env.git_handle();

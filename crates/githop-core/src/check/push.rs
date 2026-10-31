@@ -347,12 +347,12 @@ pub(crate) fn run(
     };
     result.profile_id = Some(owner.id.clone());
 
-    let remote_name = args
-        .first()
-        .map(String::as_str)
-        .filter(|n| snapshot.remotes().iter().any(|r| r == n));
     let remote_url = args.get(1).map(String::as_str);
 
+    // New branches exclude commits reachable from *any* remote-tracking ref, not
+    // just the push target's: those are already published (same rule as `fix`),
+    // and in fork workflows `upstream` commits pushed to `origin` aren't ours.
+    let remote_name = None;
     let raw = {
         let a = build_log_args(&updates, remote_name, false);
         let refs: Vec<&str> = a.iter().map(String::as_str).collect();
