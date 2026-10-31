@@ -142,6 +142,13 @@ impl Git {
     /// Run and return the raw output regardless of exit status.
     pub fn output(&self, cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<std::process::Output> {
         let started = Instant::now();
+        // A missing cwd also makes spawn fail with NotFound — report it as the folder, not git.
+        if !cwd.is_dir() {
+            return Err(CoreError::io(
+                cwd,
+                std::io::Error::new(std::io::ErrorKind::NotFound, "folder not found"),
+            ));
+        }
         let mut cmd = self.command(cwd, args);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
