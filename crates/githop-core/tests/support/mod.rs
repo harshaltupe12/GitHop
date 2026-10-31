@@ -4,7 +4,7 @@
 //! a temp `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM=1` and a temp `GITHOP_HOME`,
 //! so tests never read or write the developer's real config.
 
-#![allow(dead_code)]
+#![allow(dead_code, clippy::expect_used, clippy::unwrap_used)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
