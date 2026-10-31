@@ -31,7 +31,7 @@ fn keygen_creates_key_restricts_acl_and_refuses_overwrite() {
         return;
     }
     let env = TestEnv::new();
-    // Key goes into the temp HOME's .ssh (dir created by keygen) — never the real ~/.ssh.
+    // Key goes into the temp HOME's .ssh (dir created by keygen) â€” never the real ~/.ssh.
     let key = env.home().join(".ssh").join("githop_test");
     ssh::keygen(&key, "githop-test@example.invalid", true).expect("keygen");
 
@@ -103,7 +103,6 @@ fn profile(id: &str, email: &str, owner: &str, color: ProfileColor) -> Profile {
 }
 
 #[test]
-#[ignore = "needs Phase 1 git integration + resolver merged"]
 fn scan_resolves_repos_in_temp_tree() {
     let env = TestEnv::new();
     env.set_global("user.name", "Default Person");
