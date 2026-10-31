@@ -1,0 +1,58 @@
+# cargo-deny configuration for GitHop.
+#
+# GitHop is local-only: it must never make a network request (Plan §10).
+# The [bans] list below makes any HTTP/WebSocket client crate a hard failure.
+#
+# NOTE (Phase 5): when Tauri is added, re-run `cargo deny check` and investigate
+# any banned crate pulled in transitively. Do NOT just remove it from this list —
+# find the feature flag that pulls it in and turn it off.
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "OFL-1.1",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    { name = "reqwest" },
+    { name = "hyper" },
+    { name = "hyper-util" },
+    { name = "ureq" },
+    { name = "ureq-proto" },
+    { name = "curl" },
+    { name = "curl-sys" },
+    { name = "isahc" },
+    { name = "surf" },
+    { name = "attohttpc" },
+    { name = "minreq" },
+    { name = "tungstenite" },
+    { name = "tokio-tungstenite" },
+    { name = "async-tungstenite" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

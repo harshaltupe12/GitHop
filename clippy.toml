@@ -1,0 +1,4 @@
+# unwrap()/expect() are denied in library and binary code (workspace lints)
+# but allowed inside #[cfg(test)] code and integration tests.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

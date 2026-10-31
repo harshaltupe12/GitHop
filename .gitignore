@@ -1,0 +1,15 @@
+# Local-only planning docs (kept out of the repo)
+/CLAUDE.md
+/Plan.md
+/Design.md
+/Implementation/
+
+# Build output
+target/
+node_modules/
+app/ui/dist/
+
+# Misc
+*.log
+.env*
+/tmp/
