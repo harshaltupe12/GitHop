@@ -15,7 +15,9 @@ pub mod profile;
 pub mod remote;
 pub mod repo;
 pub mod resolver;
+pub mod scan;
 pub mod settings;
+pub mod ssh;
 pub mod store;
 
 pub use error::{CoreError, Result};
