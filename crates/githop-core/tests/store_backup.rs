@@ -1,8 +1,6 @@
 //! Store + global git config backup/restore against the isolated `TestEnv`
 //! (never the real `~/.gitconfig` or `%APPDATA%`, CLAUDE.md rule 3).
 
-// The shared helper uses `expect` outside `#[test]` fns; allowed for test code.
-#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod support;
 
 use std::path::PathBuf;

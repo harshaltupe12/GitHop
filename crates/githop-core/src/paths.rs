@@ -82,7 +82,10 @@ pub fn to_slash(path: &Path) -> String {
 /// (`C:/…`, `C:\…`, UNC `//server/…` / `\\server\…`, or `/…`).
 pub fn is_absolute_str(s: &str) -> bool {
     let b = s.as_bytes();
-    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'/' || b[2] == b'\\');
+    let drive = b.len() >= 3
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && (b[2] == b'/' || b[2] == b'\\');
     drive || s.starts_with('/') || s.starts_with('\\')
 }
 
@@ -140,7 +143,10 @@ mod tests {
     #[test]
     fn data_dir_layout() {
         let p = Paths::at("X:/data");
-        assert_eq!(p.profiles_file(), Path::new("X:/data").join("profiles.toml"));
+        assert_eq!(
+            p.profiles_file(),
+            Path::new("X:/data").join("profiles.toml")
+        );
         assert_eq!(p.lock_file(), Path::new("X:/data").join(".lock"));
     }
 
@@ -148,8 +154,14 @@ mod tests {
     fn normalize_folder_cases() {
         assert_eq!(normalize_folder(r"C:\Office"), Some("C:/Office/".into()));
         assert_eq!(normalize_folder("C:/Office/"), Some("C:/Office/".into()));
-        assert_eq!(normalize_folder(r"C:\My Work\\Side"), Some("C:/My Work/Side/".into()));
-        assert_eq!(normalize_folder(r"\\server\share\x"), Some("//server/share/x/".into()));
+        assert_eq!(
+            normalize_folder(r"C:\My Work\\Side"),
+            Some("C:/My Work/Side/".into())
+        );
+        assert_eq!(
+            normalize_folder(r"\\server\share\x"),
+            Some("//server/share/x/".into())
+        );
         assert_eq!(normalize_folder("/home/me"), Some("/home/me/".into()));
         assert_eq!(normalize_folder("relative/dir"), None);
         assert_eq!(normalize_folder(""), None);

@@ -126,7 +126,12 @@ impl Git {
     }
 
     /// Run `git <args>` feeding `stdin`; return stdout on exit 0.
-    pub fn run_with_stdin(&self, cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
+    pub fn run_with_stdin(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
         let out = self.output(cwd, args, stdin)?;
         if out.status.success() {
             Ok(out.stdout)
@@ -140,7 +145,12 @@ impl Git {
     }
 
     /// Run and return the raw output regardless of exit status.
-    pub fn output(&self, cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<std::process::Output> {
+    pub fn output(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+    ) -> Result<std::process::Output> {
         let started = Instant::now();
         // A missing cwd also makes spawn fail with NotFound — report it as the folder, not git.
         if !cwd.is_dir() {
@@ -151,7 +161,11 @@ impl Git {
         }
         let mut cmd = self.command(cwd, args);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
+        cmd.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         let mut child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 CoreError::GitNotFound
@@ -160,13 +174,18 @@ impl Git {
             }
         })?;
         if let (Some(data), Some(mut pipe)) = (stdin, child.stdin.take()) {
-            pipe.write_all(data).map_err(|e| CoreError::io(&self.exe, e))?;
+            pipe.write_all(data)
+                .map_err(|e| CoreError::io(&self.exe, e))?;
         }
         let out = child
             .wait_with_output()
             .map_err(|e| CoreError::io(&self.exe, e))?;
         if std::env::var_os(DEBUG_TIMING_ENV).is_some() {
-            eprintln!("[githop timing] git {} — {:?}", args.join(" "), started.elapsed());
+            eprintln!(
+                "[githop timing] git {} — {:?}",
+                args.join(" "),
+                started.elapsed()
+            );
         }
         Ok(out)
     }
@@ -176,16 +195,16 @@ impl Git {
 pub fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     let candidates: Vec<String> = if cfg!(windows) {
-        vec![format!("{name}.exe"), format!("{name}.cmd"), name.to_string()]
+        vec![
+            format!("{name}.exe"),
+            format!("{name}.cmd"),
+            name.to_string(),
+        ]
     } else {
         vec![name.to_string()]
     };
-    std::env::split_paths(&path).find_map(|dir| {
-        candidates
-            .iter()
-            .map(|c| dir.join(c))
-            .find(|p| p.is_file())
-    })
+    std::env::split_paths(&path)
+        .find_map(|dir| candidates.iter().map(|c| dir.join(c)).find(|p| p.is_file()))
 }
 
 #[cfg(test)]
@@ -197,9 +216,15 @@ mod tests {
         let g = Git::with_exe("git")
             .env("GIT_CONFIG_GLOBAL", "X:/tmp/.gitconfig")
             .env_remove("GITHOP_SURELY_UNSET");
-        assert_eq!(g.env_var("GIT_CONFIG_GLOBAL"), Some(OsString::from("X:/tmp/.gitconfig")));
+        assert_eq!(
+            g.env_var("GIT_CONFIG_GLOBAL"),
+            Some(OsString::from("X:/tmp/.gitconfig"))
+        );
         assert_eq!(g.env_var("GITHOP_SURELY_UNSET"), None);
-        assert_eq!(g.global_config_path().unwrap(), PathBuf::from("X:/tmp/.gitconfig"));
+        assert_eq!(
+            g.global_config_path().unwrap(),
+            PathBuf::from("X:/tmp/.gitconfig")
+        );
     }
 
     #[test]
@@ -207,6 +232,9 @@ mod tests {
         let g = Git::with_exe("git")
             .env("GIT_CONFIG_GLOBAL", "")
             .env("HOME", "X:/home/me");
-        assert_eq!(g.global_config_path().unwrap(), PathBuf::from("X:/home/me").join(".gitconfig"));
+        assert_eq!(
+            g.global_config_path().unwrap(),
+            PathBuf::from("X:/home/me").join(".gitconfig")
+        );
     }
 }

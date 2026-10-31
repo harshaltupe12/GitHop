@@ -107,7 +107,9 @@ impl TestEnv {
         for (k, v) in self.envs() {
             g = g.env(k, v);
         }
-        g = g.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TERMINAL_PROMPT", "0");
+        g = g
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_TERMINAL_PROMPT", "0");
         for k in CLEARED_ENV {
             g = g.env_remove(k);
         }

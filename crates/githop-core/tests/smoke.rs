@@ -13,7 +13,10 @@ fn isolated_commit_uses_test_identity() {
     std::fs::write(repo.join("a.txt"), "a\n").unwrap();
     env.git(&["add", "a.txt"], &repo);
     env.git(&["commit", "-q", "-m", "first"], &repo);
-    assert_eq!(env.git(&["log", "-1", "--format=%ae"], &repo), "test@example.invalid");
+    assert_eq!(
+        env.git(&["log", "-1", "--format=%ae"], &repo),
+        "test@example.invalid"
+    );
 }
 
 /// Best-effort guard: the real global config is not modified by the test env.
