@@ -4,6 +4,9 @@
 /Design.md
 /Implementation/
 
+# Claude Code local state (agent worktrees)
+/.claude/
+
 # Build output
 target/
 node_modules/
