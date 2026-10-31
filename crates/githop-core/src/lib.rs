@@ -5,10 +5,13 @@
 //! Synchronous, no UI, no network.
 
 pub mod backup;
+pub mod check;
 pub mod error;
 pub mod git;
 pub mod gitconfig;
+pub mod hooks;
 pub mod identity;
+pub mod log;
 pub mod paths;
 pub mod pin;
 pub mod profile;
