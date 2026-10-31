@@ -9,6 +9,8 @@
 //! Part 2 (`#[ignore = "needs Phase 1 merged"]`): install/uninstall/verify and
 //! the clone/commit/push checks end to end via `check::run_check`.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod support;
 
 use std::path::{Path, PathBuf};
