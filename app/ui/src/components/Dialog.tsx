@@ -13,6 +13,7 @@ import { usePresence } from '../lib/motion';
 import { S } from '../strings';
 import { Button, type ButtonVariant } from './Button';
 import { Field, TextInput } from './Field';
+import { useToastSlot } from './Toast';
 
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -39,6 +40,7 @@ export function Dialog({
   wide?: boolean;
 }) {
   const titleId = useId();
+  const toastSlot = useToastSlot(titleId);
   const bodyId = useId();
   const panel = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
@@ -96,7 +98,7 @@ export function Dialog({
       data-state={presence.state}
       aria-hidden={presence.exiting || undefined}
       onAnimationEnd={presence.onAnimationEnd}
-      className="gh-scrim fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
+      className="gh-scrim fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-scrim p-4"
     >
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- dialog owns Esc and the focus trap */}
       <div
@@ -108,7 +110,7 @@ export function Dialog({
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className={cx(
-          'gh-dialog flex max-h-full w-full flex-col rounded-lg bg-surface p-6 shadow-float',
+          'gh-dialog flex max-h-full min-h-0 w-full flex-col rounded-lg bg-surface p-6 shadow-float',
           wide ? 'max-w-[40rem]' : 'max-w-dialog',
         )}
       >
@@ -122,6 +124,12 @@ export function Dialog({
           <div className="mt-6 flex flex-wrap justify-end gap-2">{view.footer}</div>
         ) : null}
       </div>
+      {/* Toasts shown while this dialog is open stack here, below the panel (never over it). */}
+      <div
+        ref={toastSlot}
+        data-toast-slot=""
+        className={cx('w-full shrink-0', wide ? 'max-w-[40rem]' : 'max-w-dialog')}
+      />
     </div>,
     document.body,
   );

@@ -1,11 +1,13 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import * as ipc from '../../lib/ipc';
 import { expectNoA11yViolations } from '../../test/a11y';
 import { office, personal, profileSet } from '../../test/fixtures';
 import { DefaultPanel } from '../DefaultPanel';
 import { ConfirmDialog, Dialog } from '../Dialog';
+import { ErrorText } from '../ErrorText';
 import { FolderField } from '../FolderField';
 import { Icons } from '../icons';
 import { MenuButton } from '../Menu';
@@ -85,9 +87,14 @@ describe('DefaultPanel', () => {
   it('shows the default and changes it from a radio menu', async () => {
     const onChange = vi.fn();
     const { container } = render(<DefaultPanel profiles={profileSet()} onChange={onChange} />);
-    const trigger = screen.getByRole('button', { name: /Default profile: Personal/ });
+    const trigger = screen.getByRole('button', {
+      name: 'Default Personal, change default profile',
+    });
     expect(trigger).toHaveTextContent('Default');
     expect(trigger).toHaveTextContent('Personal');
+    // WCAG 2.5.3 label-in-name: the accessible name starts with the visible text.
+    // Visible text is "Default" + "Personal"; the name starts with exactly that.
+    expect(trigger.getAttribute('aria-label')!.startsWith('Default Personal')).toBe(true);
     await expectNoA11yViolations(container);
     await userEvent.click(trigger);
     expect(screen.getByRole('menuitemradio', { name: 'Personal' })).toHaveAttribute(
@@ -335,5 +342,88 @@ describe('Toast', () => {
     await expectNoA11yViolations(container);
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('never covers an open dialog: toasts stack below the panel inside the dialog layer', async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <ToastButton kind="error" />
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <Dialog open={open} title="Delete Office?" onClose={() => setOpen(false)}>
+            Body
+          </Dialog>
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <Harness />
+      </ToastProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Go' }));
+    // No dialog: bottom-right fixed region.
+    expect(screen.getByRole('region', { name: 'Notifications' })).toHaveClass('fixed');
+    await user.click(screen.getByRole('button', { name: 'Open' }));
+    const dlg = await screen.findByRole('dialog', { name: 'Delete Office?' });
+    const toast = screen.getByRole('alert');
+    const slot = toast.closest('[data-toast-slot]');
+    expect(slot).not.toBeNull();
+    // In the dialog's own layer (same overlay), after the panel, never inside or over it.
+    expect(slot!.parentElement).toBe(dlg.parentElement);
+    expect(dlg.contains(toast)).toBe(false);
+    expect(dlg.compareDocumentPosition(slot!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Notifications' })).not.toHaveClass('fixed');
+    // Closing the dialog puts the toast back in the corner.
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Notifications' })).toHaveClass('fixed'),
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Couldn’t save.');
+  });
+});
+
+describe('Dialog width', () => {
+  it('standard dialogs use max-w-dialog (420 px), wide ones 40 rem', () => {
+    const { unmount } = render(
+      <Dialog open title="Standard" onClose={() => undefined}>
+        x
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog')).toHaveClass('w-full', 'max-w-dialog');
+    unmount();
+    render(
+      <Dialog open wide title="Wide" onClose={() => undefined}>
+        x
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog')).toHaveClass('max-w-[40rem]');
+  });
+});
+
+describe('ErrorText', () => {
+  it('technical codes: calm sentence + keyboard disclosure; others: message as is', async () => {
+    const { container, rerender } = render(
+      <ErrorText error={{ code: 'io', message: 'TOML parse error at line 3', issues: [] }} />,
+    );
+    expect(screen.getByText(/couldn’t read or write a file/)).toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: 'Show details' });
+    const panel = document.getElementById(btn.getAttribute('aria-controls')!)!;
+    expect(panel).not.toBeVisible();
+    btn.focus();
+    await userEvent.keyboard(' ');
+    expect(btn).toHaveAttribute('aria-expanded', 'true');
+    expect(panel).toBeVisible();
+    expect(panel).toHaveTextContent('TOML parse error at line 3');
+    await expectNoA11yViolations(container);
+    rerender(
+      <ErrorText error={{ code: 'locked', message: 'Another GitHop is saving.', issues: [] }} />,
+    );
+    expect(screen.getByText('Another GitHop is saving.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Show details' })).toBeNull();
   });
 });

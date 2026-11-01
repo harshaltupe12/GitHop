@@ -43,6 +43,60 @@
     width: 1rem;
     height: 1rem;
   }
+  /* Headings that only receive programmatic focus (screen change, onboarding
+     step) so screen readers start there. They aren't in the Tab order, so the
+     ring would only look like a stray box around the title. */
+  h1[tabindex='-1']:focus,
+  h2[tabindex='-1']:focus {
+    outline: none;
+  }
+}
+
+/* Design §7.9 + §11 text size: a table narrower than its columns stacks each
+   row (repo on its own line, the rest wrapping below) instead of forcing a
+   horizontal scrollbar. A container query in rem follows the root text size. */
+.gh-table {
+  container-type: inline-size;
+}
+@container (max-width: 32rem) {
+  .gh-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  /* Block boxes, so the table can't grow to its content's min width.
+     Chromium keeps table semantics for the accessibility tree. */
+  .gh-table table,
+  .gh-table tbody {
+    display: block;
+    width: 100%;
+  }
+  .gh-table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: theme('spacing.2') theme('spacing.3');
+    padding: theme('spacing.2') theme('spacing.3');
+  }
+  .gh-table tbody td {
+    display: block;
+    height: auto;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    text-align: left;
+  }
+  .gh-table tbody td.gh-cell-full,
+  .gh-table tbody td:first-child {
+    flex-basis: 100%;
+    overflow: hidden;
+  }
+  .gh-table tbody td[data-align='right'] {
+    margin-left: auto;
+  }
 }
 
 /* Scrollbars: thin, rounded, quiet — tokens only. WebView2 (Chromium) uses the
@@ -340,14 +394,23 @@ html.tray body {
   .gh-toggle[aria-checked='true'] {
     background: Highlight;
   }
-  /* Segmented thumb stays visible as the selected segment in system colours. */
-  .gh-seg .gh-indicator {
-    forced-color-adjust: none;
+  /* Segmented: the selected option is a Highlight fill, not only bolder text.
+     The gliding thumb is dropped here; the option paints itself (beats the
+     motion rule that makes it transparent). */
+  .gh-segment[aria-checked='true'],
+  .gh-seg[data-indicator='ready'] > .gh-segment[aria-checked='true'] {
     background: Highlight;
-  }
-  .gh-seg[data-indicator='ready'] > button[aria-checked='true'] {
-    forced-color-adjust: none;
     color: HighlightText;
+  }
+  .gh-seg .gh-indicator {
+    display: none;
+  }
+  /* Buttons whose shape is a fill (primary, danger, ghost) keep a visible boundary. */
+  .gh-btn {
+    border: 1px solid ButtonText;
+  }
+  .gh-btn:disabled {
+    border-color: GrayText;
   }
   /* Scrollbar thumb in system colours so it stays visible in contrast themes. */
   ::-webkit-scrollbar-thumb,

@@ -191,11 +191,17 @@ export function SlidingIndicator({
  * (`translate`, composited, additive so a second change mid-flight doesn't jump).
  * One layout read per child per change — never per frame.
  */
-export function useFlip(container: RefObject<HTMLElement | null>, dep: unknown) {
+export function useFlip(container: RefObject<HTMLElement | null>, dep: unknown, home?: unknown) {
   const last = useRef(new Map<string, number>());
+  const lastRoot = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const root = container.current;
     if (!root) return;
+    // Moved to another container (corner ↔ dialog slot): re-baseline, don't fly across.
+    if (root !== lastRoot.current) {
+      lastRoot.current = root;
+      last.current = new Map();
+    }
     const originTop = root.getBoundingClientRect().top;
     const els = Array.from(root.querySelectorAll<HTMLElement>(':scope > [data-flip]'));
     const next = new Map<string, number>();
@@ -221,7 +227,7 @@ export function useFlip(container: RefObject<HTMLElement | null>, dep: unknown) 
       }
     }
     last.current = next;
-  }, [container, dep]);
+  }, [container, dep, home]);
 }
 
 /** Swipe distance (px) or speed (px/ms) that dismisses a toast. */

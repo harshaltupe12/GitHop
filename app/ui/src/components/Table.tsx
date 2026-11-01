@@ -10,7 +10,12 @@ export type Column<T> = {
   align?: 'left' | 'right';
 };
 
-/** Design §7.9 — surface container, 32 px header, 40 px rows, hover tint. */
+/**
+ * Design §7.9 — surface container, 32 px header, 40 px rows, hover tint.
+ * When the table is narrower than its columns (150 % / 200 % text, small
+ * window) rows stack instead of scrolling sideways: see `.gh-table` in
+ * styles/index.css (a container query, so it follows the root text size).
+ */
 export function Table<T>({
   label,
   columns,
@@ -27,7 +32,9 @@ export function Table<T>({
   // Rows that arrive after the table first rendered fade in; the initial set never does.
   const arrived = useArrivals(rows.map(rowKey));
   return (
-    <div className={cx('overflow-x-auto rounded-lg border border-line bg-surface', className)}>
+    <div
+      className={cx('gh-table overflow-x-auto rounded-lg border border-line bg-surface', className)}
+    >
       <table className="w-full border-collapse text-body" aria-label={label}>
         <thead>
           <tr className="border-b border-line">
@@ -58,6 +65,7 @@ export function Table<T>({
               {columns.map((c) => (
                 <td
                   key={c.key}
+                  data-align={c.align === 'right' ? 'right' : undefined}
                   className={cx(
                     'h-10 px-3 py-1.5 align-middle',
                     c.align === 'right' ? 'text-right' : 'text-left',

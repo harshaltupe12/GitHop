@@ -167,6 +167,26 @@ describe('Toast exit', () => {
     expect(shell).not.toBeInTheDocument();
   });
 
+  it('same enter/exit inside an open dialog’s toast slot', async () => {
+    stubMotion(false);
+    render(
+      <ToastProvider>
+        <Dialog open title="Export" onClose={() => undefined}>
+          body
+        </Dialog>
+        <Fire />
+      </ToastProvider>,
+    );
+    const toast = await screen.findByText('Default profile: Personal');
+    const shell = toast.closest('.gh-toast') as HTMLElement;
+    expect(shell.closest('[data-toast-slot]')).not.toBeNull();
+    expect(shell).toHaveAttribute('data-state', 'open');
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(shell).toHaveAttribute('data-state', 'closed');
+    fireEvent.animationEnd(shell);
+    expect(screen.queryByText('Default profile: Personal')).not.toBeInTheDocument();
+  });
+
   it('without motion: removed at once', async () => {
     render(
       <ToastProvider>

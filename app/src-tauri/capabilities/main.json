@@ -1,6 +1,6 @@
 {
   "identifier": "main",
-  "description": "Main GitHop window. App commands plus the few local-only plugin calls the UI needs. No fs, shell, http or process permissions.",
+  "description": "Main GitHop window. App commands plus the few local-only plugin calls the UI needs. No fs, shell, http, process or opener permissions: links open Rust-side through open_external (fixed URLs).",
   "windows": ["main"],
   "permissions": [
     "core:event:allow-listen",
@@ -39,17 +39,6 @@
     "allow-quit-app",
     "dialog:allow-open",
     "dialog:allow-save",
-    "dialog:allow-ask",
-    "dialog:allow-confirm",
-    "dialog:allow-message",
-    "clipboard-manager:allow-write-text",
-    {
-      "identifier": "opener:allow-open-url",
-      "allow": [
-        { "url": "https://github.com/settings/keys" },
-        { "url": "https://github.com/githop-placeholder/githop/releases" },
-        { "url": "https://github.com/githop-placeholder/githop/blob/main/docs/user-guide.md" }
-      ]
-    }
+    "clipboard-manager:allow-write-text"
   ]
 }

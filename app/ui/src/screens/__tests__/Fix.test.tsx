@@ -25,8 +25,7 @@ describe('Fix screen', () => {
   it('picker lists scanned repos that have wrong commits', async () => {
     reposStore.set((s) => ({
       ...s,
-      repos: [repo('C:/Personal/blog'), repo('C:/Personal/ok')],
-      offenders: { 'C:/Personal/blog': 2, 'C:/Personal/ok': 0 },
+      repos: [repo('C:/Personal/blog', {}, { unpushed_offenders: 2 }), repo('C:/Personal/ok')],
     }));
     m.fixPlan.mockResolvedValueOnce(plan());
     const { user, container } = renderWith(<FixScreen profiles={profileSet()} />);
@@ -82,6 +81,79 @@ describe('Fix screen', () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Fix with/ })).toBeNull();
     await expectNoA11yViolations(container);
+  });
+
+  it('pushed + unpushed: both banners, split tables, Fix changes only unpushed rows', async () => {
+    reposStore.set((s) => ({
+      ...s,
+      repos: [repo('C:/Personal/blog', {}, { unpushed_offenders: 9 })],
+    }));
+    m.fixPlan.mockResolvedValueOnce(
+      plan({ pushed_offenders: [offender('ffff000011', 'Old post')], signed: 1, rewrite_count: 3 }),
+    );
+    const { user, container } = renderWith(<FixScreen profiles={profileSet()} />, {
+      intent: target,
+    });
+    // Blocked banner for the fixable ones is kept…
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '2 unpushed commits use the Office email in a Personal repo. Push is blocked.',
+    );
+    // …and the pushed warning (glossary: no "rewrite") with a docs link.
+    const warn = screen.getByText(/1 commit is already pushed/);
+    expect(warn).toHaveTextContent('Changing a pushed commit changes history');
+    expect(warn.textContent).not.toMatch(/rewrite/i);
+    await user.click(screen.getByRole('button', { name: 'How to fix by hand' }));
+    expect(m.openExternal).toHaveBeenCalledWith('docs');
+
+    const fixable = screen.getByRole('table', { name: 'Commits to fix' });
+    const kept = screen.getByRole('table', { name: 'Pushed commits, not changed' });
+    expect(within(fixable).getAllByRole('row')).toHaveLength(3);
+    expect(within(kept).getAllByRole('row')).toHaveLength(2);
+    expect(within(kept).getByText('ffff000')).toBeInTheDocument();
+    expect(within(fixable).queryByText('ffff000')).toBeNull();
+    expect(
+      screen.getByRole('heading', { name: '2 unpushed commits: Fix changes these' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: '1 pushed commit: not changed' }),
+    ).toBeInTheDocument();
+
+    // Signed commits and new ids are spelled out before the user clicks Fix.
+    expect(
+      screen.getByText(
+        '1 signed commit loses its signature. Sign again after the fix if you need signed commits.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('3 commits get new ids, including any later unpushed commits.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fix with Personal identity' })).toBeInTheDocument();
+    // The Repos pill now counts only what Fix can change.
+    expect(reposStore.get().repos[0]!.unpushed_offenders).toBe(2);
+    await expectNoA11yViolations(container);
+  });
+
+  it('diverged after fix: no "pull --rebase" advice', async () => {
+    m.fixPlan.mockResolvedValueOnce(plan()).mockResolvedValue(plan({ offenders: [] }));
+    m.fixApply.mockResolvedValueOnce({
+      backup_ref: 'refs/githop/backup/2',
+      rewritten: 2,
+      undo_hint: '',
+      fast_forward: false,
+    });
+    const { user } = renderWith(<FixScreen profiles={profileSet()} />, { intent: target });
+    await user.click(await screen.findByRole('button', { name: 'Fix with Personal identity' }));
+    const done = await screen.findByText(/2 commits fixed. Your branch no longer lines up/);
+    expect(done.textContent).not.toMatch(/pull --rebase/);
+  });
+
+  it('plan error with git output: friendly text, raw output behind Show details', async () => {
+    m.fixPlan.mockRejectedValueOnce({ code: 'git', message: 'fatal: bad object HEAD', issues: [] });
+    const { user } = renderWith(<FixScreen profiles={profileSet()} />, { intent: target });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Git reported a problem');
+    expect(screen.getByText('fatal: bad object HEAD')).not.toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Show details' }));
+    expect(screen.getByText('fatal: bad object HEAD')).toBeVisible();
   });
 
   it('blocked reason (dirty tree): warning, no Fix button', async () => {

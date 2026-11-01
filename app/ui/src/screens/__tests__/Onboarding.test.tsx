@@ -66,6 +66,7 @@ describe('Onboarding', () => {
         hooks_installed: false,
         global_identity: null,
         step_hint: '',
+        backup_dir: '',
       },
     });
     st.hooks = {
@@ -105,6 +106,7 @@ describe('Onboarding', () => {
         hooks_installed: false,
         global_identity: null,
         step_hint: '',
+        backup_dir: '',
       },
     });
     const { user } = renderWith(<Onboarding state={st} onFinish={vi.fn()} />);
@@ -120,16 +122,30 @@ describe('Onboarding', () => {
         hooks_installed: false,
         global_identity: null,
         step_hint: '',
+        backup_dir: '',
       },
     });
     const { user } = renderWith(<Onboarding state={st} onFinish={vi.fn()} />);
     expect(screen.getByRole('heading', { level: 1, name: 'Add another' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Add another profile' }));
     expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('Personal');
+    // Focus moves into the new form (its heading), not left on <body>.
+    expect(screen.getByRole('heading', { level: 2, name: 'Personal' })).toHaveFocus();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    // …and back to the step heading when the form closes.
+    expect(screen.getByRole('heading', { level: 1, name: 'Add another' })).toHaveFocus();
     await user.click(screen.getByRole('button', { name: 'Skip' }));
     expect(
       screen.getByRole('heading', { level: 1, name: 'Turn on protection' }),
     ).toBeInTheDocument();
+  });
+
+  it('safety step shows the real backup folder from the backend (GITHOP_HOME aware)', async () => {
+    window.localStorage.setItem(KEYS.onboardingStep, '1');
+    const st = emptyState();
+    st.onboarding.backup_dir = 'D:/portable/githop/backups';
+    renderWith(<Onboarding state={st} onFinish={vi.fn()} />);
+    expect(screen.getByText('D:/portable/githop/backups')).toBeInTheDocument();
+    expect(screen.queryByText(/%APPDATA%/)).toBeNull();
   });
 });

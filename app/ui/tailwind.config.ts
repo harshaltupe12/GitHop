@@ -92,7 +92,8 @@ export default {
         exit: 'var(--dur-exit)',
       },
       width: { sidebar: rem(184), dialog: rem(420), tray: rem(260) },
-      maxWidth: { content: rem(760), tooltip: rem(280) },
+      // Dialog §7.13: 420 px wide — `max-w-dialog` must exist (w-full + max width).
+      maxWidth: { content: rem(760), tooltip: rem(280), dialog: rem(420) },
     },
   },
   plugins: [],

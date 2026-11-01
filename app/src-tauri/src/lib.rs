@@ -21,6 +21,20 @@ pub const MAIN_WINDOW: &str = "main";
 /// Argument the autostart entry passes: start in the tray, window hidden.
 pub const HIDDEN_ARG: &str = "--hidden";
 
+/// WebView2 browser arguments for every GitHop window (Plan §10: no network).
+///
+/// Without these, the WebView2 runtime itself (not GitHop code) opens a TLS
+/// connection to Microsoft about a minute after start (component updater,
+/// Trust Protection Lists). The extra switches stop that background traffic.
+///
+/// - Setting browser args replaces wry's default, so its
+///   `--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection` is kept.
+/// - WebView2 refuses a second webview environment with different args in the
+///   same user-data folder, so the tray menu window must use this exact string
+///   too. `tauri.conf.json` repeats it for the main window (a test checks they
+///   match).
+pub const WEBVIEW_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-background-networking --disable-component-update --disable-domain-reliability --no-pings --disable-sync";
+
 /// Show, un-minimise and focus the main window.
 pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
@@ -117,4 +131,72 @@ pub fn run() -> i32 {
         }
     });
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn json(s: &str) -> serde_json::Value {
+        serde_json::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn main_window_uses_the_shared_webview_args_and_light_theme() {
+        let c = json(include_str!("../tauri.conf.json"));
+        let main = c["app"]["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["label"] == MAIN_WINDOW)
+            .unwrap();
+        assert_eq!(main["additionalBrowserArgs"], WEBVIEW_BROWSER_ARGS);
+        assert_eq!(main["theme"], "Light");
+    }
+
+    #[test]
+    fn webview_args_keep_wry_defaults_and_stop_background_networking() {
+        for a in [
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-domain-reliability",
+            "--no-pings",
+            "--disable-sync",
+        ] {
+            assert!(WEBVIEW_BROWSER_ARGS.split(' ').any(|x| x == a), "{a}");
+        }
+    }
+
+    fn permission_ids(v: &serde_json::Value) -> Vec<String> {
+        v["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| match p.as_str() {
+                Some(s) => s.to_string(),
+                None => p["identifier"].as_str().unwrap().to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn capabilities_grant_only_what_the_ui_uses() {
+        let main = permission_ids(&json(include_str!("../capabilities/main.json")));
+        let tray = permission_ids(&json(include_str!("../capabilities/tray.json")));
+        // URLs open Rust-side through `open_external`; the UI never calls the opener plugin.
+        assert!(!main.iter().any(|p| p.starts_with("opener:")));
+        // The UI uses only the native open/save pickers.
+        for unused in [
+            "dialog:allow-ask",
+            "dialog:allow-confirm",
+            "dialog:allow-message",
+        ] {
+            assert!(!main.iter().any(|p| p == unused), "{unused}");
+        }
+        assert!(main.iter().any(|p| p == "dialog:allow-save"));
+        // The tray UI never resizes itself (Rust sizes and places the window).
+        assert!(!tray.iter().any(|p| p == "core:window:allow-set-size"));
+        assert!(tray.iter().any(|p| p == "core:window:allow-hide"));
+    }
 }

@@ -56,7 +56,8 @@ export const S = {
   defaultPanel: {
     caption: 'Default',
     none: 'None set',
-    change: (label: string) => `Default profile: ${label}. Change default profile`,
+    // Starts with the visible text ("Default Personal"), WCAG 2.5.3.
+    change: (label: string) => `Default ${label}, change default profile`,
     menuLabel: 'Default profile',
   },
 
@@ -74,16 +75,29 @@ export const S = {
     pinned: 'Pinned',
     wrongEmail: 'Email doesn’t match',
     unreadable: 'Couldn’t read',
-    checking: 'Checking…',
+  },
+
+  errors: {
+    showDetails: 'Show details',
+    hideDetails: 'Hide details',
+    io: 'GitHop couldn’t read or write a file it needs, so nothing was changed. Try again.',
+    git: 'Git reported a problem, so nothing was changed. Try again.',
+    internal: 'Something went wrong in GitHop, so nothing was changed. Try again.',
   },
 
   states: {
-    configError: 'Couldn’t read profiles.toml.',
+    configError: 'Your profiles file is damaged.',
+    configErrorBody:
+      'GitHop can’t read it, so nothing was changed. Restore the last backup, or fix the file and try again.',
+    loadError: 'GitHop couldn’t load your profiles.',
+    loadErrorBody: 'Nothing was changed. Try again, or restore the last backup.',
     restoreBackup: 'Restore last backup',
     restored: 'Backup restored.',
     hooksMissing: 'Protection is off — git hooks aren’t installed.',
     turnOn: 'Turn on',
     hooksOn: 'Protection is on.',
+    hooksOverridden: (files: string) =>
+      `Protection is off in some repos: ${files} sets its own git hooks folder after GitHop’s. Run doctor in Settings to see which repos.`,
   },
 
   profiles: {
@@ -121,7 +135,10 @@ export const S = {
     email: 'Email',
     emailHelp: 'Your git user.email. Tip: use your GitHub noreply email to keep it private.',
     useNoreply: 'Use noreply',
-    noreplyHelp: 'Replace ID with the number shown in GitHub → Settings → Emails.',
+    noreplyHelp:
+      'Replace ID and the user name with the noreply email shown in GitHub → Settings → Emails.',
+    noreplyPlaceholder:
+      'Replace ID with your GitHub ID number. It’s in the noreply email shown in GitHub → Settings → Emails.',
     colour: 'Colour',
     colourHelp: 'Shown on the tray icon and on this profile’s card.',
     usedBy: (label: string) => `Used by ${label}`,
@@ -149,6 +166,8 @@ export const S = {
       'A console window opens so you can type a passphrase (recommended). GitHop never sees or stores it.',
     noPassphrase: 'Create the key without a passphrase (not recommended)',
     keyCreated: 'Key created.',
+    keyNotCreated:
+      'No key yet. Click Generate key, or the profile is saved without a working SSH key.',
     publicKey: 'Public key',
     copyKey: 'Copy public key',
     keyCopied: 'Public key copied.',
@@ -162,6 +181,8 @@ export const S = {
     save: 'Save profile',
     saving: 'Saving…',
     saved: (label: string) => `Profile saved: ${label}`,
+    savedNoKey: (label: string) =>
+      `Profile saved: ${label}. Its SSH key doesn’t exist yet: edit the profile and click Generate key.`,
     fixErrors: 'Fix the highlighted fields to save.',
     required: (what: string) => `Enter a ${what.toLowerCase()}.`,
   },
@@ -229,6 +250,15 @@ export const S = {
     blocked: (n: number, wrong: string, repoProfile: string) =>
       `${n} unpushed ${plural(n, 'commit uses', 'commits use')} the ${wrong} email in a ${repoProfile} repo. Push is blocked.`,
     tableLabel: 'Commits to fix',
+    pushedTableLabel: 'Pushed commits, not changed',
+    unpushedHeading: (n: number) =>
+      `${n} unpushed ${plural(n, 'commit', 'commits')}: Fix changes ${plural(n, 'it', 'these')}`,
+    pushedHeading: (n: number) => `${n} pushed ${plural(n, 'commit', 'commits')}: not changed`,
+    pushedHelp: 'How to fix by hand',
+    signed: (n: number) =>
+      `${n} signed ${plural(n, 'commit loses its signature', 'commits lose their signatures')}. Sign again after the fix if you need signed commits.`,
+    newIds: (n: number) =>
+      `${n} ${plural(n, 'commit gets a new id', 'commits get new ids')}, including any later unpushed commits.`,
     colCommit: 'Commit',
     colMessage: 'Message',
     colEmail: 'Email',
@@ -237,14 +267,14 @@ export const S = {
     fixing: 'Fixing…',
     done: (n: number) => `${n} ${plural(n, 'commit', 'commits')} fixed. You can push now.`,
     doneDiverged: (n: number) =>
-      `${n} ${plural(n, 'commit', 'commits')} fixed. Your branch now differs from the remote: run git pull --rebase before you push.`,
+      `${n} ${plural(n, 'commit', 'commits')} fixed. Your branch no longer lines up with the remote, so a plain push may be refused. Run git status to see why before you push.`,
     foreign: (n: number) =>
       `${n} ${plural(n, 'commit', 'commits')} by someone else ${plural(n, 'keeps its', 'keep their')} author.`,
     toastDone: (n: number) => `${n} ${plural(n, 'commit', 'commits')} fixed.`,
     backup: (ref: string) => `Backup saved as ${ref}.`,
     undone: 'Fix undone. Your commits are back as they were.',
     pushed: (n: number) =>
-      `${n} ${plural(n, 'commit is', 'commits are')} already pushed, so GitHop can’t fix ${plural(n, 'it', 'them')} automatically. Changing pushed commits would rewrite history others may have. Ask your team before amending them by hand.`,
+      `${n} ${plural(n, 'commit is', 'commits are')} already pushed, so GitHop can’t fix ${plural(n, 'it', 'them')} automatically. Changing a pushed commit changes history others may already have. Ask your team before you amend ${plural(n, 'it', 'them')} by hand.`,
     cantFix: (reason: string) => `GitHop can’t fix this repo right now: ${reason}`,
     unresolved: 'This repo has no profile yet. Pin it on the Repos screen first.',
     otherRepo: 'Choose another repo',
@@ -255,8 +285,10 @@ export const S = {
     title: 'Settings',
     enforce: 'When identity is wrong',
     enforceHelp: 'Block stops the commit or push. Warn lets it through with a message.',
-    enforceStrict: 'Strict mode is on (set from the CLI): GitHop errors also block.',
+    enforceStrict:
+      'Strict mode is on (set from the CLI): like Block, and GitHop’s own errors also block.',
     block: 'Block',
+    strict: 'Strict',
     warn: 'Warn',
     logging: 'Activity log',
     loggingHelp: 'Never records code or repo names. Deleted after 7 days.',
@@ -273,6 +305,11 @@ export const S = {
     diagnostics: 'Diagnostics',
     diagnosticsHelp: 'Checks hooks, git, SSH and your config files.',
     runDoctor: 'Run doctor',
+    saveDiagnostics: 'Save diagnostics file',
+    saveDiagnosticsTitle: 'Save diagnostics',
+    diagnosticsFileName: 'githop-diagnostics.txt',
+    diagnosticsFileType: 'Text file',
+    diagnosticsSaved: 'Diagnostics file saved.',
     about: 'About',
     aboutHelp: (v: string) => `GitHop ${v}`,
     licences: 'Licences',
@@ -365,6 +402,16 @@ export const S = {
     reportTitle: 'Wipe finished',
     stepOk: 'Done',
     stepFailed: 'Failed',
+    // Core wipe step ids (githop-core wipe::STEP_*) as words.
+    steps: {
+      backup: 'Back up your git config',
+      hooks: 'Remove GitHop’s git hooks',
+      identity: 'Restore your original git identity',
+      unpin: 'Remove Pins from repos',
+      autostart: 'Turn off Start with Windows',
+      data: 'Delete GitHop data',
+      keys: 'Delete SSH keys created by GitHop',
+    },
   },
 
   password: {
@@ -386,7 +433,8 @@ export const S = {
       none: 'No global git identity found.',
       nameLabel: 'Name',
       emailLabel: 'Email',
-      backupLocation: 'Backups are saved in GitHop’s data folder (%APPDATA%\\githop\\backups).',
+      backupLocation: 'Backups are saved in GitHop’s data folder:',
+      backupLocationDefault: 'Backups are saved in GitHop’s data folder.',
       backupMade: 'Backup saved. You can restore your original settings any time.',
     },
     first: {

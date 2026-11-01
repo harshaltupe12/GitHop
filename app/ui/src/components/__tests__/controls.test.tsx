@@ -177,6 +177,34 @@ describe('Segmented', () => {
   });
 });
 
+describe('Segmented busy', () => {
+  it('keeps the options focusable (no disabled attribute) and ignores input', async () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <Segmented
+        label="When identity is wrong"
+        value="block"
+        busy
+        onChange={onChange}
+        options={[
+          { value: 'block', label: 'Block' },
+          { value: 'warn', label: 'Warn' },
+        ]}
+      />,
+    );
+    const block = screen.getByRole('radio', { name: 'Block' });
+    expect(block).not.toBeDisabled();
+    expect(block).toHaveAttribute('aria-disabled', 'true');
+    expect(block).toHaveClass('gh-segment');
+    block.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    await userEvent.click(screen.getByRole('radio', { name: 'Warn' }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(document.body);
+    await expectNoA11yViolations(container);
+  });
+});
+
 describe('Toggle', () => {
   it('switch role with readable state', async () => {
     const onChange = vi.fn();

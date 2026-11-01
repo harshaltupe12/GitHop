@@ -82,7 +82,7 @@ export function Tooltip({
         hidden={!open}
         data-instant={instant || undefined}
         className={cx(
-          'gh-tooltip pointer-events-none absolute left-1/2 z-50 w-max max-w-tooltip -translate-x-1/2 rounded-sm bg-ink px-2 py-1 text-small font-medium text-white shadow-float',
+          'gh-tooltip pointer-events-none absolute left-1/2 z-50 w-max max-w-tooltip -translate-x-1/2 rounded-sm bg-ink px-2 py-1 text-small text-white shadow-float',
           placement === 'top' ? 'bottom-full mb-1 origin-bottom' : 'top-full mt-1 origin-top',
         )}
       >
