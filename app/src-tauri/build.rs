@@ -19,12 +19,18 @@ const COMMANDS: &[&str] = &[
     "generate_key",
     "read_public_key",
     "test_connection",
+    "passphrase_state",
+    "remember_passphrase",
+    "turn_on_agent",
     // repos
     "scan",
     "pin",
     "unpin",
     "pin_all",
     "hooks_snippet",
+    "remote_ssh",
+    "remote_ssh_all",
+    "remote_undo",
     // fix
     "fix_plan",
     "fix_apply",

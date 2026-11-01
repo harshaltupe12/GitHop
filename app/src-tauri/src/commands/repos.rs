@@ -1,5 +1,5 @@
 //! Repo commands: scan (worker thread + progress events, cancellable), pin,
-//! unpin, pin all, husky snippet.
+//! unpin, pin all, husky snippet, HTTPS → SSH remote switching (ADR 0006).
 //!
 //! Every repo row carries `unpushed_offenders` (from core `fix::plan`) so the
 //! Repos screen can show "N wrong commits" without a `fix_plan` call per row.
@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use githop_core::paths::{folder_key, to_slash};
+use githop_core::remote_ssh::{self, HttpsAction, HttpsRemote};
 use githop_core::scan::{self, ScannedRepo};
 use githop_core::{fix, hooks, pin as core_pin, Git, Paths, ProfileSet, Repo};
 use tauri::{AppHandle, Emitter, Runtime};
@@ -50,9 +51,9 @@ pub async fn scan<R: Runtime>(app: AppHandle<R>, folder: String) -> IpcResult<Ve
                 eprintln!("GitHop: couldn't send scan progress: {e}");
             }
         };
-        let count = |r: &ScannedRepo| unpushed_offenders(&git, &paths, r);
+        let to_row = |r: ScannedRepo| row(&git, &paths, r);
         Ok(
-            scan_with_progress(&git, &root, &set, &aliases, &SCAN_CANCEL, count, emit)
+            scan_with_progress(&git, &root, &set, &aliases, &SCAN_CANCEL, to_row, emit)
                 .unwrap_or_default(),
         )
     })
@@ -79,8 +80,12 @@ pub async fn pin<R: Runtime>(app: AppHandle<R>, repo: String, id: String) -> Ipc
         let repo = Repo::discover(&git, &dir)?;
         core_pin::pin_repo(&repo, &profile)?;
         ops::remember_pinned(&mut store, repo.root())?;
+        let switched = after_pin(&git, &store, &repo);
         let scanned = rescan_one(&git, repo.root(), &store)?;
-        Ok(row(&git, store.paths(), scanned))
+        Ok(RepoRow {
+            switched,
+            ..row(&git, store.paths(), scanned)
+        })
     })
     .await?;
     events::data_changed(&app);
@@ -117,7 +122,7 @@ pub async fn pin_all<R: Runtime>(app: AppHandle<R>, repos: Vec<String>) -> IpcRe
         let mut store = ops::store()?;
         let set = store.profiles().clone();
         let mut pinned_roots = Vec::new();
-        let mut out = Vec::with_capacity(dirs.len());
+        let mut out: Vec<(ScannedRepo, Vec<String>)> = Vec::with_capacity(dirs.len());
         for dir in &dirs {
             let scanned = rescan_one(&git, dir, &store)?;
             let Some(profile) = scanned
@@ -126,20 +131,24 @@ pub async fn pin_all<R: Runtime>(app: AppHandle<R>, repos: Vec<String>) -> IpcRe
                 .as_deref()
                 .and_then(|id| set.get(id))
             else {
-                out.push(scanned);
+                out.push((scanned, Vec::new()));
                 continue;
             };
             let pinned = Repo::discover(&git, Path::new(&scanned.root))
                 .and_then(|repo| core_pin::pin_repo(&repo, profile).map(|()| repo));
             match pinned {
                 Ok(repo) => {
-                    out.push(rescan_one(&git, repo.root(), &store)?);
+                    let switched = after_pin(&git, &store, &repo);
+                    out.push((rescan_one(&git, repo.root(), &store)?, switched));
                     pinned_roots.push(repo.root().to_path_buf());
                 }
-                Err(e) => out.push(ScannedRepo {
-                    error: Some(crate::dto::sentence(&e.to_string())),
-                    ..scanned
-                }),
+                Err(e) => out.push((
+                    ScannedRepo {
+                        error: Some(crate::dto::sentence(&e.to_string())),
+                        ..scanned
+                    },
+                    Vec::new(),
+                )),
             }
         }
         if !pinned_roots.is_empty() {
@@ -151,7 +160,133 @@ pub async fn pin_all<R: Runtime>(app: AppHandle<R>, repos: Vec<String>) -> IpcRe
             })?;
         }
         let paths = store.paths().clone();
-        Ok(out.into_iter().map(|r| row(&git, &paths, r)).collect())
+        Ok(out
+            .into_iter()
+            .map(|(r, switched)| RepoRow {
+                switched,
+                ..row(&git, &paths, r)
+            })
+            .collect())
+    })
+    .await?;
+    events::data_changed(&app);
+    Ok(out)
+}
+
+/// After a pin: trust GitHub's host keys and apply `remote_https_policy`
+/// (only `auto` changes anything). Best effort: the pin itself already
+/// succeeded. Returns the remotes switched to SSH.
+fn after_pin(git: &Git, store: &githop_core::Store, repo: &Repo) -> Vec<String> {
+    githop_core::ssh::ensure_github_known_hosts_best_effort(git, store.paths());
+    match remote_ssh::apply_policy(repo, store.settings().remote_https_policy) {
+        Ok(HttpsAction::Switched(list)) => list.into_iter().map(|r| r.name).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Switch `repo`'s GitHub HTTPS remotes (or just `remote`) to SSH (ADR 0006).
+#[tauri::command]
+pub async fn remote_ssh<R: Runtime>(
+    app: AppHandle<R>,
+    repo: String,
+    remote: Option<String>,
+) -> IpcResult<RepoRow> {
+    let dir = validate::existing_dir(&repo)?;
+    if let Some(name) = &remote {
+        validate::remote_name(name)?;
+    }
+    let out = blocking(move || {
+        let _guard = ops::write_lock();
+        let git = ops::git()?;
+        let store = ops::store()?;
+        let repo = Repo::discover(&git, &dir)?;
+        let switched = switch_repo(&git, &store, &repo, remote.as_deref())?;
+        let scanned = rescan_one(&git, repo.root(), &store)?;
+        Ok(RepoRow {
+            switched,
+            ..row(&git, store.paths(), scanned)
+        })
+    })
+    .await?;
+    events::data_changed(&app);
+    Ok(out)
+}
+
+fn switch_repo(
+    git: &Git,
+    store: &githop_core::Store,
+    repo: &Repo,
+    remote: Option<&str>,
+) -> IpcResult<Vec<String>> {
+    let switched: Vec<String> = match remote {
+        Some(name) => remote_ssh::switch_remote_to_ssh(repo, name)?
+            .map(|r| vec![r.name])
+            .unwrap_or_default(),
+        None => remote_ssh::switch_all_to_ssh(repo)?
+            .into_iter()
+            .map(|r| r.name)
+            .collect(),
+    };
+    if !switched.is_empty() {
+        githop_core::ssh::ensure_github_known_hosts_best_effort(git, store.paths());
+    }
+    Ok(switched)
+}
+
+/// Bulk "Switch all to SSH". A repo that fails gets `error` set; the rest go on.
+#[tauri::command]
+pub async fn remote_ssh_all<R: Runtime>(
+    app: AppHandle<R>,
+    repos: Vec<String>,
+) -> IpcResult<Vec<RepoRow>> {
+    let dirs = validate::repo_list(&repos)?;
+    let out = blocking(move || {
+        let _guard = ops::write_lock();
+        let git = ops::git()?;
+        let store = ops::store()?;
+        let mut out = Vec::with_capacity(dirs.len());
+        for dir in &dirs {
+            let scanned = rescan_one(&git, dir, &store)?;
+            let result = Repo::discover(&git, Path::new(&scanned.root))
+                .map_err(IpcError::from)
+                .and_then(|repo| switch_repo(&git, &store, &repo, None));
+            match result {
+                Ok(switched) => {
+                    let fresh = rescan_one(&git, Path::new(&scanned.root), &store)?;
+                    out.push(RepoRow {
+                        switched,
+                        ..row(&git, store.paths(), fresh)
+                    });
+                }
+                Err(e) => out.push(row(
+                    &git,
+                    store.paths(),
+                    ScannedRepo {
+                        error: Some(e.message),
+                        ..scanned
+                    },
+                )),
+            }
+        }
+        Ok(out)
+    })
+    .await?;
+    events::data_changed(&app);
+    Ok(out)
+}
+
+/// Put back the HTTPS URLs GitHop switched in `repo`.
+#[tauri::command]
+pub async fn remote_undo<R: Runtime>(app: AppHandle<R>, repo: String) -> IpcResult<RepoRow> {
+    let dir = validate::existing_dir(&repo)?;
+    let out = blocking(move || {
+        let _guard = ops::write_lock();
+        let git = ops::git()?;
+        let store = ops::store()?;
+        let repo = Repo::discover(&git, &dir)?;
+        remote_ssh::restore_all(&repo)?;
+        let scanned = rescan_one(&git, repo.root(), &store)?;
+        Ok(row(&git, store.paths(), scanned))
     })
     .await?;
     events::data_changed(&app);
@@ -191,9 +326,28 @@ fn rescan_one(git: &Git, root: &Path, store: &githop_core::Store) -> IpcResult<S
 
 fn row(git: &Git, paths: &Paths, repo: ScannedRepo) -> RepoRow {
     let unpushed_offenders = unpushed_offenders(git, paths, &repo);
+    let (https_remotes, ssh_switched) = remote_state(git, &repo);
     RepoRow {
         repo,
         unpushed_offenders,
+        https_remotes,
+        ssh_switched,
+        switched: Vec::new(),
+    }
+}
+
+/// GitHub HTTPS remotes and remotes GitHop switched (one `git config` read).
+/// Empty for an unreadable repo.
+fn remote_state(git: &Git, r: &ScannedRepo) -> (Vec<HttpsRemote>, Vec<String>) {
+    if r.error.is_some() {
+        return (Vec::new(), Vec::new());
+    }
+    match githop_core::ConfigSnapshot::read(git, Path::new(&r.root)) {
+        Ok(snap) => (
+            remote_ssh::https_remotes(&snap),
+            remote_ssh::switched_remotes(&snap),
+        ),
+        Err(_) => (Vec::new(), Vec::new()),
     }
 }
 
@@ -210,7 +364,7 @@ fn unpushed_offenders(git: &Git, paths: &Paths, r: &ScannedRepo) -> usize {
 }
 
 /// Core's scan, split so progress can be reported: find repos (one walk), then
-/// resolve each on a small thread pool (plus `count` per repo), emitting
+/// resolve each on a small thread pool (plus `to_row` per repo), emitting
 /// `(found, done)` as it goes. `None` when `cancel` was set.
 pub fn scan_with_progress(
     git: &Git,
@@ -218,7 +372,7 @@ pub fn scan_with_progress(
     set: &ProfileSet,
     aliases: &[String],
     cancel: &AtomicBool,
-    count: impl Fn(&ScannedRepo) -> usize + Sync,
+    to_row: impl Fn(ScannedRepo) -> RepoRow + Sync,
     emit: impl Fn(usize, usize) + Sync,
 ) -> Option<Vec<RepoRow>> {
     let dirs: Vec<PathBuf> = scan::find_repos(root, scan::DEFAULT_MAX_DEPTH);
@@ -253,10 +407,7 @@ pub fn scan_with_progress(
                 // descends into a repo, so nothing is missed).
                 let rows: Vec<RepoRow> = scan::scan(git, dir, set, aliases, 0)
                     .into_iter()
-                    .map(|repo| RepoRow {
-                        unpushed_offenders: count(&repo),
-                        repo,
-                    })
+                    .map(&to_row)
                     .collect();
                 if let Ok(mut r) = results.lock() {
                     r.extend(rows);
@@ -291,6 +442,16 @@ pub fn scan_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bare_row(repo: ScannedRepo, n: usize) -> RepoRow {
+        RepoRow {
+            repo,
+            unpushed_offenders: n,
+            https_remotes: vec![],
+            ssh_switched: vec![],
+            switched: vec![],
+        }
+    }
 
     /// git with every config/home location inside `tmp` (CLAUDE.md rule 3).
     fn isolated_git(tmp: &Path) -> Option<Git> {
@@ -335,7 +496,7 @@ mod tests {
             &ProfileSet::default(),
             &[],
             &cancel,
-            |_| 7,
+            |r| bare_row(r, 7),
             |f, d| events.lock().unwrap().push((f, d)),
         )
         .unwrap();
@@ -352,6 +513,52 @@ mod tests {
         assert!(events.windows(2).all(|w| w[0].1 < w[1].1));
     }
 
+    /// ADR 0006: rows report GitHub HTTPS remotes; switching moves them to
+    /// `ssh_switched` and trusts GitHub's host keys in the temp home.
+    #[test]
+    fn rows_report_https_remotes_and_switching_moves_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(git) = isolated_git(tmp.path()) else {
+            return;
+        };
+        let dir = tmp.path().join("code").join("GitHop");
+        std::fs::create_dir_all(&dir).unwrap();
+        git.run(&dir, &["init", "-q"]).unwrap();
+        git.run(
+            &dir,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/harshaltupe12/GitHop.git",
+            ],
+        )
+        .unwrap();
+        let store = githop_core::Store::open_at(Paths::at(tmp.path().join("githop"))).unwrap();
+        let scanned = rescan_one(&git, &dir, &store).unwrap();
+        let r = row(&git, store.paths(), scanned);
+        assert_eq!(r.https_remotes.len(), 1);
+        assert_eq!(
+            r.https_remotes[0].ssh_url,
+            "git@github.com:harshaltupe12/GitHop.git"
+        );
+        assert!(r.ssh_switched.is_empty());
+
+        let repo = Repo::discover(&git, &dir).unwrap();
+        assert_eq!(
+            switch_repo(&git, &store, &repo, Some("origin")).unwrap(),
+            vec!["origin".to_string()]
+        );
+        let r = row(&git, store.paths(), rescan_one(&git, &dir, &store).unwrap());
+        assert!(r.https_remotes.is_empty());
+        assert_eq!(r.ssh_switched, vec!["origin".to_string()]);
+        let kh = std::fs::read_to_string(tmp.path().join("home").join(".ssh").join("known_hosts"))
+            .unwrap();
+        assert!(githop_core::ssh::known_hosts_trusts_github(&kh));
+        // Nothing left to switch.
+        assert!(switch_repo(&git, &store, &repo, None).unwrap().is_empty());
+    }
+
     #[test]
     fn scan_of_folder_without_repos_is_empty() {
         let tmp = tempfile::tempdir().unwrap();
@@ -366,7 +573,7 @@ mod tests {
             &ProfileSet::default(),
             &[],
             &cancel,
-            |_| 0,
+            |r| bare_row(r, 0),
             |f, d| events.lock().unwrap().push((f, d)),
         )
         .unwrap();
@@ -390,7 +597,7 @@ mod tests {
             &ProfileSet::default(),
             &[],
             &cancel,
-            |_| 0,
+            |r| bare_row(r, 0),
             |_, _| {},
         );
         assert!(out.is_none());

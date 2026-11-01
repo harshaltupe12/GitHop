@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use githop_core::paths::to_slash;
-use githop_core::ssh::{self, ConnectionTest};
+use githop_core::ssh::{self, ConnectionTest, PassphraseState, RememberOutcome, WindowsAgent};
 use githop_core::{CoreError, Profile};
 use tauri::{AppHandle, Runtime};
 
@@ -84,9 +84,100 @@ pub async fn test_connection(id: String) -> IpcResult<ConnectionTest> {
                 to_slash(&p.ssh_key)
             )));
         }
+        // GitHub's published host keys first, so ssh never asks yes/no (ADR 0006).
+        if let Ok(git) = ops::git() {
+            ssh::ensure_github_known_hosts_best_effort(&git, store.paths());
+        }
         Ok(ssh::test_connection(&p.ssh_key)?)
     })
     .await
+}
+
+/// Key panel status: is the passphrase remembered by the Windows ssh-agent?
+/// Reads the key's header and asks the agent (`sc query`, `ssh-add -l`); no network.
+#[tauri::command]
+pub async fn passphrase_state(id: String) -> IpcResult<PassphraseState> {
+    validate::profile_id(&id)?;
+    blocking(move || {
+        let store = ops::store()?;
+        let p = ops::profile(store.profiles(), &id)?;
+        Ok(ssh::passphrase_state(&WindowsAgent, &p.ssh_key))
+    })
+    .await
+}
+
+/// "Remember my passphrase": `ssh-add <key>` in a visible console window (the
+/// passphrase is typed there; it never passes through GitHop). Needs the
+/// ssh-agent service running; otherwise returns `agent-off`.
+#[tauri::command]
+pub async fn remember_passphrase(id: String) -> IpcResult<RememberOutcome> {
+    validate::profile_id(&id)?;
+    blocking(move || remember_blocking(&id, false)).await
+}
+
+/// "Turn on": one UAC prompt sets the ssh-agent service to start
+/// automatically and starts it, then `ssh-add` as above.
+#[tauri::command]
+pub async fn turn_on_agent(id: String) -> IpcResult<RememberOutcome> {
+    validate::profile_id(&id)?;
+    blocking(move || remember_blocking(&id, true)).await
+}
+
+fn remember_blocking(id: &str, turn_on: bool) -> IpcResult<RememberOutcome> {
+    let profile: Profile = {
+        let store = ops::store()?;
+        ops::profile(store.profiles(), id)?.clone()
+    };
+    if !profile.ssh_key.is_file() {
+        return Err(IpcError::not_found(format!(
+            "There's no SSH key at {}. Generate one first.",
+            to_slash(&profile.ssh_key)
+        )));
+    }
+    let outcome = if turn_on {
+        ssh::turn_on_agent_and_remember(&WindowsAgent, &profile.ssh_key)?
+    } else {
+        ssh::remember_passphrase(&WindowsAgent, &profile.ssh_key)?
+    };
+    if outcome == RememberOutcome::Remembered {
+        refresh_ssh_commands(&profile);
+    }
+    Ok(outcome)
+}
+
+/// After the agent holds the key: rewrite `core.sshCommand` in this profile's
+/// pinned repos (and globally when it's the default profile) so it names
+/// Windows OpenSSH, the ssh that uses the agent. Older pins said plain `ssh`,
+/// which in Git for Windows is its bundled copy that can't. Best effort; the
+/// global write is backed up first (CLAUDE.md rule 4).
+fn refresh_ssh_commands(profile: &Profile) {
+    let Ok(git) = ops::git() else {
+        return;
+    };
+    let _guard = ops::write_lock();
+    let Ok(store) = ops::store() else {
+        return;
+    };
+    let want = githop_core::pin::ssh_command_for(&profile.ssh_key);
+    for repo in ops::repos_pinned_to(&git, &store.settings().pinned_repos, &profile.id) {
+        let current = repo
+            .config_snapshot()
+            .ok()
+            .and_then(|s| s.get("core.sshCommand").map(str::to_string));
+        if current.as_deref() != Some(want.as_str()) {
+            let _ = githop_core::pin::pin_repo(&repo, profile);
+        }
+    }
+    if store.profiles().default.as_deref() == Some(profile.id.as_str()) {
+        let current = githop_core::gitconfig::get_global(&git, "core.sshCommand")
+            .ok()
+            .flatten();
+        if current.as_deref() != Some(want.as_str())
+            && githop_core::backup::backup_global_gitconfig(store.paths(), &git).is_ok()
+        {
+            let _ = githop_core::gitconfig::set_global(&git, "core.sshCommand", &want);
+        }
+    }
 }
 
 fn generate_key_blocking(id: &str, no_passphrase: bool) -> IpcResult<String> {
@@ -107,6 +198,10 @@ fn generate_key_blocking(id: &str, no_passphrase: bool) -> IpcResult<String> {
     // Core's `ssh::keygen` inherits stdio, which has no console in the tray app.
     keygen_in_console(&key, &profile.email, no_passphrase)?;
     ssh::restrict_key_acl(&key)?;
+    {
+        let store = ops::store()?;
+        ssh::ensure_github_known_hosts_best_effort(&git, store.paths());
+    }
 
     if profile.ssh_key != key {
         let _guard = ops::write_lock();
