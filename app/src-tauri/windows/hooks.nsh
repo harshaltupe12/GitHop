@@ -100,6 +100,50 @@ FunctionEnd
 !insertmacro GITHOP_BROADCAST_FUNC ""
 !insertmacro GITHOP_BROADCAST_FUNC "un."
 
+; githop.cmd launcher in %LOCALAPPDATA%\Microsoft\WindowsApps (see POSTINSTALL).
+; LOCALAPPDATA is read from the environment so isolated test runs stay isolated.
+; Only written when that folder exists; only removed when it's exactly the line
+; written for this install folder, so a user's own githop.cmd is never touched.
+Function GitHopWriteShim
+  Push $0
+  Push $1
+  ReadEnvStr $0 "LOCALAPPDATA"
+  StrCpy $0 "$0\Microsoft\WindowsApps"
+  ${If} ${FileExists} "$0\*.*"
+    ClearErrors
+    FileOpen $1 "$0\githop.cmd" w
+    ${IfNot} ${Errors}
+      FileWrite $1 "@$\"$INSTDIR\githop.exe$\" %*$\r$\n"
+      FileClose $1
+    ${EndIf}
+  ${EndIf}
+  Pop $1
+  Pop $0
+FunctionEnd
+
+Function un.GitHopRemoveShim
+  Push $0
+  Push $1
+  Push $2
+  ReadEnvStr $0 "LOCALAPPDATA"
+  StrCpy $0 "$0\Microsoft\WindowsApps\githop.cmd"
+  ${If} ${FileExists} "$0"
+    ClearErrors
+    FileOpen $1 "$0" r
+    ${IfNot} ${Errors}
+      FileRead $1 $2
+      FileClose $1
+      ; Exactly the line GitHopWriteShim wrote for this install folder.
+      ${If} $2 == "@$\"$INSTDIR\githop.exe$\" %*$\r$\n"
+        Delete "$0"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
 !macro NSIS_HOOK_PREINSTALL
   ; Previous install folder, read before Tauri overwrites it (F4).
   ReadRegStr $GitHopOldInstDir SHCTX "${MANUPRODUCTKEY}" ""
@@ -141,6 +185,13 @@ FunctionEnd
     ${Else}
       DetailPrint "Your PATH wasn't changed. To use githop in terminals, add $INSTDIR to your PATH by hand."
     ${EndIf}
+
+    ; Works at once, even in terminals and editors opened before this install:
+    ; programs keep the PATH they started with, but %LOCALAPPDATA%\Microsoft\
+    ; WindowsApps is on every user's PATH by default (app execution aliases), so
+    ; a small githop.cmd there finds githop.exe without a restart. It calls the
+    ; real exe, so hooks still embed $INSTDIR\githop.exe.
+    Call GitHopWriteShim
 
     ; F1/F4: hooks call githop.exe by its full path. If they were on, point
     ; them at this copy (does nothing on a new PC).
@@ -204,6 +255,7 @@ FunctionEnd
       ${If} $0 != 0
         DetailPrint "GitHop couldn't restore everything (exit $0). Download githop.exe and run: githop wipe --yes. Backups are in %APPDATA%\githop\backups."
       ${EndIf}
+      Call un.GitHopRemoveShim
       nsExec::ExecToLog '"$INSTDIR\githop.exe" installer path-remove "$INSTDIR"'
       Pop $0
       ${If} $0 == 0

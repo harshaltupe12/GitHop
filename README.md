@@ -96,6 +96,20 @@ ref list back to the rest of the hook, e.g. `git lfs pre-push`).
 - **Employer IP.** Personal work done on company hardware or during work hours
   may be claimed by your employer. Check your employment contract and IT policy.
 
+## Troubleshooting: "githop is not recognized"
+
+Programs keep the PATH they started with. The installer adds GitHop to your
+user PATH **and** writes a small `githop.cmd` launcher into
+`%LOCALAPPDATA%\Microsoft\WindowsApps` (on every user's PATH by default), so
+`githop` works at once in PowerShell and cmd — even in terminals that were open
+before the install. In Git Bash inside an old editor session, type `githop.cmd`,
+or fully quit the editor (VS Code: File → Exit, and make sure no `Code.exe` is
+left in Task Manager) and reopen it. In any terminal you can refresh PATH with:
+
+```powershell
+$env:Path = [Environment]::GetEnvironmentVariable('Path','User') + ';' + [Environment]::GetEnvironmentVariable('Path','Machine')
+```
+
 ## Uninstall
 
 You can remove GitHop at any time, three ways — all restore your git setup:
