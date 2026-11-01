@@ -4,6 +4,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ErrorText } from '../components/ErrorText';
 import { Dialog } from '../components/Dialog';
+import { Checkbox } from '../components/Field';
 import { Ico, Icons } from '../components/icons';
 import { EmptyState, ScreenHeader } from '../components/Layout';
 import { MenuButton } from '../components/Menu';
@@ -13,22 +14,32 @@ import { Spinner } from '../components/Spinner';
 import { Table, type Column } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { Tooltip } from '../components/Tooltip';
-import { reposStore, replaceRepo } from '../lib/appState';
+import { reposStore, replaceRepo, STATE_KEY } from '../lib/appState';
 import { baseName, normalizePath, profileById, sortProfiles, truncateMiddle } from '../lib/format';
 import * as ipc from '../lib/ipc';
 import { useNav } from '../lib/nav';
 import { unmatchedOwner } from '../lib/owners';
+import { setQueryData } from '../lib/query';
 import { KEYS, readJson, removeKey, writeJson } from '../lib/storage';
-import type { HookStage, IpcError, ProfileSet, RepoRow } from '../lib/types';
+import type {
+  AppState,
+  HookStage,
+  IpcError,
+  ProfileSet,
+  RemoteHttpsPolicy,
+  RepoRow,
+} from '../lib/types';
 import { S } from '../strings';
 import { OwnersPanel } from './OwnersPanel';
 
-type Action = 'fix' | 'husky' | 'pin' | null;
+type Action = 'fix' | 'husky' | 'pin' | 'ssh' | null;
 export type RepoStatus = { kind: PillKind; text: string; action: Action };
 
 /**
  * Status priority: unreadable > wrong commits > husky > unassigned / no owner
- * match / not pinned > pin differs > email mismatch > no remote > matches.
+ * match / not pinned > pin differs > email mismatch > HTTPS remote > no remote
+ * > matches. HTTPS (ADR 0006): a GitHub HTTPS remote signs in with the account
+ * Windows saved, not the pinned key.
  * "Wrong commits" counts only the unpushed ones Fix can change
  * (`unpushed_offenders`); pushed ones are explained on the Fix screen.
  * Wording: see the `pill` comment in strings.ts.
@@ -51,6 +62,7 @@ export function repoStatus(r: RepoRow, profiles: ProfileSet): RepoStatus {
   const email = r.identity?.author.email;
   if (p && email && email.trim().toLowerCase() !== p.email.trim().toLowerCase())
     return { kind: 'warning', text: S.pill.wrongEmail, action: 'pin' };
+  if (r.https_remotes?.length) return { kind: 'warning', text: S.pill.https, action: 'ssh' };
   if (!r.resolution.remote) return { kind: 'warning', text: S.pill.noRemote, action: null };
   return { kind: 'ok', text: S.pill.matches, action: null };
 }
@@ -65,14 +77,29 @@ function mergeRepos(old: RepoRow[], fresh: RepoRow[]): RepoRow[] {
   return [...m.values()].sort((a, b) => baseName(a.root).localeCompare(baseName(b.root)));
 }
 
-export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
+/** Repos with a profile whose pushes still go over GitHub HTTPS (ADR 0006). */
+const needsSsh = (r: RepoRow) =>
+  !r.error && !!r.resolution.profile_id && (r.https_remotes?.length ?? 0) > 0;
+
+export function ReposScreen({
+  profiles,
+  httpsPolicy = 'ask',
+}: {
+  profiles: ProfileSet;
+  /** Settings.remote_https_policy: under "ask", a pin offers to switch to SSH. */
+  httpsPolicy?: RemoteHttpsPolicy;
+}) {
   const nav = useNav();
   const toast = useToast();
   const st = reposStore.useStore();
   const scanToken = useRef(0);
   const [husky, setHusky] = useState<RepoRow | null>(null);
   const [pinningAll, setPinningAll] = useState(false);
+  const [switchingAll, setSwitchingAll] = useState(false);
+  const [askSsh, setAskSsh] = useState<RepoRow[] | null>(null);
   const [error, setError] = useState<IpcError | null>(null);
+  const labelOf = (r: RepoRow) =>
+    profileById(profiles, r.resolution.profile_id)?.label ?? r.resolution.profile_id ?? '';
 
   const scanFolders = useCallback(async (folders: string[]) => {
     const token = ++scanToken.current;
@@ -154,11 +181,67 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
     }));
   };
 
+  const undoSsh = async (r: RepoRow) => {
+    try {
+      replaceRepo(await ipc.remoteUndo(r.root));
+      toast({ message: S.repos.undoneSsh(baseName(r.root)) });
+    } catch (e) {
+      toast({ kind: 'error', message: (e as IpcError).message });
+    }
+  };
+
+  const switchOne = async (r: RepoRow) => {
+    try {
+      const updated = await ipc.remoteSsh(r.root);
+      replaceRepo(updated);
+      toast({
+        message: S.repos.switched(baseName(r.root), labelOf(updated)),
+        action: { label: S.common.undo, onClick: () => void undoSsh(updated) },
+      });
+    } catch (e) {
+      toast({ kind: 'error', message: (e as IpcError).message });
+    }
+  };
+
+  const switchMany = async (rows: RepoRow[]) => {
+    if (rows.length === 1 && rows[0]) return switchOne(rows[0]);
+    setSwitchingAll(true);
+    try {
+      const updated = await ipc.remoteSshAll(rows.map((r) => r.root));
+      reposStore.set((s) => ({ ...s, repos: mergeRepos(s.repos, updated) }));
+      const n = updated.filter((r) => r.switched.length > 0).length;
+      toast({ message: S.repos.switchedAll(n) });
+    } catch (e) {
+      toast({ kind: 'error', message: (e as IpcError).message });
+    } finally {
+      setSwitchingAll(false);
+    }
+  };
+
+  /** "Always do this": policy auto from now on (Settings shows the same choice). */
+  const alwaysSwitch = async () => {
+    try {
+      const settings = await ipc.updateSettings({ remote_https_policy: 'auto' });
+      setQueryData<AppState | undefined>(STATE_KEY, (s) => (s ? { ...s, settings } : s));
+    } catch (e) {
+      toast({ kind: 'error', message: (e as IpcError).message });
+    }
+  };
+
   const doPin = async (r: RepoRow, id: string) => {
     try {
       const updated = await ipc.pin(r.root, id);
       replaceRepo(updated);
-      toast({ message: S.repos.pinned(baseName(r.root), profileById(profiles, id)?.label ?? id) });
+      const label = profileById(profiles, id)?.label ?? id;
+      if (updated.switched?.length) {
+        toast({
+          message: S.repos.pinnedSwitched(baseName(r.root), label),
+          action: { label: S.common.undo, onClick: () => void undoSsh(updated) },
+        });
+        return;
+      }
+      toast({ message: S.repos.pinned(baseName(r.root), label) });
+      if (httpsPolicy === 'ask' && needsSsh(updated)) setAskSsh([updated]);
     } catch (e) {
       toast({ kind: 'error', message: (e as IpcError).message });
     }
@@ -179,7 +262,14 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
     try {
       const updated = await ipc.pinAll(resolvable.map((r) => r.root));
       reposStore.set((s) => ({ ...s, repos: mergeRepos(s.repos, updated) }));
-      toast({ message: S.repos.pinnedAll(updated.length) });
+      const switched = updated.filter((r) => r.switched?.length).length;
+      toast({
+        message: switched
+          ? `${S.repos.pinnedAll(updated.length)} ${S.repos.switchedAll(switched)}`
+          : S.repos.pinnedAll(updated.length),
+      });
+      const https = updated.filter(needsSsh);
+      if (httpsPolicy === 'ask' && https.length) setAskSsh(https);
     } catch (e) {
       toast({ kind: 'error', message: (e as IpcError).message });
     } finally {
@@ -188,6 +278,7 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
   };
 
   const ordered = sortProfiles(profiles);
+  const httpsRows = st.repos.filter(needsSsh);
 
   const columns: Column<RepoRow>[] = [
     {
@@ -248,6 +339,17 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
         return (
           <span className="flex flex-wrap items-center gap-1">
             <Pill kind={s.kind}>{s.text}</Pill>
+            {s.action === 'ssh' ? (
+              <Tooltip content={S.repos.httpsTip(labelOf(r))} describe>
+                <button
+                  type="button"
+                  aria-label={S.repos.httpsTipButton(baseName(r.root))}
+                  className="inline-flex rounded-sm text-ink-muted"
+                >
+                  <Ico icon={Icons.info} />
+                </button>
+              </Tooltip>
+            ) : null}
             {r.error ? (
               <Tooltip content={r.error} describe>
                 <button
@@ -277,6 +379,17 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
               onClick={() => nav.go('fix', { kind: 'fix-repo', repo: r.root })}
             >
               {S.repos.fix}
+            </Button>
+          );
+        if (s.action === 'ssh')
+          return (
+            <Button
+              compact
+              icon={Icons.key}
+              aria-label={S.repos.switchSshLabel(baseName(r.root))}
+              onClick={() => void switchOne(r)}
+            >
+              {S.repos.switchSsh}
             </Button>
           );
         if (s.action === 'husky')
@@ -325,6 +438,15 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
             {resolvable.length > 0 && !scanning ? (
               <Button variant="primary" icon={Icons.pin} onClick={pinAll} loading={pinningAll}>
                 {S.repos.pinAll}
+              </Button>
+            ) : null}
+            {httpsRows.length > 1 && !scanning ? (
+              <Button
+                icon={Icons.key}
+                onClick={() => void switchMany(httpsRows)}
+                loading={switchingAll}
+              >
+                {S.repos.switchAll}
               </Button>
             ) : null}
             {st.folders.length > 0 && !scanning ? (
@@ -409,7 +531,78 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
       )}
 
       <HuskyDialog repo={husky} onClose={() => setHusky(null)} />
+      <SwitchSshDialog
+        rows={askSsh}
+        labelOf={labelOf}
+        onClose={() => setAskSsh(null)}
+        onConfirm={async (rows, always) => {
+          setAskSsh(null);
+          if (always) await alwaysSwitch();
+          await switchMany(rows);
+        }}
+      />
     </div>
+  );
+}
+
+/**
+ * Policy "ask" (ADR 0006): after a pin, offer to switch the repo's GitHub
+ * HTTPS remote to SSH, with "Always do this" (policy auto). Says what changes
+ * (the remote address only) and that it can be undone (Design §9.1).
+ */
+function SwitchSshDialog({
+  rows,
+  labelOf,
+  onClose,
+  onConfirm,
+}: {
+  rows: RepoRow[] | null;
+  labelOf: (r: RepoRow) => string;
+  onClose: () => void;
+  onConfirm: (rows: RepoRow[], always: boolean) => Promise<void>;
+}) {
+  const [always, setAlways] = useState(false);
+  useEffect(() => {
+    if (rows) setAlways(false);
+  }, [rows]);
+  const one = rows?.length === 1 ? rows[0] : undefined;
+  const remote = one?.https_remotes[0];
+  return (
+    <Dialog
+      open={!!rows?.length}
+      title={S.repos.httpsDialog.title}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>{S.repos.httpsDialog.notNow}</Button>
+          <Button
+            variant="primary"
+            icon={Icons.key}
+            onClick={() => rows && void onConfirm(rows, always)}
+          >
+            {S.repos.httpsDialog.switch}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <p>
+          {one
+            ? S.repos.httpsDialog.body(baseName(one.root), labelOf(one))
+            : S.repos.httpsDialog.bodyMany(rows?.length ?? 0)}
+        </p>
+        {remote ? (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-small">
+            <dt className="text-ink-muted">{S.repos.httpsDialog.from}</dt>
+            <dd className="break-all font-mono text-mono-small text-ink">{remote.url}</dd>
+            <dt className="text-ink-muted">{S.repos.httpsDialog.to}</dt>
+            <dd className="break-all font-mono text-mono-small text-ink">{remote.ssh_url}</dd>
+          </dl>
+        ) : null}
+        <p className="text-small text-ink-muted">{S.repos.httpsDialog.safe}</p>
+        <Checkbox label={S.repos.httpsDialog.always} checked={always} onChange={setAlways} />
+      </div>
+    </Dialog>
   );
 }
 

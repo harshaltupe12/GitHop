@@ -13,6 +13,7 @@ import { Button } from '../components/Button';
 import { ChipInput } from '../components/ChipInput';
 import { ColorPicker } from '../components/ColorPicker';
 import { ConnectionResult, useTestConnection } from '../components/ConnectionResult';
+import { PassphraseStatus } from '../components/PassphraseStatus';
 import { Checkbox, Field, RequiredMark, TextInput } from '../components/Field';
 import { FolderField } from '../components/FolderField';
 import { Ico, Icons } from '../components/icons';
@@ -719,6 +720,9 @@ export function ProfileForm({
                   showTesting={false}
                   actions={false}
                 />
+              ) : null}
+              {original?.ssh_key ? (
+                <PassphraseStatus profileId={original.id} keyPath={original.ssh_key} />
               ) : null}
             </div>
           ) : original && keyMode === 'existing' && draft.ssh_key ? (

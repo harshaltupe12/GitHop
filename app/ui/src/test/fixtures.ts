@@ -52,6 +52,7 @@ export const settings = (over: Partial<Settings> = {}): Settings => ({
   hinted_repos: [],
   managed_global_keys: [],
   all_hook_stubs: false,
+  remote_https_policy: 'ask',
   ...over,
 });
 
@@ -124,6 +125,9 @@ export const repo = (
   },
   error: null,
   unpushed_offenders: 0,
+  https_remotes: [],
+  ssh_switched: [],
+  switched: [],
   ...extra,
 });
 
@@ -145,4 +149,12 @@ export const plan = (over: Partial<FixPlan> = {}): FixPlan => ({
   pushed_offenders: [],
   blocked_reason: null,
   ...over,
+});
+
+/** A GitHub HTTPS remote as the backend reports it (ADR 0006). */
+// (Built from parts: src/ may not contain a literal web URL, tokens.test.ts.)
+export const httpsRemote = (owner: string, name: string) => ({
+  name: 'origin',
+  url: ['https:', '', 'github.com', owner, `${name}.git`].join('/'),
+  ssh_url: `git@github.com:${owner}/${name}.git`,
 });

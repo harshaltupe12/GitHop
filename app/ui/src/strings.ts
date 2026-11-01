@@ -86,6 +86,8 @@ export const S = {
     wrongEmail: 'Email doesn’t match',
     pinDisagrees: 'Pin differs from owner',
     unreadable: 'Couldn’t read',
+    // ADR 0006: a GitHub HTTPS remote doesn't use the profile's SSH key.
+    https: 'HTTPS — signs in with Windows’ saved account',
   },
 
   errors: {
@@ -243,6 +245,27 @@ export const S = {
     required: (what: string) => `Enter a ${what.toLowerCase()}.`,
   },
 
+  // Key panel: the Windows ssh-agent remembers the key's passphrase (ADR 0006).
+  passphrase: {
+    remembered: 'Passphrase remembered by Windows',
+    rememberedHelp: 'Pushes from the terminal and VS Code use the key without asking.',
+    asks: 'Asks for your passphrase on each push',
+    asksHelp:
+      'VS Code can’t ask for it, so its pushes fail. Remember it once and Windows unlocks the key for you.',
+    agentOffHelp:
+      'Windows’ ssh-agent, which remembers passphrases, is turned off. Turning it on needs one admin prompt.',
+    none: 'This key has no passphrase, so nothing needs remembering.',
+    remember: 'Remember my passphrase',
+    turnOn: 'Turn on and remember',
+    working: 'Waiting for the console…',
+    consoleNote: 'A console window opens. Type your passphrase there; GitHop never sees it.',
+    done: 'Passphrase remembered. Pushes won’t ask for it again.',
+    cancelled: 'Windows didn’t turn on ssh-agent because the admin prompt was declined.',
+    notAdded:
+      'The passphrase wasn’t saved: the console was closed or the passphrase was wrong. Try again.',
+    stillOff: 'ssh-agent is still off. Try Turn on and remember again.',
+  },
+
   deleteDialog: {
     title: (label: string) => `Delete ${label}?`,
     body: 'Repos pinned to this profile will need a new Pin. Your SSH key file stays on disk.',
@@ -322,6 +345,34 @@ export const S = {
     stagePush: 'pre-push',
     copySnippet: 'Copy line',
     snippetCopied: 'Line copied.',
+    // HTTPS → SSH (ADR 0006).
+    switchSsh: 'Switch to SSH',
+    // Starts with the visible text (WCAG 2.5.3).
+    switchSshLabel: (repo: string) => `Switch to SSH: ${repo}`,
+    switchAll: 'Switch all to SSH',
+    httpsTip: (label: string) =>
+      `Over HTTPS, git signs in with the GitHub account Windows saved, not ${label}’s SSH key, so a push can go out as the wrong account. Switch to SSH so pushes use ${label}’s key.`,
+    httpsTipButton: (repo: string) => `Why ${repo} needs SSH`,
+    switched: (repo: string, label: string) =>
+      `${repo} switched to SSH. Pushes now use ${label}’s key.`,
+    switchedAll: (n: number) =>
+      `${n} ${plural(n, 'repo', 'repos')} switched to SSH. Pushes now use each profile’s key.`,
+    pinnedSwitched: (repo: string, label: string) =>
+      `${repo} pinned to ${label} and switched to SSH, so pushes use ${label}’s key.`,
+    undoneSsh: (repo: string) => `${repo} uses its HTTPS address again.`,
+    httpsDialog: {
+      title: 'Switch to SSH?',
+      body: (repo: string, label: string) =>
+        `${repo} pushes over HTTPS, so Windows signs in with the GitHub account it saved — not ${label}’s SSH key. Switch it to SSH so pushes use ${label}’s key?`,
+      bodyMany: (n: number) =>
+        `${n} ${plural(n, 'repo pushes', 'repos push')} over HTTPS, so Windows signs in with the GitHub account it saved — not each profile’s SSH key. Switch ${plural(n, 'it', 'them')} to SSH?`,
+      from: 'Now',
+      to: 'After',
+      safe: 'Only the remote address changes. You can undo it.',
+      always: 'Always do this when I pin a repo',
+      switch: 'Switch to SSH',
+      notNow: 'Not now',
+    },
   },
 
   fix: {
@@ -400,6 +451,12 @@ export const S = {
     licences: 'Licences',
     remove: 'Remove everything',
     removeHelp: 'Restores your original git config and deletes GitHop data.',
+    https: 'GitHub HTTPS remotes',
+    httpsHelp:
+      'Over HTTPS, Windows signs in with the account it saved instead of the profile’s SSH key. What GitHop does when it pins a repo:',
+    httpsAuto: 'Switch to SSH',
+    httpsAsk: 'Ask',
+    httpsNever: 'Leave',
     wipe: 'Wipe GitHop',
     saved: 'Settings saved.',
   },
