@@ -105,7 +105,7 @@ FunctionEnd
 !macro NSIS_HOOK_PREUNINSTALL
   ${If} $UpdateMode <> 1
     ${If} ${FileExists} "$INSTDIR\githop.exe"
-      DetailPrint "Restoring your git settings and removing GitHop's hooks…"
+      DetailPrint "Restoring your git settings and removing GitHop's hooks..."
       ${If} $DeleteAppDataCheckboxState = 1
         nsExec::ExecToLog '"$INSTDIR\githop.exe" wipe --from-uninstaller'
       ${Else}

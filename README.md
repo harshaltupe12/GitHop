@@ -86,6 +86,16 @@ from `githop hooks snippet commit` to the top of that repo's pre-commit hook.
 
 ## Uninstall
 
+You can remove GitHop at any time, three ways — all restore your git setup:
+
+- **Installed app:** Windows Settings → Apps → Installed apps → GitHop → Uninstall
+  (or Control Panel → Programs and Features). The uninstaller runs
+  `githop wipe --from-uninstaller`, removes GitHop from your user PATH and deletes
+  the program files. Tick "Delete the application data" to also remove
+  `%APPDATA%\githop`; SSH keys are always kept.
+- **In the app:** Settings → Wipe GitHop (type `WIPE` to confirm); the app quits after.
+- **Command line** (also for the standalone `githop.exe`):
+
 ```powershell
 githop wipe
 ```
