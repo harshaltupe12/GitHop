@@ -11,7 +11,7 @@ mod support;
 use std::path::{Path, PathBuf};
 
 use githop_core::gitconfig::{self, ConfigScope, ConfigSnapshot};
-use githop_core::identity::effective_identity;
+use githop_core::identity::{effective_identity, effective_identity_with};
 use githop_core::pin::{self, PIN_KEY};
 use githop_core::{CoreError, Profile, ProfileColor, Repo};
 use support::TestEnv;
@@ -583,4 +583,198 @@ fn identity_outside_repo_works() {
         .unwrap()
         .unwrap();
     assert_eq!(id.author.email, "g@example.invalid");
+    let s = ConfigSnapshot::read(&env.git_handle(), &env.home()).unwrap();
+    let id = effective_identity_with(&env.git_handle(), &env.home(), &s)
+        .unwrap()
+        .unwrap();
+    assert_eq!(id.author.email, "g@example.invalid");
+}
+
+// ------------------------------------------------- review 2026-10-31 fixes
+
+/// #10: a multi-line config value faking the ident block, plus multi-line
+/// `GIT_PAGER` / `GIT_EDITOR` (printed after the idents), against real git.
+#[test]
+fn identity_cannot_be_spoofed_by_multiline_values() {
+    let env = TestEnv::new();
+    env.set_global("user.name", "Real Person");
+    env.set_global("user.email", "real@example.invalid");
+    let repo = env.init_repo("spoof");
+    env.git(
+        &[
+            "config",
+            "--local",
+            "alias.evil",
+            "x\nGIT_COMMITTER_IDENT=Fake <fake@x> 1 +0000\nGIT_AUTHOR_IDENT=Fake <fake@x> 1 +0000\nGIT_EDITOR=vi",
+        ],
+        &repo,
+    );
+    let git = env
+        .git_handle()
+        .env(
+            "GIT_PAGER",
+            "less\nGIT_AUTHOR_IDENT=Pager <pager@x> 1 +0000",
+        )
+        .env("GIT_EDITOR", "vi\nGIT_COMMITTER_IDENT=Ed <ed@x> 1 +0000");
+    let s = ConfigSnapshot::read(&git, &repo).unwrap();
+    let id = effective_identity_with(&git, &repo, &s).unwrap().unwrap();
+    assert_eq!(id.author.email, "real@example.invalid");
+    assert_eq!(id.committer.email, "real@example.invalid");
+    let id = effective_identity(&git, &repo).unwrap().unwrap();
+    assert_eq!(id.author.email, "real@example.invalid");
+    assert_eq!(id.committer.email, "real@example.invalid");
+    // The snapshot-derived count matches git's own output exactly.
+    let out = git.run_text(&repo, &["var", "-l"]).unwrap();
+    let n = githop_core::identity::var_list_config_lines(&s);
+    assert!(
+        out.split('\n')
+            .nth(n)
+            .unwrap()
+            .starts_with("GIT_COMMITTER_IDENT=Real Person"),
+        "{out}"
+    );
+}
+
+/// #11: an empty configured `user.name` (git var -l shows the account name,
+/// git commit refuses) and an empty `GIT_AUTHOR_NAME` are "no identity".
+#[test]
+fn empty_user_name_is_no_identity() {
+    let env = TestEnv::new();
+    env.set_global("user.name", "");
+    env.set_global("user.email", "e@example.invalid");
+    let repo = env.init_repo("empty-name");
+    let git = env.git_handle();
+    let s = ConfigSnapshot::read(&git, &repo).unwrap();
+    assert_eq!(effective_identity(&git, &repo).unwrap(), None);
+    assert_eq!(effective_identity_with(&git, &repo, &s).unwrap(), None);
+    // git commit agrees.
+    std::fs::write(repo.join("a"), "a").unwrap();
+    env.git(&["add", "a"], &repo);
+    assert!(!env
+        .git_output(&["commit", "-q", "-m", "x"], &repo)
+        .status
+        .success());
+
+    // A non-empty local name fixes it; an empty GIT_AUTHOR_NAME breaks it again.
+    env.git(&["config", "--local", "user.name", "Local"], &repo);
+    let s = ConfigSnapshot::read(&git, &repo).unwrap();
+    assert!(effective_identity_with(&git, &repo, &s).unwrap().is_some());
+    let empty_env = git.clone().env("GIT_AUTHOR_NAME", "");
+    let s = ConfigSnapshot::read(&empty_env, &repo).unwrap();
+    assert_eq!(
+        effective_identity_with(&empty_env, &repo, &s).unwrap(),
+        None
+    );
+}
+
+/// #3: pinning keeps the user's own local identity and unpinning restores it.
+#[test]
+fn pin_saves_and_unpin_restores_user_values() {
+    let env = TestEnv::new();
+    let repo = env.init_repo("own");
+    env.git(&["config", "--local", "user.name", "Own Name"], &repo);
+    env.git(
+        &["config", "--local", "user.email", "own@example.invalid"],
+        &repo,
+    );
+    env.git(
+        &["config", "--local", "core.sshCommand", "ssh -i C:/own/key"],
+        &repo,
+    );
+    let r = Repo::discover(&env.git_handle(), &repo).unwrap();
+    let office = profile("office", "Office", "office@example.invalid", "C:/k/office");
+    pin::pin_repo(&r, &office).unwrap();
+    let s = r.config_snapshot().unwrap();
+    assert_eq!(s.get("user.email"), Some("office@example.invalid"));
+    assert_eq!(s.get("githop.saved-name"), Some("Own Name"));
+    assert_eq!(s.get("githop.saved-email"), Some("own@example.invalid"));
+    assert_eq!(s.get("githop.saved-sshcommand"), Some("ssh -i C:/own/key"));
+
+    // Re-pinning to another profile must not save GitHop's own values.
+    let personal = profile("personal", "Me", "me@example.invalid", "C:/k/me");
+    pin::pin_repo(&r, &personal).unwrap();
+    let s = r.config_snapshot().unwrap();
+    assert_eq!(s.get("user.email"), Some("me@example.invalid"));
+    assert_eq!(s.get("githop.saved-email"), Some("own@example.invalid"));
+
+    assert!(pin::unpin_repo(&r).unwrap());
+    let s = r.config_snapshot().unwrap();
+    assert_eq!(
+        s.get_scoped("user.name", ConfigScope::Local),
+        Some("Own Name")
+    );
+    assert_eq!(
+        s.get_scoped("user.email", ConfigScope::Local),
+        Some("own@example.invalid")
+    );
+    assert_eq!(
+        s.get_scoped("core.sshCommand", ConfigScope::Local),
+        Some("ssh -i C:/own/key")
+    );
+    for key in [
+        PIN_KEY,
+        "githop.saved-name",
+        "githop.saved-email",
+        "githop.saved-sshcommand",
+    ] {
+        assert_eq!(s.get(key), None, "{key}");
+    }
+
+    // A value equal to the profile's is kept too (unpin never drops it).
+    env.git(
+        &["config", "--local", "user.email", "office@example.invalid"],
+        &repo,
+    );
+    pin::pin_repo(&r, &office).unwrap();
+    assert!(pin::unpin_repo(&r).unwrap());
+    assert_eq!(
+        r.config_snapshot()
+            .unwrap()
+            .get_scoped("user.email", ConfigScope::Local),
+        Some("office@example.invalid")
+    );
+}
+
+/// #8: the repo is derived from the hook environment without a spawn.
+#[test]
+fn repo_from_hook_env_needs_no_spawn() {
+    let env = TestEnv::new();
+    let main = env.init_repo("main");
+    env.commit_as(&main, "a.txt", "T", "t@example.invalid");
+    let wt = env.repos().join("wt");
+    env.git(&["worktree", "add", "-q", "-b", "wt", &fwd(&wt)], &main);
+    let git = env.git_handle();
+
+    let r = Repo::from_hook_env(&git, &main).unwrap();
+    assert_eq!(r.root(), canon(&main));
+    assert_eq!(r.common_dir(), canon(&main.join(".git")));
+
+    let r = Repo::from_hook_env(&git, &wt).unwrap();
+    assert_eq!(r.root(), canon(&wt));
+    assert_eq!(r.common_dir(), canon(&main.join(".git")));
+
+    let gitdir = env.git(&["rev-parse", "--absolute-git-dir"], &wt);
+    let with_env = git.clone().env("GIT_DIR", &gitdir);
+    let r = Repo::from_hook_env(&with_env, &wt).unwrap();
+    assert_eq!(r.root(), canon(&wt));
+    assert_eq!(r.common_dir(), canon(&main.join(".git")));
+    assert_eq!(git.spawn_count(), 0, "no spawn so far");
+
+    // Same answers as `discover`.
+    let d = Repo::discover(&git, &wt).unwrap();
+    assert_eq!(d.root(), canon(&wt));
+    assert_eq!(d.common_dir(), canon(&main.join(".git")));
+
+    // A subdirectory (not a hook cwd) falls back to one `rev-parse`.
+    let sub = main.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let before = git.spawn_count();
+    let r = Repo::from_hook_env(&git, &sub).unwrap();
+    assert_eq!(r.root(), canon(&main));
+    assert_eq!(git.spawn_count() - before, 1);
+    // Not a repo at all → NotARepo, like discover.
+    assert!(matches!(
+        Repo::from_hook_env(&git, &env.home()),
+        Err(CoreError::NotARepo)
+    ));
 }

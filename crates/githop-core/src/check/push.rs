@@ -331,7 +331,7 @@ pub(crate) fn run(
     if updates.is_empty() {
         return Ok(result);
     }
-    let root = super::repo_root(ctx)?;
+    let root = super::hook_repo(ctx)?.root().to_path_buf();
     let snapshot = ConfigSnapshot::read(&ctx.git, &root)?;
     let mut store = super::open_store(ctx)?;
     let aliases = store.settings().github_host_aliases.clone();

@@ -91,7 +91,7 @@ pub fn run(ctx: &Ctx, command: Command) -> Result<Exit> {
         Command::Doctor => doctor::run(ctx),
         Command::Wipe(a) => wipe::run(ctx, a),
         Command::Check(a) => check::run(ctx, a),
-        Command::Fix => fix::run(ctx),
+        Command::Fix(a) => fix::run(ctx, a),
     }
 }
 
