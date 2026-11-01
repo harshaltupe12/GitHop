@@ -1083,9 +1083,16 @@ pub struct WindowsAgent;
 /// runs `sc.exe config ssh-agent start= auto` and `sc.exe start ssh-agent`. A
 /// compile-time constant: no user input is ever part of it. Exit 1223 = the
 /// prompt was declined.
+///
+/// The exe that gets elevated comes from `[Environment]::SystemDirectory`
+/// (GetSystemDirectory), never from an environment variable: another program
+/// running as the user could change `%SystemRoot%` and have its own `cmd.exe`
+/// elevated through GitHop's prompt. Inside the elevated `cmd.exe`,
+/// `%SystemRoot%` is safe: elevated processes get a fresh environment from the
+/// system, not the caller's.
 pub const ELEVATE_AGENT_SCRIPT: &str = "$ErrorActionPreference = 'Stop'; \
 try { \
-$p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\\cmd.exe') \
+$p = Start-Process -FilePath (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') \
 -ArgumentList '/d', '/c', '%SystemRoot%\\System32\\sc.exe config ssh-agent start= auto & %SystemRoot%\\System32\\sc.exe start ssh-agent' \
 -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode \
 } catch { exit 1223 }";
@@ -1860,6 +1867,9 @@ mod tests {
         assert!(ELEVATE_AGENT_SCRIPT.contains("sc.exe start ssh-agent"));
         assert_eq!(ELEVATE_AGENT_SCRIPT.matches("Start-Process").count(), 1);
         assert!(!ELEVATE_AGENT_SCRIPT.contains('"'));
+        // The elevated exe's path never comes from an environment variable.
+        assert!(ELEVATE_AGENT_SCRIPT.contains("[Environment]::SystemDirectory"));
+        assert!(!ELEVATE_AGENT_SCRIPT.contains("$env:"));
     }
 
     #[test]
