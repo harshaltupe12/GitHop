@@ -17,6 +17,8 @@ anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rpassword.workspace = true
+zeroize.workspace = true
 # Already in the tree via clap (anstream). Used only to switch on Windows console
 # virtual-terminal processing so ANSI colours render — no new crates, no unsafe here.
 anstyle-query = "1"
