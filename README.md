@@ -1,4 +1,9 @@
-# GitHop
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/graphics/githop-readme-banner-dark.svg">
+    <img alt="GitHop" src="brand/graphics/githop-readme-banner.svg" width="800">
+  </picture>
+</h1>
 
 Hop between git identities on one Windows PC — safely, locally, automatically.
 
