@@ -3,11 +3,13 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ChipInput } from '../components/ChipInput';
 import { ColorPicker } from '../components/ColorPicker';
+import { ConnectionResult, useTestConnection } from '../components/ConnectionResult';
 import { Checkbox, Field, TextInput } from '../components/Field';
 import { FolderField } from '../components/FolderField';
 import { Ico, Icons } from '../components/icons';
 import { Avatar } from '../components/Avatar';
 import { useToast } from '../components/Toast';
+import { useConnectionEntry } from '../lib/connection';
 import { cx } from '../lib/cx';
 import { NOREPLY_TEMPLATE, nextColor, normalizePath, slugify } from '../lib/format';
 import * as ipc from '../lib/ipc';
@@ -44,6 +46,8 @@ export function ProfileForm({
   submitLabel,
   heading,
   autoFocusHeading = !embedded,
+  focusField,
+  ownersProminent = false,
 }: {
   profiles: ProfileSet;
   original?: Profile;
@@ -58,6 +62,13 @@ export function ProfileForm({
   heading?: string;
   /** Move focus to the form heading on mount (screen change, added form). */
   autoFocusHeading?: boolean;
+  /** Focus this field on mount instead of the heading ("Add owner" on a card). */
+  focusField?: 'owners';
+  /**
+   * Onboarding: Owns comes right after Identity with a plain question, and an
+   * empty Owns gets a warning; the first Next with no owner stops once to show it.
+   */
+  ownersProminent?: boolean;
 }) {
   const toast = useToast();
   const formId = useId();
@@ -78,14 +89,20 @@ export function ProfileForm({
   const [generating, setGenerating] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [keyError, setKeyError] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
+  const [ownersNudged, setOwnersNudged] = useState(false);
+  const runTest = useTestConnection();
+  const testing = useConnectionEntry(original?.id)?.status === 'testing';
 
   const refs = useRef<Partial<Record<FieldName, HTMLElement | null>>>({});
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   // Screen readers and keyboard users start at the form, not on <body>.
   useEffect(() => {
-    if (autoFocusHeading) headingRef.current?.focus();
+    const target = focusField ? refs.current[focusField] : null;
+    if (target) {
+      target.focus();
+      target.scrollIntoView?.({ block: 'center' });
+    } else if (autoFocusHeading) headingRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only
   }, []);
   const colourLabelId = `${formId}-colour`;
@@ -156,9 +173,21 @@ export function ProfileForm({
   // Checks only the form can make: the noreply placeholder left in, and a
   // "Generate new key" profile whose key was never created.
   const keyMissing = keyMode === 'generate' && !publicKey;
+  const ownersEmpty =
+    ownersProminent &&
+    draft.owners.every((o) => !o.trim()) &&
+    draft.folders.every((f) => !f.trim()) &&
+    // The core says it itself once there are two or more profiles.
+    !issues.some((i) => i.field === 'owners' && i.severity === 'warning');
   const localIssues = useMemo(
-    () => localChecks(draft.email, keyMissing && !!draft.id),
-    [draft.email, keyMissing, draft.id],
+    () =>
+      localChecks(
+        draft.email,
+        keyMissing && !!draft.id,
+        ownersEmpty && (ownersNudged || touched.has('owners')),
+        ownersNudged,
+      ),
+    [draft.email, keyMissing, draft.id, ownersEmpty, ownersNudged, touched],
   );
   const allIssues = useMemo(() => [...issues, ...localIssues], [issues, localIssues]);
 
@@ -194,6 +223,15 @@ export function ProfileForm({
     if (firstErr) {
       const f = firstErr.field as FieldName;
       refs.current[f]?.focus();
+      return;
+    }
+    // Onboarding: stop once on an empty Owns so the warning is read, not skipped past.
+    const coreOwnersWarning = current.some(
+      (i) => i.field === 'owners' && i.severity === 'warning',
+    );
+    if (ownersProminent && !ownersNudged && (ownersEmpty || coreOwnersWarning)) {
+      setOwnersNudged(true);
+      refs.current.owners?.focus();
       return;
     }
     setSaving(true);
@@ -254,20 +292,102 @@ export function ProfileForm({
     }
   };
 
-  const test = async () => {
-    if (!original) return;
-    setTesting(true);
-    try {
-      const r = await ipc.testConnection(original.id);
-      if (r.kind === 'connected') toast({ message: S.profiles.connected(r.user) });
-      else if (r.kind === 'denied') toast({ kind: 'warning', message: S.profiles.denied });
-      else toast({ kind: 'error', message: S.profiles.failed(r.reason) });
-    } catch (err) {
-      toast({ kind: 'error', message: S.profiles.failed((err as IpcError).message) });
-    } finally {
-      setTesting(false);
-    }
+  const test = () => {
+    if (original) void runTest(original);
   };
+
+  // 2. Colour
+  const colourSection = (
+    <FormSection title={S.form.colour} titleId={colourLabelId}>
+      <p id={colourHelpId} className="-mt-2 text-small text-ink-muted">
+        {S.form.colourHelp}
+      </p>
+      <div
+        ref={(el) => {
+          refs.current.color = el?.querySelector<HTMLElement>('[aria-checked="true"]') ?? null;
+        }}
+      >
+        <ColorPicker
+          value={draft.color}
+          onChange={(c) => set('color', c)}
+          takenBy={takenBy}
+          labelledBy={colourLabelId}
+          describedBy={colourHelpId}
+        />
+      </div>
+      <IssueList issues={visible('color')} />
+    </FormSection>
+  );
+
+  // 3. Owns (straight after Identity in onboarding)
+  const ownsSection = (
+    <FormSection title={S.form.owns}>
+      {ownersProminent ? <p className="-mt-2 text-body text-ink">{S.form.ownsPrompt}</p> : null}
+      <Field label={S.form.ownersLabel} helper={S.form.ownersHelp} issues={visible('owners')}>
+        {(p) => (
+          <div
+            ref={(el) => {
+              refs.current.owners = el?.querySelector('input') ?? null;
+            }}
+          >
+            <ChipInput
+              control={p}
+              value={draft.owners}
+              onChange={(v) => set('owners', v)}
+              placeholder={S.form.ownersPlaceholder}
+            />
+          </div>
+        )}
+      </Field>
+      <Field
+        label={S.form.foldersLabel}
+        helper={S.form.foldersHelp}
+        issues={visible('folders')}
+        labelAs="div"
+      >
+        {() => (
+          <div className="flex flex-col gap-2">
+            {draft.folders.map((f, i) => (
+              <FolderField
+                key={`${f}-${i}`}
+                value={f}
+                control={{ id: `${formId}-folder-${i}`, 'aria-describedby': undefined }}
+                pickTitle={S.form.chooseFolder}
+                onChange={(v) =>
+                  set(
+                    'folders',
+                    draft.folders.map((x, j) => (j === i ? v : x)),
+                  )
+                }
+                onRemove={() =>
+                  set(
+                    'folders',
+                    draft.folders.filter((_, j) => j !== i),
+                  )
+                }
+                removeLabel={S.common.remove(f)}
+              />
+            ))}
+            <div>
+              <Button
+                icon={Icons.add}
+                ref={(el) => {
+                  refs.current.folders = el;
+                }}
+                onClick={async () => {
+                  const p = await ipc.pickFolder(S.form.chooseFolder);
+                  if (p && !draft.folders.includes(normalizePath(p)))
+                    set('folders', [...draft.folders, normalizePath(p)]);
+                }}
+              >
+                {S.form.addFolder}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Field>
+    </FormSection>
+  );
 
   const title = heading ?? (original ? S.form.editTitle(original.label) : S.form.addTitle);
 
@@ -385,93 +505,17 @@ export function ProfileForm({
           </Field>
         </FormSection>
 
-        {/* 2. Colour */}
-        <FormSection title={S.form.colour} titleId={colourLabelId}>
-          <p id={colourHelpId} className="-mt-2 text-small text-ink-muted">
-            {S.form.colourHelp}
-          </p>
-          <div
-            ref={(el) => {
-              refs.current.color = el?.querySelector<HTMLElement>('[aria-checked="true"]') ?? null;
-            }}
-          >
-            <ColorPicker
-              value={draft.color}
-              onChange={(c) => set('color', c)}
-              takenBy={takenBy}
-              labelledBy={colourLabelId}
-              describedBy={colourHelpId}
-            />
-          </div>
-          <IssueList issues={visible('color')} />
-        </FormSection>
-
-        {/* 3. Owns */}
-        <FormSection title={S.form.owns}>
-          <Field label={S.form.ownersLabel} helper={S.form.ownersHelp} issues={visible('owners')}>
-            {(p) => (
-              <div
-                ref={(el) => {
-                  refs.current.owners = el?.querySelector('input') ?? null;
-                }}
-              >
-                <ChipInput
-                  control={p}
-                  value={draft.owners}
-                  onChange={(v) => set('owners', v)}
-                  placeholder={S.form.ownersPlaceholder}
-                />
-              </div>
-            )}
-          </Field>
-          <Field
-            label={S.form.foldersLabel}
-            helper={S.form.foldersHelp}
-            issues={visible('folders')}
-            labelAs="div"
-          >
-            {() => (
-              <div className="flex flex-col gap-2">
-                {draft.folders.map((f, i) => (
-                  <FolderField
-                    key={`${f}-${i}`}
-                    value={f}
-                    control={{ id: `${formId}-folder-${i}`, 'aria-describedby': undefined }}
-                    pickTitle={S.form.chooseFolder}
-                    onChange={(v) =>
-                      set(
-                        'folders',
-                        draft.folders.map((x, j) => (j === i ? v : x)),
-                      )
-                    }
-                    onRemove={() =>
-                      set(
-                        'folders',
-                        draft.folders.filter((_, j) => j !== i),
-                      )
-                    }
-                    removeLabel={S.common.remove(f)}
-                  />
-                ))}
-                <div>
-                  <Button
-                    icon={Icons.add}
-                    ref={(el) => {
-                      refs.current.folders = el;
-                    }}
-                    onClick={async () => {
-                      const p = await ipc.pickFolder(S.form.chooseFolder);
-                      if (p && !draft.folders.includes(normalizePath(p)))
-                        set('folders', [...draft.folders, normalizePath(p)]);
-                    }}
-                  >
-                    {S.form.addFolder}
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Field>
-        </FormSection>
+        {ownersProminent ? (
+          <>
+            {ownsSection}
+            {colourSection}
+          </>
+        ) : (
+          <>
+            {colourSection}
+            {ownsSection}
+          </>
+        )}
 
         {/* 4. SSH key */}
         <FormSection title={S.form.sshKey}>
@@ -562,10 +606,18 @@ export function ProfileForm({
                   {S.form.openGithub}
                 </Button>
                 <Button icon={Icons.test} onClick={test} loading={testing} disabled={!original}>
-                  {S.form.testConnection}
+                  {testing ? S.form.testing : S.form.testConnection}
                 </Button>
               </div>
               {!original ? <p className="text-small text-ink-muted">{S.form.saveFirst}</p> : null}
+              {original ? (
+                <ConnectionResult
+                  profile={{ id: original.id, owners: draft.owners }}
+                  publicKey={publicKey}
+                  showTesting={false}
+                  actions={false}
+                />
+              ) : null}
             </div>
           ) : original && keyMode === 'existing' && draft.ssh_key ? (
             <p className="text-small text-ink-muted">{S.form.noPublicKey}</p>
@@ -636,8 +688,19 @@ function FormSection({
 /** The "Use noreply" template still has its `ID+` placeholder. */
 const NOREPLY_PLACEHOLDER = /^ID\+[^@]*@users\.noreply\.github\.com$/;
 
-function localChecks(email: string, keyMissing: boolean): ValidationIssue[] {
+function localChecks(
+  email: string,
+  keyMissing: boolean,
+  ownersEmpty: boolean,
+  nudged: boolean,
+): ValidationIssue[] {
   const out: ValidationIssue[] = [];
+  if (ownersEmpty)
+    out.push({
+      field: 'owners',
+      severity: 'warning',
+      message: nudged ? `${S.form.ownersEmpty} ${S.form.ownersSkip}` : S.form.ownersEmpty,
+    });
   if (NOREPLY_PLACEHOLDER.test(email.trim()))
     out.push({ field: 'email', severity: 'error', message: S.form.noreplyPlaceholder });
   if (keyMissing)

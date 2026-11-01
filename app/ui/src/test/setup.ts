@@ -27,9 +27,11 @@ beforeEach(async () => {
   const { resetQueries } = await import('../lib/query');
   const { reposStore } = await import('../lib/appState');
   const { tooltipGroup } = await import('../lib/motion');
+  const { connectionStore } = await import('../lib/connection');
   resetQueries();
   reposStore.reset();
   tooltipGroup.reset();
+  connectionStore.reset();
   window.localStorage.clear();
 });
 
