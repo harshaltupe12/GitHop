@@ -47,6 +47,9 @@ pub struct Settings {
     pub hinted_repos: Vec<String>,
     /// Global git keys GitHop has changed (e.g. `user.email`), restored on wipe.
     pub managed_global_keys: Vec<String>,
+    /// Also install the rarely used, frequently fired pass-through stubs
+    /// (`hooks::OPTIONAL_HOOKS`). Off by default for commit speed.
+    pub all_hook_stubs: bool,
 }
 
 impl Default for Settings {
@@ -64,6 +67,7 @@ impl Default for Settings {
             github_host_aliases: Vec::new(),
             hinted_repos: Vec::new(),
             managed_global_keys: Vec::new(),
+            all_hook_stubs: false,
         }
     }
 }

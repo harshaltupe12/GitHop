@@ -148,6 +148,9 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
             .is_some_and(|s| !s.profiles().profiles.is_empty());
         let health = hooks::verify_hooks(paths, git, &settings);
         check_hooks(&mut r, &health, has_profiles, opts.current_exe.as_deref());
+        if settings.hooks_installed {
+            check_optional_stubs(&mut r, &settings);
+        }
         let snapshot = ConfigSnapshot::read(git, &cwd);
         if opts.cwd.is_some() {
             check_local_hooks_path(&mut r, snapshot.as_ref().ok(), &settings, opts);
@@ -163,6 +166,39 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
     }
     check_agent(&mut r);
     r
+}
+
+/// Pinned repos with their own `.git/hooks/<optional hook>` while GitHop skips
+/// those stubs: that repo hook silently stops running (C2).
+fn check_optional_stubs(r: &mut DoctorReport, settings: &crate::Settings) {
+    if settings.all_hook_stubs {
+        return;
+    }
+    let mut hits = Vec::new();
+    for repo in &settings.pinned_repos {
+        for hook in hooks::OPTIONAL_HOOKS {
+            if Path::new(repo)
+                .join(".git")
+                .join("hooks")
+                .join(hook)
+                .is_file()
+            {
+                hits.push(format!("{repo} ({hook})"));
+            }
+        }
+    }
+    if !hits.is_empty() {
+        r.add(
+            "hooks-optional",
+            CheckStatus::Warning,
+            "Hooks",
+            format!(
+                "These repos have hooks GitHop doesn't pass through by default: {}",
+                hits.join(", ")
+            ),
+            Some("Run: githop hooks install --all-stubs"),
+        );
+    }
 }
 
 /// Parse `git version 2.45.1.windows.1` → `(2, 45, 1)`.
@@ -475,14 +511,7 @@ fn check_hooks(
             );
         }
         if files_ok {
-            r.ok(
-                "hooks-files",
-                T,
-                format!(
-                    "All {} hook files are present and unchanged",
-                    hooks::all_hook_names().len()
-                ),
-            );
+            r.ok("hooks-files", T, "All hook files are present and unchanged");
         }
         let embedded = h.githop_exe.as_str();
         if h.exe_missing {

@@ -33,6 +33,16 @@ from Plan.md / Design.md. Each can be revisited.
 8. **Planning docs (CLAUDE.md, Plan.md, Design.md, Implementation/) are gitignored**
    at the owner's request; they remain the local source of truth.
 9. **Licence: dual `MIT OR Apache-2.0`.**
+10. **`reference-transaction` and `post-index-change` pass-through stubs are not
+    installed by default.** git fires them ~6× per commit; each stub is an `sh`
+    start (~30–50 ms on Windows), which dominated commit latency. They are installed
+    when the previous global hooks folder has them or with
+    `githop hooks install --all-stubs`; `githop doctor` warns when a pinned repo has
+    its own copy (C2 trade-off, explicit).
+11. **Identity env vars equal to the configured value are not overrides.** `git commit`
+    exports `GIT_AUTHOR_NAME/EMAIL/DATE` to its hooks; only a value that differs from
+    config counts as a C9 override. Keeps the 1-spawn fast path under real hooks.
+12. **export/import uses `age` 0.11** (0.12 pulls a crate with an open advisory).
 
 ## Consequences
 

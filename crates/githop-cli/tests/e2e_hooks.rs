@@ -130,9 +130,9 @@ fn plan_section_1_commit_blocked_then_rerun_passes_with_office_email() {
     ] {
         assert!(err.contains(line), "missing {line:?} in:\n{err}");
     }
-    // Pinned now + "run the commit again" (exact wording: see the ignored test below).
+    // Pinned now + "Run the commit again." (exact wording: see the test below).
     assert!(err.contains("to Office."), "{err}");
-    assert!(err.contains("run the commit again"), "{err}");
+    assert!(err.contains("Run the commit again."), "{err}");
     assert!(
         !err.contains("\x1b["),
         "no colour when stderr isn't a terminal"
@@ -152,13 +152,9 @@ fn plan_section_1_commit_blocked_then_rerun_passes_with_office_email() {
     );
 }
 
-/// `git commit` exports GIT_AUTHOR_NAME/EMAIL/DATE to its hooks. Core
-/// `check/commit.rs` reads that as a user override (C9), so under a real hook
-/// it shows the "GIT_AUTHOR_EMAIL is set" variant and never takes the fast
-/// path. Fix belongs in core: count GIT_AUTHOR_EMAIL as an override only when
-/// it differs from the configured author email.
+/// `git commit` exports GIT_AUTHOR_NAME/EMAIL/DATE to its hooks with the
+/// configured identity; that must not be read as a user override (C9).
 #[test]
-#[ignore = "core check/commit.rs: git's own GIT_AUTHOR_EMAIL export is taken for a user override"]
 fn plan_section_1_exact_design_wording_under_a_real_hook() {
     let env = setup();
     let repo = env.repo_with_origin("billing-api", "office-org");

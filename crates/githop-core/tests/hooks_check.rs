@@ -698,7 +698,13 @@ fn install_reinstall_verify_uninstall_roundtrip() {
         ours
     );
     assert!(settings.hooks_installed);
-    assert_eq!(settings.hook_hashes.len(), hooks::all_hook_names().len());
+    assert_eq!(
+        settings.hook_hashes.len(),
+        hooks::installed_hook_names(false).len()
+    );
+    for optional in hooks::OPTIONAL_HOOKS {
+        assert!(!settings.hook_hashes.contains_key(optional), "{optional}");
+    }
 
     let h = hooks::verify_hooks(&paths, &git, &settings);
     assert!(
@@ -773,9 +779,10 @@ fn commit_check_spawn_budget() {
     assert_eq!(outcome, Outcome::Pass);
     assert_eq!(n, 1, "fast path");
 
-    // Slow path (an env override forces `git var`): 2 spawns.
-    let mut c = ctx(&env, &repo);
-    c.git = c.git.env("GIT_COMMITTER_EMAIL", OFFICE);
+    // Slow path (`author.email` config forces `git var`): 2 spawns. An env value
+    // equal to config no longer counts as an override (git exports it to hooks).
+    env.git(&["config", "--local", "author.email", OFFICE], &repo);
+    let c = ctx(&env, &repo);
     let (n, outcome) = spawns_for(Stage::Commit, &c, &[], "");
     assert_eq!(outcome, Outcome::Pass);
     assert_eq!(n, 2, "slow path");
@@ -805,7 +812,7 @@ fn commit_check_in_linked_worktree_spawn_budget() {
     assert_eq!(n, 1);
 
     // Slow path in the worktree: 2.
-    c.git = c.git.env("GIT_AUTHOR_EMAIL", OFFICE);
+    env.git(&["config", "--local", "author.email", OFFICE], &repo);
     let (n, outcome) = spawns_for(Stage::Commit, &c, &[], "");
     assert_eq!(outcome, Outcome::Pass);
     assert_eq!(n, 2);

@@ -232,6 +232,18 @@ pub fn mismatch_messages(
             _ => single_other = false,
         }
     }
+    /// "a" / "an" by the label's first letter ("an Office repo").
+    fn indefinite_article(label: &str) -> &'static str {
+        match label
+            .trim_start()
+            .chars()
+            .next()
+            .map(|c| c.to_ascii_lowercase())
+        {
+            Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+            _ => "a",
+        }
+    }
     let commits = if n == 1 {
         "1 commit".to_string()
     } else {
@@ -239,9 +251,10 @@ pub fn mismatch_messages(
     };
     let what = match other.filter(|_| single_other) {
         Some(p) => format!(
-            "{commits} {} the {} email in a {} repo.",
+            "{commits} {} the {} email in {} {} repo.",
             if n == 1 { "uses" } else { "use" },
             p.label,
+            indefinite_article(&owner.label),
             owner.label
         ),
         None => format!(

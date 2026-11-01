@@ -45,6 +45,23 @@ impl EnvOverrides {
     pub fn any(&self) -> bool {
         self.author_email.is_some() || self.committer_email.is_some()
     }
+
+    /// Drop env values equal to what config already gives that role. `git commit`
+    /// exports `GIT_AUTHOR_NAME/EMAIL/DATE` to its hooks with the configured
+    /// identity, so only a value that *differs* from config is a real override.
+    #[must_use]
+    pub fn without_configured(self, snapshot: &ConfigSnapshot) -> Self {
+        let user = snapshot.get("user.email");
+        let author_cfg = snapshot.get("author.email").or(user);
+        let committer_cfg = snapshot.get("committer.email").or(user);
+        let keep = |env: Option<String>, cfg: Option<&str>| {
+            env.filter(|v| !cfg.is_some_and(|c| email_eq(v, c)))
+        };
+        Self {
+            author_email: keep(self.author_email, author_cfg),
+            committer_email: keep(self.committer_email, committer_cfg),
+        }
+    }
 }
 
 fn email_eq(a: &str, b: &str) -> bool {
@@ -239,7 +256,7 @@ pub(crate) fn run(ctx: &CheckContext, enforce: EnforceMode) -> Result<CheckResul
     let root = repo.root().to_path_buf();
     let snapshot = ConfigSnapshot::read(&ctx.git, &root)?;
     let mut store = super::open_store(ctx)?;
-    let env = EnvOverrides::from_git(&ctx.git);
+    let env = EnvOverrides::from_git(&ctx.git).without_configured(&snapshot);
 
     let mut result = CheckResult::new(Stage::Commit, enforce, Outcome::Pass);
     if fast_path_ok(&snapshot, store.profiles(), &env) {
@@ -580,5 +597,30 @@ mod tests {
         let e = EnvOverrides::from_git(&g);
         assert_eq!(e.author_email.as_deref(), Some("a@b"));
         assert_eq!(e.committer_email, None);
+    }
+
+    #[test]
+    fn env_equal_to_config_is_not_an_override() {
+        // `git commit` exports GIT_AUTHOR_EMAIL to hooks with the configured value.
+        let s = ConfigSnapshot::from_entries(pinned_snapshot("harshal@office.example"));
+        let exported = EnvOverrides {
+            author_email: Some("Harshal@Office.example".into()),
+            committer_email: None,
+        }
+        .without_configured(&s);
+        assert_eq!(exported, EnvOverrides::default());
+        assert!(fast_path_ok(&s, &set(), &exported));
+
+        // A different value is a real override (C9).
+        let real = EnvOverrides {
+            author_email: Some("harshal@personal.example".into()),
+            committer_email: None,
+        }
+        .without_configured(&s);
+        assert_eq!(
+            real.author_email.as_deref(),
+            Some("harshal@personal.example")
+        );
+        assert!(!fast_path_ok(&s, &set(), &real));
     }
 }

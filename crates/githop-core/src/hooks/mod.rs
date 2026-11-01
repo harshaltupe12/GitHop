@@ -89,13 +89,39 @@ const TPL_CHAIN: &str = include_str!("templates/chain.sh");
 const BUFFER_SNIPPET: &str = "# Both hooks need stdin: buffer it once.\n\
 if [ -n \"$REPO_HOOK\" ] && [ -n \"$PREV_HOOK\" ]; then\n  INPUT=\"$(cat)\"\n  BUFFERED=1\nfi\n";
 
-/// Every hook file name GitHop writes, checked hooks first.
+/// Pass-through hooks git runs very often (`reference-transaction` ~5× per
+/// commit, `post-index-change` on every index write) but that almost no repo
+/// uses. Each stub costs an `sh` start (~30–50 ms on Windows), so they are only
+/// installed when `settings.all_hook_stubs` is set or the previous global hooks
+/// folder has them. `doctor` warns when a pinned repo has its own copy.
+pub const OPTIONAL_HOOKS: [&str; 2] = ["reference-transaction", "post-index-change"];
+
+/// Every hook file name GitHop knows, checked hooks first.
 pub fn all_hook_names() -> Vec<&'static str> {
     CHECKED_HOOKS
         .iter()
         .chain(PASSTHROUGH_HOOKS.iter())
         .copied()
         .collect()
+}
+
+/// Hook file names to install: all of them with `all_stubs`, else all minus
+/// [`OPTIONAL_HOOKS`].
+pub fn installed_hook_names(all_stubs: bool) -> Vec<&'static str> {
+    all_hook_names()
+        .into_iter()
+        .filter(|n| all_stubs || !OPTIONAL_HOOKS.contains(n))
+        .collect()
+}
+
+/// Whether the optional stubs are wanted: forced by settings, or needed to keep
+/// chaining a previous global hooks folder that has one of them.
+fn wants_all_stubs(settings: &Settings, previous_expanded: &str) -> bool {
+    settings.all_hook_stubs
+        || (!previous_expanded.is_empty()
+            && OPTIONAL_HOOKS
+                .iter()
+                .any(|h| Path::new(previous_expanded).join(h).is_file()))
 }
 
 /// Escape a value for use inside an sh double-quoted string.
@@ -218,8 +244,17 @@ pub fn render_hook(name: &str, githop_exe: &str, previous: &str) -> Result<Strin
 
 /// Render every hook: `(file name, contents)`, in [`all_hook_names`] order.
 pub fn render_all(githop_exe: &str, previous: &str) -> Result<Vec<(String, String)>> {
-    all_hook_names()
-        .into_iter()
+    render_names(&all_hook_names(), githop_exe, previous)
+}
+
+/// Render the given hooks: `(file name, contents)`, in the given order.
+pub fn render_names(
+    names: &[&str],
+    githop_exe: &str,
+    previous: &str,
+) -> Result<Vec<(String, String)>> {
+    names
+        .iter()
         .map(|n| render_hook(n, githop_exe, previous).map(|c| (n.to_string(), c)))
         .collect()
 }
@@ -304,6 +339,13 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
         tmp.as_file()
             .sync_all()
             .map_err(|e| CoreError::io(tmp.path(), e))?;
+        // tempfile creates 0600; git skips hooks without the exec bit on Unix.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| CoreError::io(tmp.path(), e))?;
+        }
         match tmp.persist(path) {
             Ok(_) => return Ok(()),
             Err(e) => last_err = Some(e.error),
@@ -349,7 +391,9 @@ pub fn install_hooks(
         previous
     };
     let home = git.home_dir();
-    let rendered = render_all(&exe, &expand_home(&previous, home.as_deref()))?;
+    let prev_expanded = expand_home(&previous, home.as_deref());
+    let names = installed_hook_names(wants_all_stubs(settings, &prev_expanded));
+    let rendered = render_names(&names, &exe, &prev_expanded)?;
 
     let dir = paths.hooks_dir();
     std::fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
@@ -552,15 +596,17 @@ pub fn verify_hooks(paths: &Paths, git: &Git, settings: &Settings) -> HookHealth
     if !settings.hooks_installed {
         return h;
     }
-    let expected: BTreeMap<String, String> = render_all(&settings.githop_exe, &prev_expanded)
-        .map(|v| {
-            v.into_iter()
-                .map(|(n, c)| (n, sha256_hex(c.as_bytes())))
-                .collect()
-        })
-        .unwrap_or_default();
+    let names = installed_hook_names(wants_all_stubs(settings, &prev_expanded));
+    let expected: BTreeMap<String, String> =
+        render_names(&names, &settings.githop_exe, &prev_expanded)
+            .map(|v| {
+                v.into_iter()
+                    .map(|(n, c)| (n, sha256_hex(c.as_bytes())))
+                    .collect()
+            })
+            .unwrap_or_default();
     let dir = paths.hooks_dir();
-    for name in all_hook_names() {
+    for name in names {
         let p = dir.join(name);
         let Ok(bytes) = std::fs::read(&p) else {
             h.missing.push(name.to_string());

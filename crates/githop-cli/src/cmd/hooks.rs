@@ -106,6 +106,13 @@ pub fn print_install(ctx: &Ctx, report: &InstallReport) {
 fn run_install(ctx: &Ctx, args: HooksInstallArgs) -> Result<Exit> {
     ctx.reject_json("hooks install")?;
     let mut store = ctx.store()?;
+    if args.all_stubs || args.common_stubs {
+        let all = args.all_stubs;
+        store.update_settings(|s| {
+            s.all_hook_stubs = all;
+            Ok(())
+        })?;
+    }
     let ask = if args.yes || store.settings().hooks_installed {
         Ask::Quiet
     } else {

@@ -292,6 +292,12 @@ pub struct HooksInstallArgs {
     /// Don't ask for confirmation
     #[arg(short, long)]
     pub yes: bool,
+    /// Also pass through reference-transaction and post-index-change (slower commits)
+    #[arg(long, conflicts_with = "common_stubs")]
+    pub all_stubs: bool,
+    /// Skip those two rarely used hooks again (the default)
+    #[arg(long)]
+    pub common_stubs: bool,
 }
 
 #[derive(Debug, Clone, Args)]
