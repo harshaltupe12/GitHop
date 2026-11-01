@@ -6,6 +6,12 @@
 //! GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM=1, temp GITHOP_HOME,
 //! GITHOP_NO_REGISTRY=1) — nothing here touches the real machine config.
 
+//!
+//! Windows only: v1 ships for Windows, where Git for Windows' `sh` runs hooks
+//! regardless of file mode. (On Unix, core `install_hooks` doesn't set the
+//! executable bit yet, so git would skip the hooks.)
+
+#![cfg(windows)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod support;
