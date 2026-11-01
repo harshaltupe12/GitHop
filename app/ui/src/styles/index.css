@@ -45,6 +45,41 @@
   }
 }
 
+/* Scrollbars: thin, rounded, quiet — tokens only. WebView2 (Chromium) uses the
+   ::-webkit-scrollbar rules; the standard properties are a fallback elsewhere
+   (Chromium ignores the pseudo-elements when they're set, so they're scoped). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
+}
+::-webkit-scrollbar-thumb {
+  /* 3 px transparent border + padding-box clip = a 4 px pill inside a 10 px hit area. */
+  border: 3px solid transparent;
+  border-radius: var(--radius-md);
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--border-input) 45%, transparent);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-input);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--aqua-strong);
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--border-input) 45%, transparent) transparent;
+  }
+}
+
 /* Tray menu window (Design §7.14): frameless, the menu draws its own surface. */
 html.tray,
 html.tray body {
@@ -123,5 +158,11 @@ html.tray body {
   }
   .gh-toggle[aria-checked='true'] {
     background: Highlight;
+  }
+  /* Scrollbar thumb in system colours so it stays visible in contrast themes. */
+  ::-webkit-scrollbar-thumb,
+  ::-webkit-scrollbar-thumb:hover,
+  ::-webkit-scrollbar-thumb:active {
+    background-color: CanvasText;
   }
 }
