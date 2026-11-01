@@ -222,7 +222,6 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
               <Pill kind="neutral">{S.pill.pinned}</Pill>
             ) : src === 'default' ? (
               <span className="flex items-center gap-1 text-small text-ink-muted">
-                <span aria-hidden="true">·</span>
                 {S.repos.by.default}
                 <Tooltip content={S.repos.defaultTip(p.label, unmatchedOwner(r))} describe>
                   <button
