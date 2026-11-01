@@ -235,7 +235,8 @@ pub fn mismatch_messages(m: &CommitMismatch, mode: EnforceMode, pin: &PinAttempt
 
 /// Orchestrator. Errors become an internal error in [`super::run_check`].
 pub(crate) fn run(ctx: &CheckContext, enforce: EnforceMode) -> Result<CheckResult> {
-    let root = super::repo_root(ctx)?;
+    let repo = super::hook_repo(ctx)?;
+    let root = repo.root().to_path_buf();
     let snapshot = ConfigSnapshot::read(&ctx.git, &root)?;
     let mut store = super::open_store(ctx)?;
     let env = EnvOverrides::from_git(&ctx.git);
@@ -259,7 +260,7 @@ pub(crate) fn run(ctx: &CheckContext, enforce: EnforceMode) -> Result<CheckResul
     }
     result.profile_id = resolution.profile_id.clone();
 
-    let identity = identity::effective_identity(&ctx.git, &root)?;
+    let identity = identity::effective_identity_with(&ctx.git, &root, &snapshot)?;
     let decision = decide(&resolution, store.profiles(), identity.as_ref(), &env);
     let CommitDecision::Mismatch(m) = decision else {
         return Ok(result);
@@ -270,7 +271,7 @@ pub(crate) fn run(ctx: &CheckContext, enforce: EnforceMode) -> Result<CheckResul
     } else {
         let profile = store.profiles().get(&m.profile_id).cloned();
         match profile {
-            Some(p) => match super::pin_and_record(ctx, &mut store, &root, &p) {
+            Some(p) => match super::pin_and_record(&mut store, &repo, &p) {
                 Ok(()) => PinAttempt::Pinned,
                 Err(e) => PinAttempt::Failed(e.to_string()),
             },

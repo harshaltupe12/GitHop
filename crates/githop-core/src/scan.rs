@@ -206,7 +206,7 @@ fn scan_one(git: &Git, dir: &Path, set: &ProfileSet, github_aliases: &[String]) 
         }
     };
     let resolution = crate::resolver::resolve(&snapshot, repo.root(), set, github_aliases);
-    let (identity, error) = match repo.effective_identity() {
+    let (identity, error) = match repo.effective_identity_with(&snapshot) {
         Ok(id) => (id, None),
         Err(e) => (None, Some(e.to_string())),
     };

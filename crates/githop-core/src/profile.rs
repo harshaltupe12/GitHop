@@ -471,6 +471,29 @@ fn check_ssh_key(out: &mut Issues, p: &Profile) {
             format!("SSH key \"{key}\" must be a full path, like C:/Users/you/.ssh/githop_office."),
         );
     }
+    // ssh expands `%` tokens and `${VAR}` in identity paths (review #6). GitHop
+    // escapes `%`, but there's no escape for `${`, and other tools may not escape either.
+    if key.contains("${") {
+        out.push(
+            Some(p),
+            "ssh_key",
+            Severity::Warning,
+            format!(
+                "SSH key \"{key}\" contains ${{. ssh reads that as an environment variable, \
+                 so it may not find the key. Use a path without ${{."
+            ),
+        );
+    } else if key.contains('%') {
+        out.push(
+            Some(p),
+            "ssh_key",
+            Severity::Warning,
+            format!(
+                "SSH key \"{key}\" contains %. GitHop escapes it for ssh, but other tools may \
+                 read it differently. Consider a path without %."
+            ),
+        );
+    }
 }
 
 fn check_owners(out: &mut Issues, p: &Profile, earlier: &[Profile]) {
@@ -802,6 +825,25 @@ mod tests {
             find(&issues, Some("office"), "ssh_key", Severity::Error).len(),
             1
         );
+    }
+
+    #[test]
+    fn ssh_key_with_percent_or_env_var_warns() {
+        let mut s = office_personal();
+        s.profiles[0].ssh_key = PathBuf::from("C:/Users/me/100%/githop_office");
+        let issues = s.issues();
+        let w = find(&issues, Some("office"), "ssh_key", Severity::Warning);
+        assert_eq!(w.len(), 1, "{issues:?}");
+        assert!(w[0].message.contains('%'));
+        assert_sentence(&w[0].message);
+        assert!(s.validate().is_ok());
+
+        s.profiles[0].ssh_key = PathBuf::from("C:/Users/${USER}/key");
+        let issues = s.issues();
+        let w = find(&issues, Some("office"), "ssh_key", Severity::Warning);
+        assert_eq!(w.len(), 1, "{issues:?}");
+        assert!(w[0].message.contains("${"));
+        assert_sentence(&w[0].message);
     }
 
     #[test]
