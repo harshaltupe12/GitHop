@@ -15,10 +15,18 @@ path = "src/main.rs"
 githop-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Already in the tree via clap (anstream). Used only to switch on Windows console
+# virtual-terminal processing so ANSI colours render — no new crates, no unsafe here.
+anstyle-query = "1"
 
 [dev-dependencies]
 assert_cmd.workspace = true
 predicates.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+insta = "1"
 
 [lints]
 workspace = true
