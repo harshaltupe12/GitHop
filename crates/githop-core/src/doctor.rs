@@ -153,7 +153,7 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
         }
         let snapshot = ConfigSnapshot::read(git, &cwd);
         if opts.cwd.is_some() {
-            check_local_hooks_path(&mut r, snapshot.as_ref().ok(), &settings, opts);
+            check_repo_hooks_path(&mut r, snapshot.as_ref().ok(), &settings, opts, paths, git);
         }
         check_ssh_config(&mut r, git);
         if opts.refresh_aliases {
@@ -457,11 +457,12 @@ fn check_hooks(
                 format!("Couldn't read global core.hooksPath: {e}"),
                 None,
             ),
-            (None, true, _) => r.ok(
+            (None, true, _) if h.overridden_by.is_empty() => r.ok(
                 "hooks-path",
                 T,
                 format!("Global core.hooksPath points to GitHop's hooks ({})", h.hooks_dir),
             ),
+            (None, true, _) => {}
             (None, false, Some(other)) => r.add(
                 "hooks-path",
                 CheckStatus::Problem,
@@ -478,6 +479,42 @@ fn check_hooks(
                 "Global core.hooksPath isn't set, so GitHop's hooks don't run.",
                 Some(REINSTALL),
             ),
+        }
+        // Review 2026-11-01 #1: git uses the last core.hooksPath it reads, so
+        // an included file read after GitHop's value turns GitHop off.
+        for o in &h.overridden_by {
+            let detail = match &o.condition {
+                Some(cond) => format!(
+                    "{} sets core.hooksPath = {} for repos matching {cond}, and git reads it after GitHop's setting, so GitHop's hooks don't run in those repos.",
+                    o.file, o.value
+                ),
+                None => format!(
+                    "{} sets core.hooksPath = {}, and git reads it after GitHop's setting, so GitHop's hooks don't run.",
+                    o.file, o.value
+                ),
+            };
+            r.add(
+                "hooks-path",
+                CheckStatus::Problem,
+                T,
+                detail,
+                Some("Run: githop hooks install (GitHop's hooks then run first and still run those hooks)"),
+            );
+        }
+        if h.overridden_by.is_empty() && !h.included_hooks_paths.is_empty() {
+            let list: Vec<String> = h
+                .included_hooks_paths
+                .iter()
+                .map(|i| format!("{} from {}", i.value, i.describe()))
+                .collect();
+            r.ok(
+                "hooks-included",
+                T,
+                format!(
+                    "Also runs the hooks your included git config sets: {}",
+                    list.join(", ")
+                ),
+            );
         }
         let mut files_ok = true;
         if !h.missing.is_empty() {
@@ -506,7 +543,10 @@ fn check_hooks(
                 "hooks-stale",
                 CheckStatus::Warning,
                 T,
-                format!("Hook file(s) are from an older GitHop: {}", list(&h.stale)),
+                format!(
+                    "Hook file(s) are out of date (older GitHop, or a changed setting): {}",
+                    list(&h.stale)
+                ),
                 Some(REINSTALL),
             );
         }
@@ -599,29 +639,55 @@ fn same_file(a: &str, b: &str) -> bool {
     key(a) == key(b)
 }
 
-/// Repo-level `core.hooksPath` (husky, lefthook…) hides GitHop's hooks (C3).
-fn check_local_hooks_path(
+/// The `core.hooksPath` git uses in the cwd repo, from any scope or include
+/// (review 2026-11-01 #1). Repo-level values (husky, lefthook…, C3) get the
+/// snippet; anything else that isn't GitHop's (an `includeIf` for this repo's
+/// folder, system config, …) is a problem when the hooks are installed.
+fn check_repo_hooks_path(
     r: &mut DoctorReport,
     snapshot: Option<&ConfigSnapshot>,
     settings: &Settings,
     opts: &DoctorOptions,
+    paths: &Paths,
+    git: &Git,
 ) {
     let Some(snap) = snapshot else { return };
     let local = snap
         .get_scoped(hooks::HOOKS_PATH_KEY, ConfigScope::Worktree)
         .or_else(|| snap.get_scoped(hooks::HOOKS_PATH_KEY, ConfigScope::Local));
-    let Some(value) = local else { return };
-    let exe = if settings.githop_exe.is_empty() {
-        opts.current_exe
-            .as_deref()
-            .map(to_slash)
-            .unwrap_or_else(|| "githop".to_string())
-    } else {
-        settings.githop_exe.clone()
+    let effective = hooks::repo_hooks_override(snap, paths, git.home_dir().as_deref());
+    let Some(value) = local else {
+        if !settings.hooks_installed {
+            return;
+        }
+        if let Some(o) = effective {
+            let detail = match &o.value {
+                Some(v) => format!(
+                    "In this repo, core.hooksPath is {v} (set in {}), so GitHop's hooks don't run here.",
+                    if o.origin.is_empty() { "your git config" } else { &o.origin }
+                ),
+                None => "In this repo, core.hooksPath isn't set, so GitHop's hooks don't run here."
+                    .to_string(),
+            };
+            // A global include: re-installing moves GitHop's value after it.
+            // Elsewhere (system config, `-c`): GitHop can't change it.
+            let fix = if matches!(o.scope, ConfigScope::Global) || o.value.is_none() {
+                "Run: githop hooks install (GitHop's hooks then run first and still run those hooks)"
+                    .to_string()
+            } else {
+                snippet_fix(settings, opts)
+            };
+            r.add(
+                "repo-hooks-path",
+                CheckStatus::Problem,
+                "This repo",
+                detail,
+                Some(&fix),
+            );
+        }
+        return;
     };
-    let fix = hooks::snippet("commit", &exe)
-        .map(|s| format!("Add this line at the top of that folder's pre-commit hook: {s}"))
-        .unwrap_or_else(|_| "Run: githop hooks snippet commit".to_string());
+    let fix = snippet_fix(settings, opts);
     r.add(
         "local-hooks-path",
         CheckStatus::Warning,
@@ -631,6 +697,21 @@ fn check_local_hooks_path(
         ),
         Some(&fix),
     );
+}
+
+/// "Add this line at the top of that folder's pre-commit hook: …" (C3).
+fn snippet_fix(settings: &Settings, opts: &DoctorOptions) -> String {
+    let exe = if settings.githop_exe.is_empty() {
+        opts.current_exe
+            .as_deref()
+            .map(to_slash)
+            .unwrap_or_else(|| "githop".to_string())
+    } else {
+        settings.githop_exe.clone()
+    };
+    hooks::snippet("commit", &exe)
+        .map(|s| format!("Add this line at the top of that folder's pre-commit hook: {s}"))
+        .unwrap_or_else(|_| "Run: githop hooks snippet commit".to_string())
 }
 
 fn check_ssh_config(r: &mut DoctorReport, git: &Git) {

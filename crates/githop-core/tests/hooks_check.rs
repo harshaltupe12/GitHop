@@ -53,6 +53,13 @@ fn marker_hook(tag: &str, rc_var: &str) -> String {
 impl HookEnv {
     /// Install rendered hooks with `githop` = stub (or `exe_override`) and `previous`.
     fn new(previous: Option<&Path>, exe_override: Option<&Path>) -> Self {
+        let prev = previous.map(slash).unwrap_or_default();
+        Self::new_with(&prev, exe_override, false)
+    }
+
+    /// Like [`HookEnv::new`] with a raw previous value (may be relative) and
+    /// the block-strict flag.
+    fn new_with(prev: &str, exe_override: Option<&Path>, strict: bool) -> Self {
         let env = TestEnv::new();
         env.set_global("user.name", "Test Person");
         env.set_global("user.email", "test@example.invalid");
@@ -63,8 +70,11 @@ impl HookEnv {
         let exe = exe_override.map(Path::to_path_buf).unwrap_or(stub);
         let hooks_dir = env.root().join("githop-hooks");
         std::fs::create_dir_all(&hooks_dir).unwrap();
-        let prev = previous.map(slash).unwrap_or_default();
-        for (name, body) in hooks::render_all(&slash(&exe), &prev).unwrap() {
+        let opts = hooks::RenderOptions {
+            strict,
+            ..hooks::RenderOptions::new(&slash(&exe), prev)
+        };
+        for (name, body) in hooks::render_names_with(&hooks::all_hook_names(), &opts).unwrap() {
             assert!(!body.contains('\r'));
             std::fs::write(hooks_dir.join(name), body).unwrap();
         }
@@ -442,6 +452,183 @@ fn rendered_files_are_lf_and_hashable() {
     }
 }
 
+fn githop_commit_checks(calls: &str) -> usize {
+    calls.matches("githop check --stage commit").count()
+}
+
+fn head(h: &HookEnv, repo: &Path) -> String {
+    h.env.git(&["rev-parse", "HEAD"], repo)
+}
+
+/// main: a, c · feat: a, b (so `git merge feat` makes a merge commit).
+fn diverged_repo(h: &HookEnv) -> PathBuf {
+    let repo = h.env.init_repo("r");
+    assert!(h.commit(&repo, "a.txt", &[]).status.success());
+    h.env.git(&["checkout", "-q", "-b", "feat"], &repo);
+    assert!(h.commit(&repo, "b.txt", &[]).status.success());
+    h.env.git(&["checkout", "-q", "main"], &repo);
+    assert!(h.commit(&repo, "c.txt", &[]).status.success());
+    repo
+}
+
+/// Review 2026-11-01 #5: git runs pre-merge-commit (not pre-commit) for a
+/// merge commit; GitHop checks there and its exit 1 stops the merge.
+#[test]
+fn merge_commit_runs_the_commit_check_and_can_block() {
+    let h = HookEnv::new(None, None);
+    let repo = diverged_repo(&h);
+    let before = head(&h, &repo);
+    h.clear();
+    let out = h.git(
+        &["merge", "-q", "--no-edit", "feat"],
+        &repo,
+        &[("STUB_RC", "1")],
+    );
+    assert!(!out.status.success(), "merge must be blocked");
+    assert_eq!(head(&h, &repo), before, "no merge commit");
+    assert_eq!(githop_commit_checks(&h.calls()), 1, "{}", h.calls());
+    let _ = h.git(&["merge", "--abort"], &repo, &[]);
+    h.env.git(&["reset", "-q", "--hard"], &repo);
+
+    h.clear();
+    let out = h.git(&["merge", "-q", "--no-edit", "feat"], &repo, &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_ne!(head(&h, &repo), before);
+    assert_eq!(githop_commit_checks(&h.calls()), 1, "{}", h.calls());
+}
+
+/// Review 2026-11-01 #5: revert and cherry-pick run no pre-commit; GitHop
+/// checks them in prepare-commit-msg. A plain commit is still checked once,
+/// `--no-verify` still skips GitHop (C15), and rebase is left to push.
+#[test]
+fn revert_and_cherry_pick_are_checked_once_and_no_verify_still_skips() {
+    let h = HookEnv::new(None, None);
+    let repo = diverged_repo(&h);
+    let before = head(&h, &repo);
+
+    h.clear();
+    let out = h.git(&["revert", "--no-edit", "HEAD"], &repo, &[("STUB_RC", "1")]);
+    assert!(!out.status.success(), "revert must be blocked");
+    assert_eq!(head(&h, &repo), before);
+    assert_eq!(githop_commit_checks(&h.calls()), 1, "{}", h.calls());
+    h.env.git(&["reset", "-q", "--hard"], &repo);
+
+    h.clear();
+    let out = h.git(&["cherry-pick", "feat"], &repo, &[("STUB_RC", "1")]);
+    assert!(!out.status.success(), "cherry-pick must be blocked");
+    assert_eq!(head(&h, &repo), before);
+    assert_eq!(githop_commit_checks(&h.calls()), 1, "{}", h.calls());
+    let _ = h.git(&["cherry-pick", "--abort"], &repo, &[]);
+    h.env.git(&["reset", "-q", "--hard"], &repo);
+
+    h.clear();
+    let out = h.git(&["cherry-pick", "feat"], &repo, &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(githop_commit_checks(&h.calls()), 1, "{}", h.calls());
+
+    h.clear();
+    let out = h.commit(&repo, "d.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        githop_commit_checks(&h.calls()),
+        1,
+        "a plain commit is checked once (pre-commit only): {}",
+        h.calls()
+    );
+
+    h.clear();
+    std::fs::write(repo.join("e.txt"), "e\n").unwrap();
+    h.env.git(&["add", "e.txt"], &repo);
+    let out = h.git(
+        &["commit", "-q", "--no-verify", "-m", "e"],
+        &repo,
+        &[("STUB_RC", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        githop_commit_checks(&h.calls()),
+        0,
+        "--no-verify skips GitHop"
+    );
+
+    h.clear();
+    h.env.git(&["checkout", "-q", "feat"], &repo);
+    let out = h.git(
+        &["rebase", "-q", "--force-rebase", "main"],
+        &repo,
+        &[("STUB_RC", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        githop_commit_checks(&h.calls()),
+        0,
+        "rebase: push checks it"
+    );
+}
+
+/// Review 2026-11-01 #8: previous global hooks path = the repo's own
+/// `.git/hooks` must not run the repo hook twice.
+#[test]
+fn previous_hooks_path_equal_to_repo_hooks_runs_the_hook_once() {
+    let h = HookEnv::new_with(".git/hooks", None, false);
+    let repo = h.env.init_repo("r");
+    write_repo_hook(&repo, "commit-msg", &marker_hook("repo-commit-msg", "NOPE"));
+    write_repo_hook(&repo, "pre-commit", &marker_hook("repo-pre-commit", "NOPE"));
+    let out = h.commit(&repo, "a.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let calls = h.calls();
+    assert_eq!(calls.matches("repo-commit-msg").count(), 1, "{calls}");
+    assert_eq!(calls.matches("repo-pre-commit").count(), 1, "{calls}");
+
+    // The same folder spelled differently (compared as files, not strings).
+    let h = HookEnv::new_with("./.git/hooks/", None, false);
+    let repo = h.env.init_repo("r");
+    write_repo_hook(&repo, "commit-msg", &marker_hook("repo-commit-msg", "NOPE"));
+    let out = h.commit(&repo, "a.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(h.calls().matches("repo-commit-msg").count(), 1);
+}
+
+/// Review 2026-11-01 #9: under block-strict, a missing or crashing githop
+/// blocks (Plan §12) instead of failing open.
+#[test]
+fn block_strict_blocks_when_githop_is_missing_or_crashes() {
+    let missing = PathBuf::from("C:/definitely/not/here/githop.exe");
+    let h = HookEnv::new_with("", Some(&missing), true);
+    let repo = h.env.init_repo("r");
+    let out = h.commit(&repo, "a.txt", &[]);
+    assert!(!out.status.success(), "missing githop must block");
+    assert!(
+        stderr(&out).contains("so the commit was blocked (block-strict mode)"),
+        "{}",
+        stderr(&out)
+    );
+
+    let h = HookEnv::new_with("", None, true);
+    let (repo, remote) = repo_with_remote(&h);
+    for rc in ["101", "2", "3"] {
+        let out = h.commit(&repo, &format!("x{rc}.txt"), &[("STUB_RC", rc)]);
+        assert!(!out.status.success(), "rc {rc} must block");
+        assert!(stderr(&out).contains("couldn't check this commit, so it was blocked"));
+    }
+    let out = h.git(
+        &["push", "-q", "origin", "main"],
+        &repo,
+        &[("STUB_RC", "101")],
+    );
+    assert!(!out.status.success(), "push blocked too");
+    assert!(
+        h.env
+            .git_output(&["rev-parse", "--verify", "main"], &remote)
+            .status
+            .code()
+            != Some(0)
+    );
+    // Passing checks still pass.
+    let out = h.git(&["push", "-q", "origin", "main"], &repo, &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
 // ---------------------------------------------------------------------------
 // Part 2 — needs Phase 1 (gitconfig, resolver, store, pin, identity, repo)
 
@@ -531,10 +718,14 @@ fn pinned_repo_with_env_override_is_blocked() {
     c.git = c.git.env("GIT_AUTHOR_EMAIL", PERSONAL);
     let r = check::run_check(Stage::Commit, &[], "", &c);
     assert_eq!(r.outcome, Outcome::Mismatch { pinned_now: None }, "{r:?}");
-    assert!(r
-        .messages
-        .iter()
-        .any(|m| m.text.starts_with("GIT_AUTHOR_EMAIL is set")));
+    // Review #11: `--author` reaches the hook the same way, so name both.
+    assert!(
+        r.messages.iter().any(|m| m.text
+            == format!(
+                "This commit's author email is {PERSONAL} (from --author or GIT_AUTHOR_EMAIL)."
+            )),
+        "{r:?}"
+    );
 }
 
 #[test]
@@ -868,4 +1059,361 @@ fn hook_pin_record_keeps_concurrent_settings() {
     let s = githop_core::Store::open_at(env.paths()).unwrap();
     assert_eq!(s.settings().previous_hooks_path, "C:/my hooks");
     assert_eq!(s.settings().pinned_repos.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Review 2026-11-01 #1 — core.hooksPath from [include] / [includeIf]
+
+/// git with the isolated env + the stub log.
+fn git_logged(
+    env: &TestEnv,
+    log: &Path,
+    args: &[&str],
+    cwd: &Path,
+    vars: &[(&str, &str)],
+) -> Output {
+    let mut c = Command::new("git");
+    c.args(args).current_dir(cwd);
+    env.apply(&mut c);
+    c.env("STUB_LOG", slash(log));
+    for (k, v) in vars {
+        c.env(k, v);
+    }
+    c.output().unwrap()
+}
+
+/// Company hooks set through an `includeIf` for `<repos>/work/`, the way the
+/// review reproduced it. Returns (stub githop, work dir, log).
+fn corp_include_env(env: &TestEnv) -> (PathBuf, PathBuf, PathBuf) {
+    env.set_global("user.name", "Test Person");
+    env.set_global("user.email", "test@example.invalid");
+    let bin = env.root().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = bin.join("githop");
+    std::fs::write(&stub, STUB).unwrap();
+    let corp = env.root().join("corp-hooks");
+    std::fs::create_dir_all(&corp).unwrap();
+    std::fs::write(
+        corp.join("pre-commit"),
+        marker_hook("corp-pre-commit", "CORP_RC"),
+    )
+    .unwrap();
+    std::fs::write(
+        env.home().join(".gitconfig-work"),
+        format!("[core]\n\thooksPath = {}\n", slash(&corp)),
+    )
+    .unwrap();
+    let work = env.repos().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let log = env.root().join("calls.log");
+    (stub, work, log)
+}
+
+fn append_global(env: &TestEnv, text: &str) {
+    let mut g = std::fs::read_to_string(env.global_config()).unwrap();
+    g.push_str(text);
+    std::fs::write(env.global_config(), g).unwrap();
+}
+
+fn include_if_work(work: &Path) -> String {
+    format!(
+        "[includeIf \"gitdir/i:{}/\"]\n\tpath = ~/.gitconfig-work\n",
+        slash(work)
+    )
+}
+
+fn work_repo(env: &TestEnv, work: &Path) -> PathBuf {
+    let repo = work.join("r");
+    std::fs::create_dir_all(&repo).unwrap();
+    env.git(&["init", "-q", "-b", "main"], &repo);
+    repo
+}
+
+fn commit_in(env: &TestEnv, log: &Path, repo: &Path, file: &str, vars: &[(&str, &str)]) -> Output {
+    std::fs::write(repo.join(file), "x\n").unwrap();
+    env.git(&["add", file], repo);
+    git_logged(env, log, &["commit", "-q", "-m", file], repo, vars)
+}
+
+fn read_log(log: &Path) -> String {
+    std::fs::read_to_string(log).unwrap_or_default()
+}
+
+#[test]
+fn include_if_hooks_path_keeps_githop_on_and_chains_company_hooks() {
+    let env = TestEnv::new();
+    let (stub, work, log) = corp_include_env(&env);
+    append_global(&env, &include_if_work(&work));
+    let before = std::fs::read(env.global_config()).unwrap();
+    let git = env.git_handle();
+    let paths = env.paths();
+    let mut settings = githop_core::Settings::default();
+    let rep = hooks::install_hooks(&paths, &git, &mut settings, &stub).unwrap();
+    assert_eq!(rep.included_hooks_paths.len(), 1, "{rep:?}");
+    assert!(rep.included_hooks_paths[0]
+        .condition
+        .as_deref()
+        .unwrap()
+        .starts_with("gitdir/i:"));
+    let ours = hooks::hooks_dir_value(&paths);
+
+    let repo = work_repo(&env, &work);
+    let other = env.init_repo("other");
+    // GitHop's value is what git uses, in and out of the includeIf folder.
+    assert_eq!(env.git(&["config", "core.hooksPath"], &repo), ours);
+    assert_eq!(env.git(&["config", "core.hooksPath"], &other), ours);
+
+    let out = commit_in(&env, &log, &repo, "a.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let calls = read_log(&log);
+    assert!(calls.contains("githop check --stage commit"), "{calls}");
+    assert!(
+        calls.contains("corp-pre-commit"),
+        "company hook chained: {calls}"
+    );
+
+    let _ = std::fs::remove_file(&log);
+    let out = commit_in(&env, &log, &other, "a.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let calls = read_log(&log);
+    assert!(calls.contains("githop check --stage commit"), "{calls}");
+    assert!(
+        !calls.contains("corp-pre-commit"),
+        "includeIf doesn't apply here: {calls}"
+    );
+
+    let out = commit_in(&env, &log, &repo, "b.txt", &[("STUB_RC", "1")]);
+    assert!(
+        !out.status.success(),
+        "GitHop still blocks in the work folder"
+    );
+    let out = commit_in(&env, &log, &repo, "c.txt", &[("CORP_RC", "1")]);
+    assert!(!out.status.success(), "company hook still blocks");
+
+    let h = hooks::verify_hooks(&paths, &git, &settings);
+    assert!(h.points_to_us && h.overridden_by.is_empty(), "{h:?}");
+    assert!(
+        h.missing.is_empty() && h.tampered.is_empty() && h.stale.is_empty(),
+        "{h:?}"
+    );
+    assert_eq!(h.included_hooks_paths.len(), 1);
+
+    // Re-install leaves the config file alone.
+    let after_install = std::fs::read(env.global_config()).unwrap();
+    hooks::install_hooks(&paths, &git, &mut settings, &stub).unwrap();
+    assert_eq!(std::fs::read(env.global_config()).unwrap(), after_install);
+
+    let u = hooks::uninstall_hooks(&paths, &git, &mut settings).unwrap();
+    assert_eq!(u.hooks_path, hooks::HooksPathChange::Unset);
+    assert_eq!(
+        String::from_utf8_lossy(&std::fs::read(env.global_config()).unwrap()),
+        String::from_utf8_lossy(&before),
+        "uninstall leaves the global file exactly as it was"
+    );
+    assert!(!hooks::include_file_path(&paths).exists());
+}
+
+/// The user's own global value stays in place in include mode, keeps being
+/// chained where the includeIf doesn't apply, and is in effect again after
+/// uninstall.
+#[test]
+fn include_mode_keeps_the_users_own_value_in_place() {
+    let env = TestEnv::new();
+    let (stub, work, log) = corp_include_env(&env);
+    let mine = env.root().join("my hooks");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(
+        mine.join("pre-commit"),
+        marker_hook("my-pre-commit", "NOPE"),
+    )
+    .unwrap();
+    env.set_global("core.hooksPath", &slash(&mine));
+    append_global(&env, &include_if_work(&work));
+    let before = std::fs::read(env.global_config()).unwrap();
+    let git = env.git_handle();
+    let paths = env.paths();
+    let mut settings = githop_core::Settings::default();
+    let rep = hooks::install_hooks(&paths, &git, &mut settings, &stub).unwrap();
+    assert_eq!(
+        rep.previous_hooks_path.as_deref(),
+        Some(slash(&mine).as_str())
+    );
+    // One value in the file itself, so `git config --global core.hooksPath X`
+    // keeps working for the user.
+    assert_eq!(
+        env.git(&["config", "--global", "core.hooksPath"], &env.home()),
+        slash(&mine)
+    );
+
+    let repo = work_repo(&env, &work);
+    let other = env.init_repo("other");
+    let out = commit_in(&env, &log, &other, "a.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let calls = read_log(&log);
+    assert!(
+        calls.contains("githop check") && calls.contains("my-pre-commit"),
+        "{calls}"
+    );
+    let _ = std::fs::remove_file(&log);
+    let out = commit_in(&env, &log, &repo, "a.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let calls = read_log(&log);
+    // Without GitHop git would use the includeIf value here, not mine.
+    assert!(
+        calls.contains("githop check") && calls.contains("corp-pre-commit"),
+        "{calls}"
+    );
+    assert!(!calls.contains("my-pre-commit"), "{calls}");
+
+    let u = hooks::uninstall_hooks(&paths, &git, &mut settings).unwrap();
+    assert_eq!(
+        u.hooks_path,
+        hooks::HooksPathChange::Restored {
+            value: slash(&mine)
+        }
+    );
+    assert_eq!(std::fs::read(env.global_config()).unwrap(), before);
+}
+
+fn problem_in(r: &githop_core::doctor::DoctorReport, id: &str) -> bool {
+    r.by_id(id)
+        .any(|c| c.status == githop_core::doctor::CheckStatus::Problem)
+}
+
+/// An install made before the include existed (GitHop's value in the global
+/// file, the includeIf after it): doctor flags it globally and in the repo,
+/// and a re-install fixes it.
+#[test]
+fn doctor_flags_an_include_read_after_githop_and_reinstall_fixes_it() {
+    let env = TestEnv::new();
+    let (stub, work, log) = corp_include_env(&env);
+    let git = env.git_handle();
+    let paths = env.paths();
+    let mut store = githop_core::Store::open_at(paths.clone()).unwrap();
+    store
+        .update_settings(|s| hooks::install_hooks(&paths, &git, s, &stub))
+        .unwrap();
+    append_global(&env, &include_if_work(&work));
+    let repo = work_repo(&env, &work);
+
+    let h = hooks::verify_hooks(&paths, &git, store.settings());
+    assert_eq!(h.overridden_by.len(), 1, "{h:?}");
+    assert!(!h.is_ok() && h.needs_reinstall());
+
+    // The defect itself: GitHop's hooks don't run in the work repo.
+    let out = commit_in(&env, &log, &repo, "a.txt", &[("STUB_RC", "1")]);
+    assert!(out.status.success());
+    assert!(!read_log(&log).contains("githop check"));
+
+    let opts = githop_core::doctor::DoctorOptions {
+        cwd: Some(repo.clone()),
+        ..Default::default()
+    };
+    let report = githop_core::doctor::diagnose(&paths, Some(&git), &opts);
+    assert!(problem_in(&report, "hooks-path"), "{:#?}", report.checks);
+    assert!(
+        problem_in(&report, "repo-hooks-path"),
+        "{:#?}",
+        report.checks
+    );
+    let repo_check = report.by_id("repo-hooks-path").next().unwrap();
+    assert!(repo_check.detail.contains("corp-hooks"), "{repo_check:?}");
+    assert!(repo_check
+        .fix
+        .as_deref()
+        .unwrap()
+        .contains("githop hooks install"));
+
+    store
+        .update_settings(|s| hooks::install_hooks(&paths, &git, s, &stub))
+        .unwrap();
+    let report = githop_core::doctor::diagnose(&paths, Some(&git), &opts);
+    assert!(!problem_in(&report, "hooks-path"), "{:#?}", report.checks);
+    assert!(
+        !problem_in(&report, "repo-hooks-path"),
+        "{:#?}",
+        report.checks
+    );
+    assert!(report.by_id("hooks-included").next().is_some());
+    let out = commit_in(&env, &log, &repo, "b.txt", &[("STUB_RC", "1")]);
+    assert!(!out.status.success(), "GitHop runs again in the work repo");
+}
+
+/// Review #9: the enforce mode is baked into the hooks; changing it makes
+/// them stale until `refresh_if_installed` re-renders them.
+#[test]
+fn refresh_rerenders_hooks_when_enforce_changes() {
+    let env = TestEnv::new();
+    let git = env.git_handle();
+    let paths = env.paths();
+    let exe = env.root().join("githop.exe");
+    std::fs::write(&exe, "").unwrap();
+    let mut settings = githop_core::Settings::default();
+    hooks::install_hooks(&paths, &git, &mut settings, &exe).unwrap();
+    assert!(hooks::verify_hooks(&paths, &git, &settings)
+        .stale
+        .is_empty());
+    let config_before = std::fs::read(env.global_config()).unwrap();
+
+    settings.enforce = githop_core::EnforceMode::BlockStrict;
+    let h = hooks::verify_hooks(&paths, &git, &settings);
+    for name in [
+        "pre-commit",
+        "pre-push",
+        "pre-merge-commit",
+        "prepare-commit-msg",
+    ] {
+        assert!(h.stale.contains(&name.to_string()), "{name}: {h:?}");
+    }
+    assert!(hooks::refresh_if_installed(&paths, &git, &mut settings).unwrap());
+    let h = hooks::verify_hooks(&paths, &git, &settings);
+    assert!(h.stale.is_empty() && h.tampered.is_empty(), "{h:?}");
+    let pre_commit = std::fs::read_to_string(paths.hooks_dir().join("pre-commit")).unwrap();
+    assert!(pre_commit.contains("STRICT=1\n"));
+    assert_eq!(
+        std::fs::read(env.global_config()).unwrap(),
+        config_before,
+        "no git config write"
+    );
+
+    let mut off = githop_core::Settings::default();
+    assert!(!hooks::refresh_if_installed(&paths, &git, &mut off).unwrap());
+}
+
+/// Review #4: a clone that only the default profile covers is not pinned, so
+/// an owner rule added later still wins.
+#[test]
+fn clone_with_only_the_default_profile_is_not_pinned() {
+    let env = TestEnv::new();
+    write_profiles(&env);
+    env.redirect_github_to_local();
+    env.bare_remote("acme-corp/svc");
+    let dest = env.repos().join("svc");
+    env.git(
+        &[
+            "clone",
+            "-q",
+            "https://github.com/acme-corp/svc.git",
+            &slash(&dest),
+        ],
+        env.root(),
+    );
+    let args = vec!["0".repeat(40), "0".repeat(40), "1".to_string()];
+    let r = check::run_check(Stage::Clone, &args, "", &ctx(&env, &dest));
+    assert_eq!(r.outcome, Outcome::Pass, "{r:?}");
+    assert_eq!(r.profile_id.as_deref(), Some("personal"));
+    assert!(r.messages[0].text.contains("no owner match"), "{r:?}");
+    assert_eq!(
+        r.messages[0].hint.as_deref(),
+        Some("To keep it that way: githop pin personal")
+    );
+    assert_eq!(
+        env.git_output(&["config", "--local", "githop.profile"], &dest)
+            .status
+            .code(),
+        Some(1),
+        "not pinned"
+    );
+    let s = githop_core::Store::open_at(env.paths()).unwrap();
+    assert!(s.settings().pinned_repos.is_empty());
 }

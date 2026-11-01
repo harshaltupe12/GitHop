@@ -43,7 +43,8 @@ pub const DISABLE_ENV: &str = "GITHOP_DISABLE";
 pub enum Stage {
     /// `post-checkout` after `git clone`.
     Clone,
-    /// `pre-commit`.
+    /// `pre-commit`, `pre-merge-commit` (merge commits) and
+    /// `prepare-commit-msg` (revert / cherry-pick).
     Commit,
     /// `pre-push`.
     Push,

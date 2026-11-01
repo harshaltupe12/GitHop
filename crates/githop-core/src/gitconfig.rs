@@ -346,6 +346,109 @@ pub fn get_all_file(git: &Git, file: &Path, key: &str) -> Result<Vec<String>> {
     Err(git_failed(&args, &out))
 }
 
+/// Every entry of one config file, in file order, **without** following its
+/// includes: `include.path` / `includeIf.<cond>.path` lines show up as entries
+/// themselves (`git config --file <file> --list --show-origin --show-scope -z`).
+/// Empty when the file doesn't exist.
+pub fn list_file(git: &Git, file: &Path) -> Result<ConfigSnapshot> {
+    if !file.is_file() {
+        return Ok(ConfigSnapshot::default());
+    }
+    let file_s = file.to_string_lossy();
+    let out = git.run(
+        &global_cwd(git),
+        &[
+            "config",
+            "--file",
+            &file_s,
+            "--list",
+            "--show-origin",
+            "--show-scope",
+            "-z",
+        ],
+    )?;
+    ConfigSnapshot::parse(&out)
+}
+
+/// Like [`get_all_file`], but follows the file's own `[include]`s
+/// (`--includes`). Conditional includes can't match outside a repo.
+pub fn get_all_file_includes(git: &Git, file: &Path, key: &str) -> Result<Vec<String>> {
+    if !file.is_file() {
+        return Ok(Vec::new());
+    }
+    let file_s = file.to_string_lossy();
+    let args = [
+        "config",
+        "--file",
+        &file_s,
+        "--includes",
+        "-z",
+        "--get-all",
+        key,
+    ];
+    let out = git.output(&global_cwd(git), &args, None)?;
+    if out.status.success() {
+        return Ok(split_nul_values(&out.stdout));
+    }
+    if out.status.code() == Some(1) {
+        return Ok(Vec::new());
+    }
+    Err(git_failed(&args, &out))
+}
+
+/// Escape `s` so a POSIX extended regex (git's value pattern) matches it literally.
+pub fn regex_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        if matches!(
+            c,
+            '.' | '[' | ']' | '{' | '}' | '(' | ')' | '*' | '+' | '?' | '^' | '$' | '|' | '\\'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Remove only the values of `key` in `file` that are exactly `value`
+/// (`--unset-all <key> ^<value>$`); other values stay where they are. A missing
+/// key or file is not an error. Caller backs up first.
+pub fn unset_file_value(git: &Git, file: &Path, key: &str, value: &str) -> Result<()> {
+    if std::fs::symlink_metadata(file).is_err() {
+        return Ok(());
+    }
+    let file_s = file.to_string_lossy();
+    let pattern = format!("^{}$", regex_literal(value));
+    let args = ["config", "--file", &file_s, "--unset-all", key, &pattern];
+    let out = git.output(&global_cwd(git), &args, None)?;
+    if out.status.success() || out.status.code() == Some(EXIT_KEY_MISSING) {
+        Ok(())
+    } else {
+        Err(git_failed(&args, &out))
+    }
+}
+
+/// Replace, in place, the values of `key` in `file` that are exactly `old`
+/// with `new` (`--replace-all <key> <new> ^<old>$`). Caller backs up first.
+pub fn replace_file_value(git: &Git, file: &Path, key: &str, old: &str, new: &str) -> Result<()> {
+    let file_s = file.to_string_lossy();
+    let pattern = format!("^{}$", regex_literal(old));
+    git.run(
+        &global_cwd(git),
+        &[
+            "config",
+            "--file",
+            &file_s,
+            "--replace-all",
+            key,
+            new,
+            &pattern,
+        ],
+    )
+    .map(drop)
+}
+
 /// Split successful `-z` value output (`value\0value\0`) into strings. Only
 /// called on exit 0, so there is at least one value (a lone `\0` is one empty value).
 fn split_nul_values(raw: &[u8]) -> Vec<String> {
@@ -577,6 +680,15 @@ command\0command line:\0user.email\ncli@example.com\0";
     fn nul_values_split() {
         assert_eq!(split_nul_values(b"a\0b\nc\0"), vec!["a", "b\nc"]);
         assert_eq!(split_nul_values(b"\0"), vec![""]);
+    }
+
+    #[test]
+    fn regex_literal_escapes_ere_metacharacters() {
+        assert_eq!(regex_literal("C:/a b/hooks"), "C:/a b/hooks");
+        assert_eq!(
+            regex_literal(r"C:\x.y(1)+[a]$^|?*{2}"),
+            r"C:\\x\.y\(1\)\+\[a\]\$\^\|\?\*\{2\}"
+        );
     }
 
     #[test]

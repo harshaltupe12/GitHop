@@ -43,6 +43,14 @@ pub async fn update_settings<R: Runtime>(
                 Ok(())
             })?;
         }
+        // The enforce mode is baked into the hook scripts (block-strict must
+        // block even when githop.exe is missing): re-render them. Hook files
+        // only, no git config write.
+        if patch.enforce.is_some() && store.settings().hooks_installed {
+            let git = ops::git()?;
+            let paths = store.paths().clone();
+            store.update_settings(|s| hooks::refresh_if_installed(&paths, &git, s).map(drop))?;
+        }
         Ok(store.settings().clone())
     })
     .await?;

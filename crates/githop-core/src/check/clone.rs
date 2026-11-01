@@ -1,8 +1,10 @@
 //! `check --stage clone` (post-checkout) — Phase 3 §3.3, Plan §7.2, C3.
 //!
 //! Runs only when `$1` (previous HEAD) is the null id, i.e. a fresh clone.
-//! Resolved and not pinned → pin (`✓ GitHop: pinned to Office`). Unresolved →
-//! hint. Local `core.hooksPath` (husky etc.) → warning. Never blocks.
+//! Owner/folder match and not pinned → pin (`✓ GitHop: pinned to Office`).
+//! Default profile only → not pinned, hint (same rule as `scan --apply`, ADR
+//! 0003 #6). Unresolved → hint. Local `core.hooksPath` (husky etc.) → warning.
+//! Never blocks.
 
 use crate::error::Result;
 use crate::gitconfig::ConfigSnapshot;
@@ -22,8 +24,12 @@ pub fn is_fresh_clone(args: &[String]) -> bool {
 pub enum CloneDecision {
     /// Already pinned to an existing profile.
     AlreadyPinned { profile_id: String },
-    /// Pin to this profile.
+    /// Pin to this profile (an owner or folder rule matched).
     Pin { profile_id: String },
+    /// Only the default profile applies: don't pin (a pin would later beat an
+    /// owner rule added for this repo, review 2026-11-01 #4 / ADR 0003 #6),
+    /// show the "no owner match" hint instead.
+    DefaultOnly { profile_id: String },
     /// No profile; show the hint.
     Unresolved,
 }
@@ -34,11 +40,23 @@ pub fn decide(resolution: &Resolution, profile_exists: impl Fn(&str) -> bool) ->
         (Some(id), Some(ResolutionSource::Pin)) => CloneDecision::AlreadyPinned {
             profile_id: id.clone(),
         },
+        (Some(id), Some(ResolutionSource::Default)) => CloneDecision::DefaultOnly {
+            profile_id: id.clone(),
+        },
         (Some(id), _) => CloneDecision::Pin {
             profile_id: id.clone(),
         },
         (None, _) => CloneDecision::Unresolved,
     }
+}
+
+/// The "no owner match" hint for a clone that only the default profile
+/// covers. Not pinned, so an owner rule added later still wins.
+pub fn default_only_message(label: &str, profile_id: &str) -> Message {
+    Message::warning(format!(
+        "GitHop: this repo has no owner match, so it uses your default profile ({label})."
+    ))
+    .hint(format!("To keep it that way: githop pin {profile_id}"))
 }
 
 /// Warning for a repo-local `core.hooksPath` (C3), if the resolution reported one.
@@ -91,6 +109,17 @@ pub(crate) fn run(
                     }
                 }
             }
+        }
+        CloneDecision::DefaultOnly { profile_id } => {
+            result.profile_id = Some(profile_id.clone());
+            let label = store
+                .profiles()
+                .get(&profile_id)
+                .map(|p| p.label.clone())
+                .unwrap_or_else(|| profile_id.clone());
+            result
+                .messages
+                .push(default_only_message(&label, &profile_id));
         }
         CloneDecision::Unresolved => {
             result.outcome = Outcome::Unresolved;
@@ -147,8 +176,18 @@ mod tests {
                 &res(Some("personal"), Some(ResolutionSource::Default), vec![]),
                 exists
             ),
-            CloneDecision::Pin {
+            CloneDecision::DefaultOnly {
                 profile_id: "personal".into()
+            },
+            "review 2026-11-01 #4: a default-only match is never pinned"
+        );
+        assert_eq!(
+            decide(
+                &res(Some("work"), Some(ResolutionSource::Folder), vec![]),
+                exists
+            ),
+            CloneDecision::Pin {
+                profile_id: "work".into()
             }
         );
         assert_eq!(
