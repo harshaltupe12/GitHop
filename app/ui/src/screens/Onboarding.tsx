@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
+import { ErrorText } from '../components/ErrorText';
 import { Icons } from '../components/icons';
 import { useToast } from '../components/Toast';
 import { applyProfiles, STATE_KEY } from '../lib/appState';
@@ -33,7 +34,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
   const [step, setStep] = useState(() => initialStep(state));
   const [adding, setAdding] = useState(false);
   const [installing, setInstalling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<IpcError | null>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -41,6 +42,13 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
     setError(null);
     headRef.current?.focus();
   }, [step]);
+
+  // Closing the added profile form returns focus to the step heading.
+  const wasAdding = useRef(false);
+  useEffect(() => {
+    if (wasAdding.current && !adding) headRef.current?.focus();
+    wasAdding.current = adding;
+  }, [adding]);
 
   const go = (n: number) => setStep(Math.max(0, Math.min(TOTAL - 1, n)));
   const g = state.onboarding.global_identity ?? null;
@@ -70,7 +78,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
       invalidate(STATE_KEY);
       go(5);
     } catch (e) {
-      setError((e as IpcError).message);
+      setError(e as IpcError);
     } finally {
       setInstalling(false);
     }
@@ -127,7 +135,14 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
             )}
           </section>
           <Banner kind="info" icon={Icons.shield} live={false}>
-            {S.onboarding.safety.backupLocation}
+            {state.onboarding.backup_dir ? (
+              <>
+                {S.onboarding.safety.backupLocation}{' '}
+                <span className="break-all font-mono text-mono">{state.onboarding.backup_dir}</span>
+              </>
+            ) : (
+              S.onboarding.safety.backupLocationDefault
+            )}
           </Banner>
         </div>
       );
@@ -175,6 +190,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
       content = adding ? (
         <ProfileForm
           embedded
+          autoFocusHeading
           heading={secondLabel}
           profiles={state.profiles}
           seed={{ label: secondLabel, id: slugify(secondLabel) }}
@@ -222,7 +238,11 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
           {state.onboarding.hooks_installed ? (
             <Banner kind="success">{S.onboarding.protect.on}</Banner>
           ) : null}
-          {error ? <Banner kind="blocked">{error}</Banner> : null}
+          {error ? (
+            <Banner kind="blocked">
+              <ErrorText error={error} />
+            </Banner>
+          ) : null}
         </div>
       );
       next = state.onboarding.hooks_installed ? (

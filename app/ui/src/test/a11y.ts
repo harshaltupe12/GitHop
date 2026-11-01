@@ -10,6 +10,8 @@ export async function expectNoA11yViolations(node: Element = document.body): Pro
     rules: {
       'color-contrast': { enabled: false },
       region: { enabled: false },
+      // Experimental in axe, off by default: QA found D-14 with it (WCAG 2.5.3).
+      'label-content-name-mismatch': { enabled: true },
     },
   });
   const summary = res.violations.map(

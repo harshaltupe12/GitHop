@@ -44,7 +44,27 @@ describe('ProfileForm', () => {
     expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue(
       'ID+harshal@users.noreply.github.com',
     );
-    expect(screen.getByText(/Replace ID with the number/)).toBeInTheDocument();
+    expect(screen.getByText(/Replace ID and the user name/)).toBeInTheDocument();
+  });
+
+  it('noreply placeholder ID+ blocks save until replaced', async () => {
+    const { user } = renderWith(<ProfileForm profiles={profileSet()} onSaved={vi.fn()} />);
+    await user.type(screen.getByRole('textbox', { name: 'Label' }), 'Free');
+    await user.click(screen.getByRole('button', { name: 'Use noreply' }));
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    const email = screen.getByRole('textbox', { name: 'Email' });
+    await waitFor(() => expect(email).toHaveAttribute('aria-invalid', 'true'));
+    expect(email).toHaveAccessibleDescription(/Replace ID with your GitHub ID number/);
+    expect(email).toHaveFocus();
+    expect(m.saveProfile).not.toHaveBeenCalled();
+    await user.clear(email);
+    await user.type(email, '987+free@users.noreply.github.com');
+    await waitFor(() => expect(email).not.toHaveAttribute('aria-invalid', 'true'));
+  });
+
+  it('focuses the form heading on mount (screen change)', async () => {
+    renderWith(<ProfileForm profiles={profileSet()} onSaved={vi.fn()} />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Add profile' })).toHaveFocus();
   });
 
   it('inline validation from validate_profile maps issues to fields and blocks save', async () => {
@@ -96,6 +116,17 @@ describe('ProfileForm', () => {
     });
     expect(original).toBeUndefined();
     expect(onSaved).toHaveBeenCalledWith(saved, expect.anything());
+    // The key was never generated: the form said so, and the toast says so too.
+    expect(
+      screen.getByText(
+        'No key yet. Click Generate key, or the profile is saved without a working SSH key.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'Profile saved: Freelance. Its SSH key doesn’t exist yet: edit the profile and click Generate key.',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('save error from backend (validation code) shows issues inline', async () => {
@@ -141,6 +172,7 @@ describe('ProfileForm', () => {
       'ssh-ed25519 AAAAC3Nza githop',
     );
     expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+    expect(screen.queryByText(/No key yet/)).toBeNull();
     expect(screen.getByText('Save the profile first to test the connection.')).toBeInTheDocument();
   });
 

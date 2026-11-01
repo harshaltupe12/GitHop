@@ -46,6 +46,8 @@ export type Settings = {
   github_host_aliases: string[];
   hinted_repos: string[];
   managed_global_keys: string[];
+  /** Also install the optional hook stubs (reference-transaction, post-index-change). */
+  all_hook_stubs: boolean;
 };
 
 export type Severity = 'error' | 'warning' | 'info';
@@ -86,14 +88,27 @@ export type ScannedRepo = {
   error?: string | null;
 };
 
+/**
+ * What `scan` / `pin` / `pin_all` return (IPC.md): `ScannedRepo` plus the
+ * app-side count of unpushed wrong-identity commits (0 when unresolved or blocked).
+ */
+export type RepoRow = ScannedRepo & { unpushed_offenders: number };
+
 export type ConnectionTest =
   { kind: 'connected'; user: string } | { kind: 'denied' } | { kind: 'failed'; reason: string };
+
+/** A `core.hooksPath` set by a file the global git config includes (Plan C2). */
+export type IncludedHooksPath = { condition?: string | null; file: string; value: string };
 
 export type HookHealth = {
   installed: boolean;
   hooks_dir: string;
   global_hooks_path?: string | null;
   points_to_us: boolean;
+  /** Includes read after GitHop's setting that override it: GitHop's hooks don't run there. */
+  overridden_by: IncludedHooksPath[];
+  /** Every `core.hooksPath` set by an included file. */
+  included_hooks_paths: IncludedHooksPath[];
   missing: string[];
   tampered: string[];
   stale: string[];
@@ -196,6 +211,8 @@ export type OnboardingState = {
   hooks_installed: boolean;
   global_identity?: Identity | null;
   step_hint: string;
+  /** Where GitHop keeps its backups (forward slashes). */
+  backup_dir: string;
 };
 export type AppState = {
   profiles: ProfileSet;
@@ -209,4 +226,4 @@ export type AppInfo = { version: string; licenses: string };
 export type ScanProgress = { folder: string; found: number; done: number };
 
 export type HookStage = 'commit' | 'push' | 'clone';
-export type ExternalTarget = 'ssh-keys' | 'releases';
+export type ExternalTarget = 'ssh-keys' | 'releases' | 'docs';

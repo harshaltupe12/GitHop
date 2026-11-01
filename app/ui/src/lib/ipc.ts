@@ -3,7 +3,7 @@
 // Nothing here makes a network request: `invoke` goes over Tauri's local IPC.
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { getCurrentWindow, Window } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import type {
@@ -22,7 +22,7 @@ import type {
   IpcErrorCode,
   Profile,
   ProfileSet,
-  ScannedRepo,
+  RepoRow,
   ScanProgress,
   Settings,
   SettingsPatch,
@@ -94,10 +94,12 @@ export const testConnection = (id: string) => call<ConnectionTest>('test_connect
 
 // ---- Repos -------------------------------------------------------------------
 
-export const scan = (folder: string) => call<ScannedRepo[]>('scan', { folder });
-export const pin = (repo: string, id: string) => call<ScannedRepo>('pin', { repo, id });
-export const unpin = (repo: string) => call<ScannedRepo>('unpin', { repo });
-export const pinAll = (repos: string[]) => call<ScannedRepo[]>('pin_all', { repos });
+export const scan = (folder: string) => call<RepoRow[]>('scan', { folder });
+/** Stops a running scan in the backend (its results are dropped). */
+export const cancelScan = () => call<void>('cancel_scan');
+export const pin = (repo: string, id: string) => call<RepoRow>('pin', { repo, id });
+export const unpin = (repo: string) => call<RepoRow>('unpin', { repo });
+export const pinAll = (repos: string[]) => call<RepoRow[]>('pin_all', { repos });
 export const hooksSnippet = (stage: HookStage) => call<string>('hooks_snippet', { stage });
 
 // ---- Fix ---------------------------------------------------------------------
@@ -110,6 +112,8 @@ export const fixUndo = (repo: string, backupRef: string) =>
 // ---- Settings & system -------------------------------------------------------
 
 export const doctor = () => call<DoctorReport>('doctor');
+/** Writes the doctor report as plain text to `path` (from the native save dialog). */
+export const saveDiagnostics = (path: string) => call<void>('save_diagnostics', { path });
 export const updateSettings = (patch: SettingsPatch) =>
   call<Settings>('update_settings', { patch });
 export const installHooks = () => call<HookHealth>('install_hooks');
@@ -124,8 +128,7 @@ export const importApply = (path: string, password: string, resolutions: ImportR
 export const openExternal = (target: ExternalTarget) => call<void>('open_external', { target });
 export const appInfo = () => call<AppInfo>('app_info');
 
-// Not in app/IPC.md yet — proposed additions (see report). They fail with an
-// IpcError until the backend registers them, which the UI shows as a message.
+/** Design §8.7 "Restore last backup": newest valid backups/profiles.*.toml. */
 export const restoreLastBackup = () => call<ProfileSet>('restore_profiles_backup');
 
 // ---- Events ------------------------------------------------------------------
@@ -154,50 +157,30 @@ export async function pickFile(
   return typeof r === 'string' ? r : null;
 }
 
-/** Native save dialog (export file). */
+/** Native save dialog (export file, diagnostics file). */
 export async function pickSavePath(
   title: string,
   defaultPath: string,
   fileType: string,
+  extensions: string[] = ['githop'],
 ): Promise<string | null> {
   const r = await saveDialog({
     title,
     defaultPath,
-    filters: [{ name: fileType, extensions: ['githop'] }],
+    filters: [{ name: fileType, extensions }],
   });
   return r ?? null;
 }
 
 export const copyText = (text: string) => writeText(text);
 
-/** Show and focus the main window (from the tray menu window). */
-export async function showMainWindow(): Promise<void> {
-  try {
-    await invoke('show_main');
-    return;
-  } catch {
-    // Proposed command missing → use the window API directly.
-  }
-  const main = await Window.getByLabel('main');
-  if (main) {
-    await main.show();
-    await main.unminimize();
-    await main.setFocus();
-  }
-  await hideCurrentWindow();
-}
+/** Show and focus the main window, hide the tray menu (tray window). */
+export const showMainWindow = () => call<void>('show_main');
 
 export const hideCurrentWindow = () => getCurrentWindow().hide();
 
-/** Quit the whole app (tray menu). Needs the proposed `quit_app` command. */
-export async function quitApp(): Promise<void> {
-  try {
-    await invoke('quit_app');
-  } catch {
-    // Fallback: close every window; the backend exits when none remain.
-    await getCurrentWindow().destroy();
-  }
-}
+/** Quit the whole app (tray menu). */
+export const quitApp = () => call<void>('quit_app');
 
 /** Hide the tray menu window when it loses focus (Design §7.14). */
 export async function onCurrentWindowBlur(cb: () => void): Promise<UnlistenFn> {

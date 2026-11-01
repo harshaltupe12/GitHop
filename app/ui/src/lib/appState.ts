@@ -1,6 +1,7 @@
+import { normalizePath } from './format';
 import * as ipc from './ipc';
 import { createStore, invalidate, setQueryData, useQuery } from './query';
-import type { AppState, ProfileSet, ScannedRepo } from './types';
+import type { AppState, ProfileSet, RepoRow } from './types';
 
 export const STATE_KEY = 'state';
 
@@ -21,12 +22,10 @@ export function hooksHealthy(s: AppState): boolean {
 
 // ---- Repos scan results (shared by Repos and Fix screens) --------------------
 
-export type OffenderCount = number | 'checking' | 'error';
-
 export type ReposState = {
   folders: string[];
-  repos: ScannedRepo[];
-  offenders: Record<string, OffenderCount>;
+  /** Rows carry `unpushed_offenders` (IPC.md), so no per-repo fix_plan is needed. */
+  repos: RepoRow[];
   scanning: { folder: string; found: number } | null;
   scanned: boolean;
   autoScanned: boolean;
@@ -35,15 +34,26 @@ export type ReposState = {
 export const reposStore = createStore<ReposState>({
   folders: [],
   repos: [],
-  offenders: {},
   scanning: null,
   scanned: false,
   autoScanned: false,
 });
 
-export function replaceRepo(updated: ScannedRepo): void {
+/** Paths compare with forward slashes, case-insensitively (Windows). */
+export const sameRoot = (a: string, b: string) =>
+  normalizePath(a).toLowerCase() === normalizePath(b).toLowerCase();
+
+export function replaceRepo(updated: RepoRow): void {
   reposStore.set((s) => ({
     ...s,
-    repos: s.repos.map((r) => (r.root === updated.root ? updated : r)),
+    repos: s.repos.map((r) => (sameRoot(r.root, updated.root) ? updated : r)),
+  }));
+}
+
+/** After a fresh fix plan: keep the Repos pill in step with what Fix can change. */
+export function setUnpushedOffenders(root: string, n: number): void {
+  reposStore.set((s) => ({
+    ...s,
+    repos: s.repos.map((r) => (sameRoot(r.root, root) ? { ...r, unpushed_offenders: n } : r)),
   }));
 }

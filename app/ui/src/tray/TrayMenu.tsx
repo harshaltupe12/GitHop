@@ -108,14 +108,18 @@ export function TrayMenu() {
             aria-checked={checked}
             tabIndex={-1}
             onClick={() => void choose(p.id)}
+            // Long labels truncate; the full label and email show on hover.
+            title={p.email ? p.label + ' · ' + p.email : p.label}
             className={cx(itemCls, checked && 'bg-aqua-tint text-aqua-ink hover:bg-aqua-tint')}
           >
             <Avatar label={p.label} color={p.color} size={22} decorative />
-            <span className="min-w-0 flex-1 truncate">{p.label}</span>
+            <span className="min-w-[5rem] flex-1 truncate">{p.label}</span>
             {checked ? (
               <Ico icon={Icons.ok} />
             ) : domain && !domain.endsWith('noreply.github.com') ? (
-              <span className="truncate font-mono text-mono-small text-ink-muted">{domain}</span>
+              <span className="min-w-0 max-w-[45%] shrink truncate font-mono text-mono-small text-ink-muted">
+                {domain}
+              </span>
             ) : null}
           </button>
         );
@@ -126,7 +130,7 @@ export function TrayMenu() {
         role="menuitem"
         tabIndex={-1}
         className={itemCls}
-        onClick={() => void ipc.showMainWindow()}
+        onClick={() => void ipc.showMainWindow().catch(() => undefined)}
       >
         <Ico icon={Icons.window} />
         {S.tray.open}
@@ -136,7 +140,7 @@ export function TrayMenu() {
         role="menuitem"
         tabIndex={-1}
         className={itemCls}
-        onClick={() => void ipc.quitApp()}
+        onClick={() => void ipc.quitApp().catch(() => undefined)}
       >
         <Ico icon={Icons.quit} />
         {S.tray.quit}

@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
+import { ErrorText } from '../components/ErrorText';
 import { Ico, Icons } from '../components/icons';
 import { EmptyState, ScreenHeader } from '../components/Layout';
 import { Pill } from '../components/Pill';
 import { Spinner } from '../components/Spinner';
 import { Table, type Column } from '../components/Table';
 import { useToast } from '../components/Toast';
-import { reposStore } from '../lib/appState';
+import { reposStore, setUnpushedOffenders } from '../lib/appState';
 import { baseName, normalizePath, profileByEmail, profileById, shortSha } from '../lib/format';
 import * as ipc from '../lib/ipc';
 import { useNav } from '../lib/nav';
@@ -24,7 +25,7 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
   const [repo, setRepo] = useState<string | null>(null);
   const [plan, setPlan] = useState<FixPlan | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<IpcError | null>(null);
   const [fixing, setFixing] = useState(false);
   const [result, setResult] = useState<{ res: FixResult; count: number } | null>(null);
   const [undoing, setUndoing] = useState(false);
@@ -43,13 +44,11 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
     try {
       const p = await ipc.fixPlan(r);
       setPlan(p);
-      reposStore.set((s) => ({
-        ...s,
-        offenders: { ...s.offenders, [r]: p.offenders.length + p.pushed_offenders.length },
-      }));
+      // Same rule as the backend's RepoRow.unpushed_offenders: only what Fix can change.
+      setUnpushedOffenders(r, p.blocked_reason || !p.profile_id ? 0 : p.offenders.length);
     } catch (e) {
       setPlan(null);
-      setError((e as IpcError).message);
+      setError(e as IpcError);
     } finally {
       setLoading(false);
     }
@@ -101,6 +100,14 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
     }
   };
 
+  const openDocs = async () => {
+    try {
+      await ipc.openExternal('docs');
+    } catch (e) {
+      toast({ kind: 'error', message: (e as IpcError).message });
+    }
+  };
+
   const targetProfile = profileById(profiles, plan?.profile_id);
   const header = (
     <ScreenHeader
@@ -123,10 +130,7 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
 
   // ---- No repo selected: picker or "nothing to fix" ---------------------------
   if (!repo) {
-    const withOffenders = repos.repos.filter((r) => {
-      const n = repos.offenders[r.root];
-      return typeof n === 'number' && n > 0;
-    });
+    const withOffenders = repos.repos.filter((r) => r.unpushed_offenders > 0);
     return (
       <div>
         {header}
@@ -141,7 +145,7 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
             <ul className="flex flex-col gap-2">
               {withOffenders.map((r) => {
                 const p = profileById(profiles, r.resolution.profile_id);
-                const n = repos.offenders[r.root] as number;
+                const n = r.unpushed_offenders;
                 return (
                   <li key={r.root}>
                     <button
@@ -218,12 +222,17 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
   } else if (error) {
     body = (
       <Banner kind="blocked" action={{ label: S.common.retry, onClick: () => void load(repo) }}>
-        {error}
+        <ErrorText error={error} />
       </Banner>
     );
   } else if (plan) {
-    const all = [...plan.offenders, ...plan.pushed_offenders];
+    const unpushed = plan.offenders;
+    const pushed = plan.pushed_offenders;
+    const all = [...unpushed, ...pushed];
     const first = all[0];
+    // Both kinds: two labelled tables so it's clear which rows Fix changes.
+    const split = unpushed.length > 0 && pushed.length > 0;
+    const canFix = unpushed.length > 0 && !plan.blocked_reason && !!plan.profile_id;
     const wrongProfile = first ? profileByEmail(profiles, wrongEmail(first)) : undefined;
     const repoLabel = targetProfile?.label ?? '';
     body = (
@@ -259,26 +268,61 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
           )
         ) : (
           <>
-            {plan.pushed_offenders.length ? (
-              <Banner kind="warning">{S.fix.pushed(plan.pushed_offenders.length)}</Banner>
-            ) : plan.blocked_reason ? (
+            {plan.blocked_reason ? (
               <Banner kind="warning">{S.fix.cantFix(plan.blocked_reason)}</Banner>
             ) : !plan.profile_id ? (
               <Banner kind="warning">{S.fix.unresolved}</Banner>
-            ) : (
+            ) : unpushed.length ? (
               <Banner kind="blocked">
                 {S.fix.blocked(
-                  plan.offenders.length,
-                  wrongProfile?.label ?? wrongEmail(plan.offenders[0] ?? first!),
+                  unpushed.length,
+                  wrongProfile?.label ?? wrongEmail(unpushed[0] ?? first!),
                   repoLabel,
                 )}
               </Banner>
-            )}
-            <Table label={S.fix.tableLabel} columns={columns} rows={all} rowKey={(c) => c.sha} />
-            {plan.offenders.length > 0 && !plan.blocked_reason && plan.profile_id ? (
+            ) : null}
+            {pushed.length ? (
+              <Banner
+                kind="warning"
+                action={{ label: S.fix.pushedHelp, onClick: () => void openDocs() }}
+              >
+                {S.fix.pushed(pushed.length)}
+              </Banner>
+            ) : null}
+
+            {unpushed.length ? (
+              <CommitTable
+                id="fix-unpushed"
+                heading={split ? S.fix.unpushedHeading(unpushed.length) : undefined}
+                label={S.fix.tableLabel}
+                columns={columns}
+                rows={unpushed}
+              />
+            ) : null}
+            {pushed.length ? (
+              <CommitTable
+                id="fix-pushed"
+                heading={split ? S.fix.pushedHeading(pushed.length) : undefined}
+                label={S.fix.pushedTableLabel}
+                columns={columns}
+                rows={pushed}
+              />
+            ) : null}
+
+            {canFix ? (
               <>
+                {plan.signed ? (
+                  <Banner kind="warning" live={false}>
+                    {S.fix.signed(plan.signed)}
+                  </Banner>
+                ) : null}
                 <Banner kind="info" icon={Icons.shield} live={false}>
                   {S.fix.reassure}
+                  {plan.rewrite_count ? (
+                    <span className="mt-1 block text-small">
+                      {S.fix.newIds(plan.rewrite_count)}
+                    </span>
+                  ) : null}
                   {plan.foreign ? (
                     <span className="mt-1 block text-small">{S.fix.foreign(plan.foreign)}</span>
                   ) : null}
@@ -304,5 +348,31 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
       {header}
       {body}
     </div>
+  );
+}
+
+/** One commit table, with a visible heading when the plan has both kinds. */
+function CommitTable({
+  id,
+  heading,
+  label,
+  columns,
+  rows,
+}: {
+  id: string;
+  heading?: string;
+  label: string;
+  columns: Column<OffendingCommit>[];
+  rows: OffendingCommit[];
+}) {
+  const table = <Table label={label} columns={columns} rows={rows} rowKey={(c) => c.sha} />;
+  if (!heading) return table;
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-2">
+      <h2 id={id} className="text-body font-medium text-ink">
+        {heading}
+      </h2>
+      {table}
+    </section>
   );
 }

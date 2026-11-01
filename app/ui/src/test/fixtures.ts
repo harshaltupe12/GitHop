@@ -4,6 +4,7 @@ import type {
   HookHealth,
   Profile,
   ProfileSet,
+  RepoRow,
   ScannedRepo,
   Settings,
 } from '../lib/types';
@@ -50,6 +51,7 @@ export const settings = (over: Partial<Settings> = {}): Settings => ({
   github_host_aliases: [],
   hinted_repos: [],
   managed_global_keys: [],
+  all_hook_stubs: false,
   ...over,
 });
 
@@ -58,6 +60,8 @@ export const hooks = (over: Partial<HookHealth> = {}): HookHealth => ({
   hooks_dir: 'C:/Users/harshal/AppData/Roaming/githop/hooks',
   global_hooks_path: 'C:/Users/harshal/AppData/Roaming/githop/hooks',
   points_to_us: true,
+  overridden_by: [],
+  included_hooks_paths: [],
   missing: [],
   tampered: [],
   stale: [],
@@ -79,6 +83,7 @@ export const appState = (over: Partial<AppState> = {}): AppState => ({
     hooks_installed: true,
     global_identity: { name: 'Harshal', email: 'harshal@company.com' },
     step_hint: 'done',
+    backup_dir: 'C:/Users/harshal/AppData/Roaming/githop/backups',
   },
   autostart: true,
   ...over,
@@ -94,14 +99,15 @@ export const emptyState = (): AppState =>
       hooks_installed: false,
       global_identity: { name: 'Harshal', email: 'harshal@company.com' },
       step_hint: 'welcome',
+      backup_dir: 'C:/Users/harshal/AppData/Roaming/githop/backups',
     },
   });
 
 export const repo = (
   root: string,
   over: Partial<ScannedRepo['resolution']> = {},
-  extra: Partial<ScannedRepo> = {},
-): ScannedRepo => ({
+  extra: Partial<RepoRow> = {},
+): RepoRow => ({
   root,
   resolution: {
     profile_id: 'personal',
@@ -117,6 +123,7 @@ export const repo = (
     committer: { name: 'Harshal', email: personal.email },
   },
   error: null,
+  unpushed_offenders: 0,
   ...extra,
 });
 

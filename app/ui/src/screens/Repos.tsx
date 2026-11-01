@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
+import { ErrorText } from '../components/ErrorText';
 import { Dialog } from '../components/Dialog';
 import { Ico, Icons } from '../components/icons';
 import { EmptyState, ScreenHeader } from '../components/Layout';
@@ -12,25 +13,26 @@ import { Spinner } from '../components/Spinner';
 import { Table, type Column } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { Tooltip } from '../components/Tooltip';
-import { reposStore, replaceRepo, type OffenderCount } from '../lib/appState';
+import { reposStore, replaceRepo } from '../lib/appState';
 import { baseName, normalizePath, profileById, sortProfiles, truncateMiddle } from '../lib/format';
 import * as ipc from '../lib/ipc';
 import { useNav } from '../lib/nav';
 import { KEYS, readJson, removeKey, writeJson } from '../lib/storage';
-import type { HookStage, IpcError, ProfileSet, ScannedRepo } from '../lib/types';
+import type { HookStage, IpcError, ProfileSet, RepoRow } from '../lib/types';
 import { S } from '../strings';
 
 type Action = 'fix' | 'husky' | 'pin' | null;
 export type RepoStatus = { kind: PillKind; text: string; action: Action };
 
-/** Status priority: unreadable > wrong commits > husky > unassigned > email mismatch > no remote > matches. */
-export function repoStatus(
-  r: ScannedRepo,
-  offenders: OffenderCount | undefined,
-  profiles: ProfileSet,
-): RepoStatus {
+/**
+ * Status priority: unreadable > wrong commits > husky > unassigned > email
+ * mismatch > no remote > matches. "Wrong commits" counts only the unpushed ones
+ * Fix can change (`unpushed_offenders`); pushed ones are explained on the Fix screen.
+ */
+export function repoStatus(r: RepoRow, profiles: ProfileSet): RepoStatus {
   if (r.error) return { kind: 'warning', text: S.pill.unreadable, action: null };
-  if (typeof offenders === 'number' && offenders > 0)
+  const offenders = r.unpushed_offenders;
+  if (offenders > 0)
     return { kind: 'blocked', text: S.pill.wrongCommits(offenders), action: 'fix' };
   if (r.resolution.warnings.some((w) => w.kind === 'local-hooks-path'))
     return { kind: 'warning', text: S.pill.husky, action: 'husky' };
@@ -45,34 +47,11 @@ export function repoStatus(
   return { kind: 'ok', text: S.pill.matches, action: null };
 }
 
-function mergeRepos(old: ScannedRepo[], fresh: ScannedRepo[]): ScannedRepo[] {
-  const m = new Map(old.map((r) => [r.root.toLowerCase(), r]));
-  for (const r of fresh) m.set(r.root.toLowerCase(), r);
+function mergeRepos(old: RepoRow[], fresh: RepoRow[]): RepoRow[] {
+  const key = (r: RepoRow) => normalizePath(r.root).toLowerCase();
+  const m = new Map(old.map((r) => [key(r), r]));
+  for (const r of fresh) m.set(key(r), r);
   return [...m.values()].sort((a, b) => baseName(a.root).localeCompare(baseName(b.root)));
-}
-
-async function checkOffenders(repos: ScannedRepo[]) {
-  const todo = repos.filter((r) => !r.error && r.resolution.profile_id);
-  reposStore.set((s) => {
-    const o = { ...s.offenders };
-    for (const r of todo) o[r.root] = 'checking';
-    return { ...s, offenders: o };
-  });
-  const queue = [...todo];
-  const worker = async () => {
-    for (let r = queue.shift(); r; r = queue.shift()) {
-      const root = r.root;
-      let v: OffenderCount;
-      try {
-        const plan = await ipc.fixPlan(root);
-        v = plan.offenders.length + plan.pushed_offenders.length;
-      } catch {
-        v = 'error';
-      }
-      reposStore.set((s) => ({ ...s, offenders: { ...s.offenders, [root]: v } }));
-    }
-  };
-  await Promise.all([worker(), worker(), worker()]);
 }
 
 export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
@@ -80,14 +59,13 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
   const toast = useToast();
   const st = reposStore.useStore();
   const scanToken = useRef(0);
-  const [husky, setHusky] = useState<ScannedRepo | null>(null);
+  const [husky, setHusky] = useState<RepoRow | null>(null);
   const [pinningAll, setPinningAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<IpcError | null>(null);
 
   const scanFolders = useCallback(async (folders: string[]) => {
     const token = ++scanToken.current;
     setError(null);
-    let found: ScannedRepo[] = [];
     const unlisten = await ipc
       .onScanProgress((p) => {
         if (token === scanToken.current)
@@ -103,14 +81,12 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
         reposStore.set((s) => ({ ...s, scanning: { folder, found: 0 } }));
         const r = await ipc.scan(folder);
         if (token !== scanToken.current) return;
-        found = [...found, ...r];
         reposStore.set((s) => ({ ...s, repos: mergeRepos(s.repos, r) }));
       }
       reposStore.set((s) => ({ ...s, scanning: null, scanned: true }));
-      void checkOffenders(found);
     } catch (e) {
       if (token === scanToken.current) {
-        setError((e as IpcError).message);
+        setError(e as IpcError);
         reposStore.set((s) => ({ ...s, scanning: null }));
       }
     } finally {
@@ -148,24 +124,26 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
 
   const cancel = () => {
     scanToken.current++;
+    // Stop the backend walk too (CPU/disk), not only the UI.
+    void ipc.cancelScan().catch(() => undefined);
     reposStore.set((s) => ({ ...s, scanning: null, scanned: s.repos.length > 0 }));
     toast({ kind: 'info', message: S.repos.scanCancelled });
   };
 
   const forget = () => {
+    if (reposStore.get().scanning) void ipc.cancelScan().catch(() => undefined);
     scanToken.current++;
     removeKey(KEYS.scanFolders);
     reposStore.set((s) => ({
       ...s,
       folders: [],
       repos: [],
-      offenders: {},
       scanned: false,
       scanning: null,
     }));
   };
 
-  const doPin = async (r: ScannedRepo, id: string) => {
+  const doPin = async (r: RepoRow, id: string) => {
     try {
       const updated = await ipc.pin(r.root, id);
       replaceRepo(updated);
@@ -194,11 +172,11 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
 
   const ordered = sortProfiles(profiles);
 
-  const columns: Column<ScannedRepo>[] = [
+  const columns: Column<RepoRow>[] = [
     {
       key: 'repo',
       header: S.repos.colRepo,
-      className: 'max-w-[16rem]',
+      className: 'max-w-[16rem] gh-cell-full',
       render: (r) => (
         <div className="flex min-w-0 flex-col">
           <span className="truncate font-mono text-mono-small text-ink" title={r.root}>
@@ -236,17 +214,10 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
       key: 'status',
       header: S.repos.colStatus,
       render: (r) => {
-        const o = st.offenders[r.root];
-        const s = repoStatus(r, o, profiles);
+        const s = repoStatus(r, profiles);
         return (
           <span className="flex flex-wrap items-center gap-1">
             <Pill kind={s.kind}>{s.text}</Pill>
-            {o === 'checking' ? (
-              <span className="flex items-center gap-1 text-small text-ink-muted">
-                <Spinner className="h-3 w-3" />
-                {S.pill.checking}
-              </span>
-            ) : null}
             {r.error ? (
               <Tooltip content={r.error} describe>
                 <button
@@ -267,7 +238,7 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
       header: <span className="sr-only">{S.repos.colAction}</span>,
       align: 'right',
       render: (r) => {
-        const s = repoStatus(r, st.offenders[r.root], profiles);
+        const s = repoStatus(r, profiles);
         if (s.action === 'fix')
           return (
             <Button
@@ -369,7 +340,7 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
           className="mb-3"
           action={{ label: S.common.retry, onClick: () => void scanFolders(st.folders) }}
         >
-          {error}
+          <ErrorText error={error} />
         </Banner>
       ) : null}
 
@@ -399,7 +370,7 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
   );
 }
 
-function HuskyDialog({ repo, onClose }: { repo: ScannedRepo | null; onClose: () => void }) {
+function HuskyDialog({ repo, onClose }: { repo: RepoRow | null; onClose: () => void }) {
   const toast = useToast();
   const [stage, setStage] = useState<HookStage>('commit');
   const [snippet, setSnippet] = useState<string>('');
