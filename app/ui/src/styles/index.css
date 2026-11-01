@@ -86,9 +86,16 @@ html.tray body {
   background: transparent;
 }
 
+/* ---------------------------------------------------------------------------
+ * Motion — Design §10 + app/ui/MOTION.md. One easing (--ease), durations from
+ * tokens.css. Only opacity and transforms (scale / translate) animate, except
+ * the documented colour cross-fades and two tiny width changes (onboarding dot,
+ * segmented thumb). Focus rings are never transitioned (Design §11).
+ * ------------------------------------------------------------------------- */
 @layer utilities {
+  /* Hover / pressed / selected colour changes. No outline-color: focus is instant. */
   .transition-ui {
-    transition-property: color, background-color, border-color, outline-color, opacity;
+    transition-property: color, background-color, border-color, opacity, box-shadow;
     transition-timing-function: var(--ease);
     transition-duration: var(--dur-fast);
   }
@@ -97,15 +104,138 @@ html.tray body {
     transition-timing-function: var(--ease);
     transition-duration: var(--dur-base);
   }
+  /* Small pressable controls: the colour transition above plus a 0.98 press. */
+  .press {
+    transition-property: color, background-color, border-color, opacity, box-shadow, scale;
+    transition-timing-function: var(--ease);
+    transition-duration: var(--dur-fast);
+  }
+  .press:active:not(:disabled):not([aria-disabled='true']) {
+    scale: var(--press-scale);
+  }
+  /* Screen change (Design §10: 180 ms opacity). */
   .fade-in {
     animation: gh-fade var(--dur-screen) var(--ease);
   }
   .menu-in {
     animation: gh-fade var(--dur-base) var(--ease);
   }
-  .spin {
-    animation: gh-spin 900ms linear infinite;
+  /* Something appeared or changed in place (banner, status pill, new table row). */
+  .appear {
+    animation: gh-fade var(--dur-base) var(--ease);
   }
+  /* A chip / small item added by the user. */
+  .pop-in {
+    animation: gh-pop-in var(--dur-fast) var(--ease);
+  }
+  /* Spinners fade in (so a fast load never flashes one) while turning. */
+  .spin {
+    animation:
+      gh-fade var(--dur-fast) var(--ease),
+      gh-spin var(--dur-spin) linear infinite;
+  }
+}
+
+/* Dialog (§7.13): scrim fades, panel scales from 0.97 around its centre. */
+.gh-scrim[data-state='open'] {
+  animation: gh-fade var(--dur-base) var(--ease);
+}
+.gh-scrim[data-state='closed'] {
+  animation: gh-fade-out var(--dur-exit) var(--ease) forwards;
+  pointer-events: none;
+}
+.gh-scrim[data-state='open'] .gh-dialog {
+  animation: gh-pop-in var(--dur-base) var(--ease);
+}
+.gh-scrim[data-state='closed'] .gh-dialog {
+  animation: gh-pop-out var(--dur-exit) var(--ease) forwards;
+}
+
+/* Menus / popovers: scale + fade from the corner nearest the trigger
+   (transform-origin is set per placement by the component). */
+.gh-pop[data-state='open'] {
+  animation: gh-pop-in var(--dur-base) var(--ease);
+}
+.gh-pop[data-state='closed'] {
+  animation: gh-pop-out var(--dur-exit) var(--ease) forwards;
+  pointer-events: none;
+}
+
+/* Tooltip (§7.15): fast pop from the trigger side; instant within a skip-delay group. */
+.gh-tooltip:not([hidden]) {
+  animation: gh-pop-in var(--dur-fast) var(--ease);
+}
+.gh-tooltip[data-instant] {
+  animation: none;
+}
+
+/* Toasts (§7.16): rise from the bottom edge, leave with a short fade; drag right to dismiss. */
+.gh-toast {
+  transition: translate var(--dur-base) var(--ease);
+  touch-action: pan-y;
+}
+.gh-toast[data-swiping] {
+  transition: none;
+}
+.gh-toast[data-state='open'] {
+  animation: gh-rise-in var(--dur-base) var(--ease);
+}
+.gh-toast[data-state='closed'] {
+  animation: gh-pop-out var(--dur-exit) var(--ease) forwards;
+  pointer-events: none;
+}
+.gh-toast[data-state='closed'][data-swiped] {
+  animation-name: gh-swipe-out;
+}
+
+/* Tray menu window: rises from the taskbar edge each time it is shown. */
+.gh-tray {
+  transform-origin: bottom center;
+}
+.gh-tray[data-state='open'] {
+  animation: gh-rise-in var(--dur-base) var(--ease);
+}
+.gh-tray[data-state='hidden'] {
+  opacity: 0;
+}
+
+/* Onboarding steps slide a short way in the direction of travel. */
+.gh-step[data-dir='forward'] {
+  animation: gh-step-forward var(--dur-screen) var(--ease);
+}
+.gh-step[data-dir='back'] {
+  animation: gh-step-back var(--dur-screen) var(--ease);
+}
+.gh-dot {
+  transition-property: width, background-color;
+  transition-timing-function: var(--ease);
+  transition-duration: var(--dur-base);
+}
+
+/* Sliding selection indicator (sidebar nav, segmented control). The active item
+   goes transparent only once the indicator has measured itself. */
+.gh-indicator[data-animate] {
+  transition-property: transform, width, height;
+  transition-timing-function: var(--ease);
+  transition-duration: var(--dur-base);
+}
+.gh-nav,
+.gh-seg > button {
+  position: relative;
+}
+[data-indicator='ready'] .gh-nav[aria-current='page'],
+.gh-seg[data-indicator='ready'] > button[aria-checked='true'] {
+  background-color: transparent;
+}
+
+/* Toggle (§7.12): the knob travels with a transform, not `left`. */
+.gh-toggle-knob {
+  transition-property: translate, background-color, border-color;
+  transition-timing-function: var(--ease);
+  transition-duration: var(--dur-base);
+}
+.gh-toggle[aria-checked='true'] .gh-toggle-knob {
+  translate: 1rem 0;
 }
 
 @keyframes gh-fade {
@@ -116,13 +246,55 @@ html.tray body {
     opacity: 1;
   }
 }
+@keyframes gh-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes gh-pop-in {
+  from {
+    opacity: 0;
+    scale: var(--enter-scale);
+  }
+}
+@keyframes gh-pop-out {
+  to {
+    opacity: 0;
+    scale: var(--enter-scale);
+  }
+}
+@keyframes gh-rise-in {
+  from {
+    opacity: 0;
+    translate: 0 var(--enter-shift);
+  }
+}
+@keyframes gh-swipe-out {
+  to {
+    opacity: 0;
+    translate: 100% 0;
+  }
+}
+@keyframes gh-step-forward {
+  from {
+    opacity: 0;
+    translate: var(--enter-shift) 0;
+  }
+}
+@keyframes gh-step-back {
+  from {
+    opacity: 0;
+    translate: calc(var(--enter-shift) * -1) 0;
+  }
+}
 @keyframes gh-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-/* Design §10: respect reduced motion → instant transitions. */
+/* Design §10: respect reduced motion → instant transitions. The JS side
+   (lib/motion.tsx) also skips exit phases and FLIP, so layers unmount at once. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -130,6 +302,15 @@ html.tray body {
     animation-duration: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0ms !important;
+  }
+  .press:active:not(:disabled):not([aria-disabled='true']) {
+    scale: none;
+  }
+  /* A busy spinner is status, not decoration — Windows keeps its busy cursor
+     turning with animation effects off too. Slower, never frozen. */
+  .spin {
+    animation-duration: 0ms, calc(var(--dur-spin) * 2) !important;
+    animation-iteration-count: 1, infinite !important;
   }
 }
 
@@ -158,6 +339,15 @@ html.tray body {
   }
   .gh-toggle[aria-checked='true'] {
     background: Highlight;
+  }
+  /* Segmented thumb stays visible as the selected segment in system colours. */
+  .gh-seg .gh-indicator {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+  .gh-seg[data-indicator='ready'] > button[aria-checked='true'] {
+    forced-color-adjust: none;
+    color: HighlightText;
   }
   /* Scrollbar thumb in system colours so it stays visible in contrast themes. */
   ::-webkit-scrollbar-thumb,

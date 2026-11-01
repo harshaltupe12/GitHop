@@ -26,8 +26,10 @@ HTMLCanvasElement.prototype.getContext = (() => null) as never;
 beforeEach(async () => {
   const { resetQueries } = await import('../lib/query');
   const { reposStore } = await import('../lib/appState');
+  const { tooltipGroup } = await import('../lib/motion');
   resetQueries();
   reposStore.reset();
+  tooltipGroup.reset();
   window.localStorage.clear();
 });
 

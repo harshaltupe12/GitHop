@@ -84,7 +84,13 @@ export default {
       borderRadius: { sm: 'var(--radius-sm)', md: 'var(--radius-md)', lg: 'var(--radius-lg)' },
       boxShadow: { float: 'var(--shadow-float)' },
       transitionTimingFunction: { ui: 'var(--ease)' },
-      transitionDuration: { fast: '120ms', base: '160ms', screen: '180ms' },
+      // Motion: values live in tokens.css (Design §10, app/ui/MOTION.md).
+      transitionDuration: {
+        fast: 'var(--dur-fast)',
+        base: 'var(--dur-base)',
+        screen: 'var(--dur-screen)',
+        exit: 'var(--dur-exit)',
+      },
       width: { sidebar: rem(184), dialog: rem(420), tray: rem(260) },
       maxWidth: { content: rem(760), tooltip: rem(280) },
     },
