@@ -1,6 +1,8 @@
 //! `githop status [--json]` — which identity will this repo use, and why.
 
 use anyhow::Result;
+use githop_core::gitconfig::ConfigScope;
+use githop_core::hooks;
 use githop_core::paths::to_slash;
 use githop_core::{pin as core_pin, resolve, EffectiveIdentity, Identity, Profile, Repo};
 use serde_json::json;
@@ -50,6 +52,15 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
         (Some(p), Some(i)) => Some(identity_matches(i, p)),
         _ => None,
     };
+    // Review 2026-11-01 #1: the hooksPath git really uses here (includes and
+    // includeIf evaluated for this repo). Repo-local values are already a
+    // resolution warning (C3).
+    let hooks_override = store
+        .settings()
+        .hooks_installed
+        .then(|| hooks::repo_hooks_override(&snapshot, store.paths(), git.home_dir().as_deref()))
+        .flatten()
+        .filter(|o| !matches!(o.scope, ConfigScope::Local | ConfigScope::Worktree));
 
     let ui = &ctx.ui;
     if ui.json {
@@ -70,6 +81,7 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
             "ssh_key": repo_key,
             "key_matches": key_matches,
             "warnings": warnings,
+            "hooks_override": hooks_override,
         }))?;
         return Ok(Exit::Ok);
     }
@@ -144,6 +156,16 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
     }
     for w in &res.warnings {
         ui.warn(&describe_warning(w, set));
+    }
+    if let Some(o) = &hooks_override {
+        match &o.value {
+            Some(v) => ui.warn(&format!(
+                "In this repo, core.hooksPath is {v} (set in {}), so GitHop's hooks don't run here.",
+                if o.origin.is_empty() { "your git config" } else { &o.origin }
+            )),
+            None => ui.warn("In this repo, core.hooksPath isn't set, so GitHop's hooks don't run here."),
+        }
+        ui.hint("Run: githop doctor");
     }
     Ok(Exit::Ok)
 }

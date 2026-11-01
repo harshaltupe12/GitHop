@@ -20,8 +20,10 @@ use crate::cli::{CheckArgs, Stage};
 use crate::exit::Exit;
 use crate::ui::{paint_dim, status_line, Status, Ui};
 
-/// Upper bound on pre-push stdin (one line per ref; generous).
-const MAX_STDIN: u64 = 4 * 1024 * 1024;
+/// Upper bound on pre-push stdin: one ~100-byte line per ref, so ~600k refs.
+/// Past it the check fails (fail open, or blocked under block-strict) instead
+/// of silently checking only the first refs (review 2026-11-01 #10).
+const MAX_STDIN: u64 = 64 * 1024 * 1024;
 
 pub fn core_stage(stage: Stage) -> CoreStage {
     match stage {
@@ -68,9 +70,24 @@ fn read_stdin(stage: CoreStage) -> std::io::Result<String> {
     if stdin.is_terminal() {
         return Ok(String::new());
     }
-    let mut buf = Vec::new();
-    stdin.lock().take(MAX_STDIN).read_to_end(&mut buf)?;
+    let buf = read_bounded(&mut stdin.lock(), MAX_STDIN)?;
     Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Read all of `r`, up to `max` bytes. More than that is an error (after
+/// draining the rest, so git never sees a broken pipe): a ref list is never
+/// cut short silently.
+fn read_bounded(r: &mut impl Read, max: u64) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    r.take(max.saturating_add(1)).read_to_end(&mut buf)?;
+    if buf.len() as u64 > max {
+        let _ = std::io::copy(r, &mut std::io::sink());
+        return Err(std::io::Error::other(format!(
+            "the push lists too many refs to check (more than {} MiB)",
+            max / (1024 * 1024)
+        )));
+    }
+    Ok(buf)
 }
 
 fn exit_for(code: i32) -> Exit {
@@ -139,6 +156,31 @@ mod tests {
             render_lines(&[Message::warning("w")], false, false),
             vec!["! w"]
         );
+    }
+
+    /// Review 2026-11-01 #10: over the cap is an error, never a silent cut.
+    #[test]
+    fn stdin_over_the_cap_is_an_error_not_a_truncation() {
+        let lines = "refs/heads/a 1111 refs/heads/a 0000\n".repeat(100);
+        let mut ok = std::io::Cursor::new(lines.clone().into_bytes());
+        assert_eq!(
+            read_bounded(&mut ok, lines.len() as u64).unwrap(),
+            lines.as_bytes()
+        );
+        let mut over = std::io::Cursor::new(lines.clone().into_bytes());
+        let err = read_bounded(&mut over, lines.len() as u64 - 1).unwrap_err();
+        assert!(err.to_string().contains("too many refs"), "{err}");
+        assert_eq!(
+            over.position(),
+            lines.len() as u64,
+            "the rest is drained so git sees no broken pipe"
+        );
+        // The error becomes GitHop's own failure: fail open, or blocked under block-strict.
+        let r = CheckResult::internal_error(CoreStage::Push, EnforceMode::Block, err.to_string());
+        assert_eq!(r.exit_code(), 3);
+        let r =
+            CheckResult::internal_error(CoreStage::Push, EnforceMode::BlockStrict, err.to_string());
+        assert_eq!(r.exit_code(), 1);
     }
 
     #[test]

@@ -96,6 +96,13 @@ pub fn print_install(ctx: &Ctx, report: &InstallReport) {
     if let Some(prev) = &report.previous_hooks_path {
         ui.hint(&format!("Your previous hooks in {prev} still run."));
     }
+    for i in &report.included_hooks_paths {
+        ui.hint(&format!(
+            "{} sets core.hooksPath = {}. Those hooks still run where it applies.",
+            i.describe(),
+            i.value
+        ));
+    }
     ui.detail(&format!(
         "core.hooksPath = {} ({} files)",
         report.hooks_dir,

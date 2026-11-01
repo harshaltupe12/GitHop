@@ -175,6 +175,24 @@ pub enum PinAttempt {
     Failed(String),
 }
 
+/// The line explaining an env override (C9), and what to do (without the
+/// final "commit again" part). `git commit --author=…` reaches hooks through
+/// `GIT_AUTHOR_EMAIL` too, and a hook can't tell the two apart (review
+/// 2026-11-01 #11), so the author line names both.
+fn env_override_lines(var: &str, email: &str) -> (String, String) {
+    if var == "GIT_AUTHOR_EMAIL" {
+        (
+            format!("This commit's author email is {email} (from --author or GIT_AUTHOR_EMAIL)."),
+            "Drop --author or unset GIT_AUTHOR_EMAIL".to_string(),
+        )
+    } else {
+        (
+            format!("{var} is set, and it overrides the repo's settings."),
+            format!("Unset {var}"),
+        )
+    }
+}
+
 /// Messages for a mismatch (Design §9.3). Pure.
 pub fn mismatch_messages(m: &CommitMismatch, mode: EnforceMode, pin: &PinAttempt) -> Vec<Message> {
     let warn = mode == EnforceMode::Warn;
@@ -211,14 +229,10 @@ pub fn mismatch_messages(m: &CommitMismatch, mode: EnforceMode, pin: &PinAttempt
             );
         }
         (PinAttempt::Pinned, Some(var)) => {
+            let (why, action) = env_override_lines(var, would);
             out.push(would_line);
             out.push(Message::ok(format!("Pinned this repo to {}.", m.label)));
-            out.push(
-                Message::info(format!(
-                    "{var} is set, and it overrides the repo's settings."
-                ))
-                .hint(format!("Unset {var}, then run the commit again.")),
-            );
+            out.push(Message::info(why).hint(format!("{action}, then run the commit again.")));
         }
         (PinAttempt::Failed(reason), _) => {
             out.push(would_line.hint(pin_hint));
@@ -227,17 +241,13 @@ pub fn mismatch_messages(m: &CommitMismatch, mode: EnforceMode, pin: &PinAttempt
             )));
         }
         (PinAttempt::AlreadyPinned, Some(var)) => {
+            let (why, action) = env_override_lines(var, would);
             out.push(would_line);
-            out.push(
-                Message::info(format!(
-                    "{var} is set, and it overrides the repo's settings."
-                ))
-                .hint(if warn {
-                    format!("Unset {var}. To re-stamp this commit: githop fix")
-                } else {
-                    format!("Unset {var}, then commit again.")
-                }),
-            );
+            out.push(Message::info(why).hint(if warn {
+                format!("{action}. To re-stamp this commit: githop fix")
+            } else {
+                format!("{action}, then commit again.")
+            }));
         }
         (PinAttempt::AlreadyPinned, None) => {
             out.push(would_line.hint(if warn {
@@ -573,19 +583,46 @@ mod tests {
         }
     }
 
+    /// Review 2026-11-01 #11: `git commit --author=…` reaches the hook as
+    /// GIT_AUTHOR_EMAIL, so the message must not claim the variable was set.
     #[test]
-    fn env_override_message_names_the_var() {
+    fn author_override_message_covers_author_flag_and_env() {
         let msgs = mismatch_messages(
             &mismatch(true, Some("GIT_AUTHOR_EMAIL")),
             EnforceMode::Block,
             &PinAttempt::AlreadyPinned,
         );
-        assert!(msgs
-            .iter()
-            .any(|m| m.text.starts_with("GIT_AUTHOR_EMAIL is set")));
+        assert!(
+            msgs.iter().any(|m| m.text
+                == "This commit's author email is harshal@personal (from --author or GIT_AUTHOR_EMAIL)."),
+            "{msgs:?}"
+        );
+        assert!(msgs.iter().all(|m| !m.text.contains("is set")), "{msgs:?}");
         assert_eq!(
             msgs.last().unwrap().hint.as_deref(),
-            Some("Unset GIT_AUTHOR_EMAIL, then commit again.")
+            Some("Drop --author or unset GIT_AUTHOR_EMAIL, then commit again.")
+        );
+        let msgs = mismatch_messages(
+            &mismatch(false, Some("GIT_AUTHOR_EMAIL")),
+            EnforceMode::Block,
+            &PinAttempt::Pinned,
+        );
+        assert_eq!(
+            msgs.last().unwrap().hint.as_deref(),
+            Some("Drop --author or unset GIT_AUTHOR_EMAIL, then run the commit again.")
+        );
+        // The committer has no command-line flag: that one is the env var.
+        let msgs = mismatch_messages(
+            &mismatch(true, Some("GIT_COMMITTER_EMAIL")),
+            EnforceMode::Block,
+            &PinAttempt::AlreadyPinned,
+        );
+        assert!(msgs
+            .iter()
+            .any(|m| m.text.starts_with("GIT_COMMITTER_EMAIL is set")));
+        assert_eq!(
+            msgs.last().unwrap().hint.as_deref(),
+            Some("Unset GIT_COMMITTER_EMAIL, then commit again.")
         );
     }
 

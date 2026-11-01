@@ -165,6 +165,7 @@ fn plan_section_1_exact_design_wording_under_a_real_hook() {
         "{err}"
     );
     assert!(!err.contains("GIT_AUTHOR_EMAIL is set"), "{err}");
+    assert!(!err.contains("from --author or GIT_AUTHOR_EMAIL"), "{err}");
 }
 
 #[test]
@@ -611,6 +612,302 @@ fn doctor_caches_github_ssh_aliases_for_owner_rules() {
         .unwrap();
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["resolution"]["profile_id"], "office", "{v}");
+}
+
+/// Pinned Office repo with diverged `main` / `feat` (commits made without hooks).
+fn office_repo_with_branches(env: &TestEnv) -> std::path::PathBuf {
+    let repo = env.repo_with_origin("billing-api", "office-org");
+    env.githop_in(&repo)
+        .args(["pin", "office"])
+        .assert()
+        .code(0);
+    env.commit_as(&repo, "a.txt", OFFICE);
+    env.git(&["checkout", "-q", "-b", "feat"], &repo);
+    env.commit_as(&repo, "b.txt", OFFICE);
+    env.git(&["checkout", "-q", "main"], &repo);
+    env.commit_as(&repo, "c.txt", OFFICE);
+    repo
+}
+
+/// Review 2026-11-01 #5: merge, revert and cherry-pick commits made with the
+/// wrong identity are blocked at commit time, like `git commit`.
+#[test]
+fn merge_revert_and_cherry_pick_with_the_wrong_identity_are_blocked() {
+    let env = setup();
+    let repo = office_repo_with_branches(&env);
+    let head = env.git(&["rev-parse", "HEAD"], &repo);
+    let wrong = format!("user.email={PERSONAL}");
+
+    let out = git_env(
+        &env,
+        &["-c", &wrong, "merge", "-q", "--no-edit", "feat"],
+        &repo,
+        &[],
+    );
+    assert!(!out.status.success(), "merge must be blocked");
+    assert!(
+        stderr(&out).contains("✗ GitHop: commit blocked"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(env.git(&["rev-parse", "HEAD"], &repo), head);
+    let _ = git_env(&env, &["merge", "--abort"], &repo, &[]);
+    env.git(&["reset", "-q", "--hard"], &repo);
+
+    let out = git_env(
+        &env,
+        &["-c", &wrong, "revert", "--no-edit", "HEAD"],
+        &repo,
+        &[],
+    );
+    assert!(!out.status.success(), "revert must be blocked");
+    assert!(
+        stderr(&out).contains("✗ GitHop: commit blocked"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(env.git(&["rev-parse", "HEAD"], &repo), head);
+    env.git(&["reset", "-q", "--hard"], &repo);
+
+    let out = git_env(&env, &["-c", &wrong, "cherry-pick", "feat"], &repo, &[]);
+    assert!(!out.status.success(), "cherry-pick must be blocked");
+    assert_eq!(env.git(&["rev-parse", "HEAD"], &repo), head);
+    let _ = git_env(&env, &["cherry-pick", "--abort"], &repo, &[]);
+    env.git(&["reset", "-q", "--hard"], &repo);
+
+    // Right identity: all three go through. Cherry-picking a colleague's
+    // commit keeps their authorship and isn't blocked.
+    env.git(&["checkout", "-q", "-b", "alice", "main~1"], &repo);
+    std::fs::write(repo.join("z.txt"), "z\n").unwrap();
+    env.git(&["add", "z.txt"], &repo);
+    env.git(
+        &[
+            "-c",
+            "user.name=Alice",
+            "-c",
+            "user.email=alice@contrib.example",
+            "commit",
+            "-q",
+            "--no-verify",
+            "-m",
+            "alice",
+        ],
+        &repo,
+    );
+    env.git(&["checkout", "-q", "main"], &repo);
+    for args in [
+        vec!["revert", "--no-edit", "HEAD"],
+        vec!["cherry-pick", "alice"],
+    ] {
+        let out = git_env(&env, &args, &repo, &[]);
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+    }
+    assert_eq!(
+        env.git(&["log", "-1", "--format=%ae %ce"], &repo),
+        format!("alice@contrib.example {OFFICE}")
+    );
+    let out = git_env(&env, &["merge", "-q", "--no-edit", "feat"], &repo, &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        env.git(&["log", "-1", "--format=%p"], &repo)
+            .split(' ')
+            .count(),
+        2,
+        "a merge commit was made"
+    );
+}
+
+/// Doctor (JSON) in `cwd`: (id, status) pairs.
+fn doctor_ids(env: &TestEnv, cwd: &Path) -> Vec<(String, String)> {
+    let out = env
+        .githop_in(cwd)
+        .args(["--json", "doctor"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["id"].as_str().unwrap().to_string(),
+                c["status"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn hook_problems(ids: &[(String, String)]) -> Vec<&(String, String)> {
+    ids.iter()
+        .filter(|(id, st)| {
+            st == "problem" && (id.starts_with("hooks") || id.contains("hooks-path"))
+        })
+        .collect()
+}
+
+/// Review 2026-11-01 #11: `--author` reaches the hook as GIT_AUTHOR_EMAIL; the
+/// message must cover both, not claim the variable was set.
+#[test]
+fn commit_with_a_wrong_author_flag_names_author_and_env() {
+    let env = setup();
+    let repo = env.repo_with_origin("billing-api", "office-org");
+    env.githop_in(&repo)
+        .args(["pin", "office"])
+        .assert()
+        .code(0);
+    stage(&env, &repo, "a.txt");
+    let author = format!("--author=Someone <{PERSONAL}>");
+    let out = git_env(&env, &["commit", "-q", &author, "-m", "a"], &repo, &[]);
+    assert!(!out.status.success(), "blocked");
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!(
+            "This commit's author email is {PERSONAL} (from --author or GIT_AUTHOR_EMAIL)."
+        )),
+        "{err}"
+    );
+    assert!(
+        err.contains("Drop --author or unset GIT_AUTHOR_EMAIL, then commit again."),
+        "{err}"
+    );
+    assert!(!err.contains("GIT_AUTHOR_EMAIL is set"), "{err}");
+}
+
+/// Company hooks through an `includeIf` for `<repos>/work/`. Returns the work dir.
+fn add_corp_include_if(env: &TestEnv) -> std::path::PathBuf {
+    let corp = env.root().join("corp-hooks");
+    std::fs::create_dir_all(&corp).unwrap();
+    std::fs::write(
+        corp.join("pre-commit"),
+        "#!/bin/sh\necho corp >> .git/corp-marker\n",
+    )
+    .unwrap();
+    std::fs::write(
+        env.home().join(".gitconfig-work"),
+        format!("[core]\n\thooksPath = {}\n", TestEnv::slash(&corp)),
+    )
+    .unwrap();
+    let work = env.repos().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let mut g = std::fs::read_to_string(env.global_config()).unwrap();
+    g.push_str(&format!(
+        "[includeIf \"gitdir/i:{}/\"]\n\tpath = ~/.gitconfig-work\n",
+        TestEnv::slash(&work)
+    ));
+    std::fs::write(env.global_config(), g).unwrap();
+    work
+}
+
+/// Office repo inside the includeIf folder.
+fn office_repo_in(env: &TestEnv, dir: &Path) -> std::path::PathBuf {
+    let repo = dir.join("billing-api");
+    std::fs::create_dir_all(&repo).unwrap();
+    env.git(&["init", "-q", "-b", "main"], &repo);
+    env.git(
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/office-org/billing-api.git",
+        ],
+        &repo,
+    );
+    repo
+}
+
+/// Review 2026-11-01 #1, exactly as reproduced: company hooks via includeIf,
+/// then `githop init`. A Personal-email commit in an Office repo in that
+/// folder is blocked, and the company hook still runs.
+#[test]
+fn include_if_company_hooks_path_does_not_turn_githop_off() {
+    let env = TestEnv::new();
+    env.set_global("user.name", "Harshal");
+    env.set_global("user.email", PERSONAL);
+    env.set_global("core.autocrlf", "false");
+    let work = add_corp_include_if(&env);
+    let (code, out, err) = env.run(
+        &env.home(),
+        &["init", "--id", "personal", "--label", "Personal", "--yes"],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        format!("{out}{err}").contains("for repos matching gitdir/i:"),
+        "{out}\n{err}"
+    );
+    env.add_profile("office", "Harshal Office", OFFICE, &["office-org"]);
+    let repo = office_repo_in(&env, &work);
+    env.githop_in(&repo)
+        .args(["pin", "office"])
+        .assert()
+        .code(0);
+
+    stage(&env, &repo, "a.txt");
+    let wrong = format!("user.email={PERSONAL}");
+    let out = git_env(&env, &["-c", &wrong, "commit", "-q", "-m", "a"], &repo, &[]);
+    assert!(!out.status.success(), "must be blocked: {}", stderr(&out));
+    assert!(stderr(&out).contains("✗ GitHop: commit blocked"));
+
+    let out = commit(&env, &repo, "a");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        repo.join(".git").join("corp-marker").is_file(),
+        "company hook ran"
+    );
+
+    let ids = doctor_ids(&env, &repo);
+    assert!(hook_problems(&ids).is_empty(), "{ids:?}");
+    assert!(
+        ids.iter()
+            .any(|(id, st)| id == "hooks-included" && st == "ok"),
+        "{ids:?}"
+    );
+    let (code, out, _) = env.run(&env.home(), &["hooks", "status"]);
+    assert_eq!(code, 0, "{out}");
+}
+
+/// An install made before the includeIf existed: `status` and `doctor` in the
+/// repo report that GitHop's hooks don't run there; `hooks install` fixes it.
+#[test]
+fn status_and_doctor_report_an_include_that_overrides_githop() {
+    let env = setup();
+    let work = add_corp_include_if(&env);
+    let repo = office_repo_in(&env, &work);
+
+    let (code, out, err) = env.run(&repo, &["status"]);
+    assert_eq!(code, 0);
+    let all = format!("{out}{err}");
+    assert!(
+        all.contains("In this repo, core.hooksPath is") && all.contains("corp-hooks"),
+        "{all}"
+    );
+    let out = env
+        .githop_in(&repo)
+        .args(["--json", "status"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["hooks_override"]["scope"], "global", "{v}");
+
+    let (code, _, _) = env.run(&repo, &["doctor"]);
+    assert_eq!(code, 1);
+    let ids = doctor_ids(&env, &repo);
+    let has = |id: &str| ids.iter().any(|(i, st)| i == id && st == "problem");
+    assert!(has("repo-hooks-path"), "{ids:?}");
+    assert!(has("hooks-path"), "{ids:?}");
+
+    env.githop()
+        .args(["hooks", "install", "--yes"])
+        .assert()
+        .code(0);
+    let ids = doctor_ids(&env, &repo);
+    assert!(hook_problems(&ids).is_empty(), "{ids:?}");
+    let (_, out, err) = env.run(&repo, &["status"]);
+    assert!(!format!("{out}{err}").contains("In this repo, core.hooksPath"));
+    stage(&env, &repo, "a.txt");
+    let out = commit(&env, &repo, "a");
+    assert!(!out.status.success(), "GitHop checks again (pins + blocks)");
+    assert!(stderr(&out).contains("Identity fixed for this repo"));
 }
 
 #[cfg(windows)]
