@@ -230,7 +230,7 @@ function Layout({
           <DefaultPanel profiles={state.profiles} onChange={(id) => void setDefault(id)} />
         ) : null}
       </aside>
-      <main id="main" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto">
+      <main id="main" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div key={current} className="fade-in mx-auto max-w-content p-6">
           {error ? (
             <div className="mb-4">

@@ -10,6 +10,14 @@
   #root {
     height: 100%;
   }
+  /* The app is a fixed-size window: only <main> (and dialogs) scroll. If the
+     document could scroll too, anything taller or wider than the window (the
+     full-width sticky Save bar, a focus jump) adds a second scrollbar and a gap
+     under the sidebar. */
+  html,
+  body {
+    overflow: hidden;
+  }
   body {
     margin: 0;
     font-size: 1rem;
