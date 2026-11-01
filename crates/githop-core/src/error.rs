@@ -61,6 +61,11 @@ pub enum CoreError {
     /// No data directory could be determined (no `GITHOP_HOME`, no `%APPDATA%`).
     #[error("couldn't find a folder for GitHop data. Set GITHOP_HOME")]
     NoDataDir,
+
+    /// `fix` (or its undo) won't run in the repo's current state. The text is a
+    /// complete, user-facing sentence with the next step (Design §9).
+    #[error("{0}")]
+    FixRefused(String),
 }
 
 impl CoreError {
