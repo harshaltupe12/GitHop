@@ -32,7 +32,11 @@ fn profile(env: &TestEnv, id: &str, name: &str, email: &str, color: ProfileColor
             env.home().to_string_lossy().replace('\\', "/")
         )),
         owners: vec![],
-        folders: vec![],
+        // Two profiles each need an owner or folder rule: one no test repo is in.
+        folders: vec![format!(
+            "{}/no-repos-here/{id}",
+            env.home().to_string_lossy().replace('\\', "/")
+        )],
     }
 }
 

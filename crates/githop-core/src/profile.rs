@@ -301,6 +301,12 @@ impl ProfileSet {
     /// Exactly the same folder in two profiles is an error (no rule can win);
     /// one folder inside another's is info (longest prefix wins, Plan §8 C6).
     pub fn issues(&self) -> Vec<ValidationIssue> {
+        self.issues_with(true)
+    }
+
+    /// `routing = false` leaves out [`Self::check_unrouted`]: that rule is about
+    /// the set being complete, not about one profile being safe to use.
+    fn issues_with(&self, routing: bool) -> Vec<ValidationIssue> {
         let mut out = Issues(Vec::new());
 
         for (i, p) in self.profiles.iter().enumerate() {
@@ -324,7 +330,9 @@ impl ProfileSet {
             check_owners(&mut out, p, earlier);
             check_folders(&mut out, p, earlier);
         }
-        self.check_unrouted(&mut out);
+        if routing {
+            self.check_unrouted(&mut out);
+        }
 
         match self.default.as_deref().map(str::trim) {
             Some("") => out.push(
@@ -348,7 +356,9 @@ impl ProfileSet {
     /// With two or more profiles, a profile with no owners and no folders is never
     /// picked for a repo by rule — only by a pin or as the default. Its repos then
     /// quietly use the default profile (how an office repo got a personal commit:
-    /// Office had no owners while Personal was the default). Warning, not error.
+    /// Office had no owners while Personal was the default). An error, so the set
+    /// can't be saved like that; a single profile needs neither. A file that already
+    /// has it still loads (`Store::open` doesn't validate) and hooks keep working.
     fn check_unrouted(&self, out: &mut Issues) {
         if self.profiles.len() < 2 {
             return;
@@ -365,21 +375,33 @@ impl ProfileSet {
             }
             let fallback = match default_label {
                 Some(d) if default != Some(p.id.trim()) => {
-                    format!("Its repos use your default profile ({d}) unless you pin them.")
+                    format!("Without one, its repos use your default profile ({d}).")
                 }
-                _ => "Other repos only use it while it's the default profile.".to_string(),
+                _ => "Without one, it's only used where no other profile matches.".to_string(),
             };
-            out.push(
-                Some(p),
+            out.error(
+                p,
                 "owners",
-                Severity::Warning,
                 format!(
-                    "{} has no GitHub owners or folders, so GitHop can't tell which repos are \
-                     its. {fallback} Add the GitHub organisation or user that owns its repos, \
-                     like your company's org.",
+                    "{} needs a GitHub owner or a folder, because you have more than one \
+                     profile: that's how GitHop tells which repos are its. {fallback} Add the \
+                     GitHub organisation or user that owns its repos, like your company's org.",
                     quoted_profile(p)
                 ),
             );
+        }
+    }
+
+    /// Like [`Self::validate`] but without the owner/folder routing rule: for
+    /// import and export, which must not dead-end on a set that's otherwise fine
+    /// (an import "rename" drops clashing owners). `doctor` and the next save
+    /// still report it.
+    pub fn validate_ignoring_routing(&self) -> Result<(), Vec<ValidationIssue>> {
+        let issues = self.issues_with(false);
+        if issues.iter().any(|i| i.severity == Severity::Error) {
+            Err(issues)
+        } else {
+            Ok(())
         }
     }
 
@@ -633,7 +655,9 @@ fn check_shape(out: &mut Issues, p: &Profile) {
 /// its own fields (not clashes with others): for `pin`, `use` and Fix,
 /// which must not act on a hand-edited profile that doesn't validate.
 pub fn profile_errors(set: &ProfileSet, id: &str) -> Option<String> {
-    set.issues()
+    // A missing owner/folder rule doesn't make the profile unsafe to pin or fix
+    // with; pinning is one of the ways out of it.
+    set.issues_with(false)
         .into_iter()
         .find(|i| i.severity == Severity::Error && i.profile_id.as_deref() == Some(id))
         .map(|i| i.message)
@@ -1094,5 +1118,71 @@ mod tests {
             assert_eq!(ProfileColor::parse(&c.as_str().to_uppercase()), Some(c));
         }
         assert_eq!(ProfileColor::parse("red"), None);
+    }
+
+    fn unrouted(mut p: Profile) -> Profile {
+        p.owners.clear();
+        p.folders.clear();
+        p
+    }
+
+    #[test]
+    fn one_profile_needs_no_owner_or_folder() {
+        let s = set(vec![unrouted(profile("office", ProfileColor::Blue))]);
+        assert!(s.issues().is_empty());
+        assert!(s.validate().is_ok());
+    }
+
+    #[test]
+    fn with_two_profiles_each_needs_an_owner_or_folder() {
+        // The owner's real setup: Office has no rules, Personal is the default.
+        let mut s = office_personal();
+        s.profiles[0] = unrouted(s.profiles[0].clone());
+        s.default = Some("personal".into());
+        let issues = s.validate().unwrap_err();
+        let office = find(&issues, Some("office"), "owners", Severity::Error);
+        assert_eq!(office.len(), 1);
+        let msg = &office[0].message;
+        assert!(
+            msg.contains("\"OFFICE\" needs a GitHub owner or a folder"),
+            "{msg}"
+        );
+        assert!(msg.contains("your default profile (PERSONAL)"), "{msg}");
+        assert!(msg.contains("like your company's org"), "{msg}");
+        assert!(find(&issues, Some("personal"), "owners", Severity::Error).is_empty());
+
+        // The default profile is held to the same rule.
+        s.profiles[1] = unrouted(s.profiles[1].clone());
+        s.profiles[0].owners = vec!["office-org".into()];
+        let issues = s.validate().unwrap_err();
+        let personal = find(&issues, Some("personal"), "owners", Severity::Error);
+        assert!(
+            personal[0]
+                .message
+                .contains("only used where no other profile matches"),
+            "{}",
+            personal[0].message
+        );
+
+        // A folder is enough, so is an owner.
+        s.profiles[1].folders = vec!["C:/Personal/".into()];
+        assert!(s.validate().is_ok());
+        s.profiles[1].folders.clear();
+        s.profiles[1].owners = vec!["me".into()];
+        assert!(s.validate().is_ok());
+    }
+
+    #[test]
+    fn routing_rule_does_not_block_pin_fix_or_import() {
+        let mut s = office_personal();
+        s.profiles[0] = unrouted(s.profiles[0].clone());
+        assert!(s.validate().is_err());
+        // Pinning or fixing with Office is still safe; it's how repos get routed.
+        assert_eq!(profile_errors(&s, "office"), None);
+        assert!(s.validate_ignoring_routing().is_ok());
+        // Other errors still count.
+        s.profiles[0].email = "nope".into();
+        assert!(profile_errors(&s, "office").is_some());
+        assert!(s.validate_ignoring_routing().is_err());
     }
 }

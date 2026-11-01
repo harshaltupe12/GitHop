@@ -259,6 +259,28 @@ impl TestEnv {
         )
     }
 
+    /// A profile made by `githop init` has no owner or folder, which is fine alone
+    /// but refused once a second profile is added. Give each such profile a folder
+    /// no test repo lives in, so it still only matches as the default.
+    fn give_ruleless_profiles_an_unused_folder(&self) {
+        let (code, out, _) = self.run(&self.home(), &["--json", "list"]);
+        if code != 0 {
+            return;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else {
+            return;
+        };
+        let empty = |p: &serde_json::Value, k: &str| p[k].as_array().is_none_or(|a| a.is_empty());
+        for p in v["profiles"].as_array().into_iter().flatten() {
+            let Some(id) = p["id"].as_str() else { continue };
+            if empty(p, "owners") && empty(p, "folders") {
+                let folder = Self::slash(&self.root().join("no-repos-here").join(id));
+                let (code, out, err) = self.run(&self.home(), &["edit", id, "--folder", &folder]);
+                assert_eq!(code, 0, "edit {id} failed:\n{out}\n{err}");
+            }
+        }
+    }
+
     /// `githop add` with flags; asserts success.
     pub fn add_profile(&self, id: &str, name: &str, email: &str, owners: &[&str]) {
         let key = Self::slash(&self.ssh_dir().join(format!("githop_{id}")));
@@ -269,6 +291,15 @@ impl TestEnv {
             args.push("--owner");
             args.push(o);
         }
+        // Two or more profiles each need an owner or folder rule. Tests that want
+        // an owner-less profile get a folder no test repo lives in, so routing
+        // stays exactly what the test means.
+        let unused = Self::slash(&self.root().join("no-repos-here").join(id));
+        if owners.is_empty() {
+            args.push("--folder");
+            args.push(&unused);
+        }
+        self.give_ruleless_profiles_an_unused_folder();
         let (code, out, err) = self.run(&self.home(), &args);
         assert_eq!(code, 0, "add {id} failed:\n{out}\n{err}");
     }

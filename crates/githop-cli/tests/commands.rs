@@ -112,6 +112,96 @@ fn add_invalid_profile_lists_issues_and_saves_nothing() {
 }
 
 #[test]
+fn first_profile_needs_no_owner_but_the_second_does() {
+    let env = TestEnv::new();
+    // One profile: it's used everywhere, no rule needed.
+    env.githop()
+        .args([
+            "add",
+            "--id",
+            "office",
+            "--name",
+            "Me",
+            "--email",
+            OFFICE_EMAIL,
+        ])
+        .assert()
+        .code(0);
+
+    // A second profile with no owner or folder: refused, naming both profiles.
+    env.githop()
+        .args([
+            "add",
+            "--id",
+            "personal",
+            "--name",
+            "Me",
+            "--email",
+            PERSONAL_EMAIL,
+        ])
+        .assert()
+        .code(2)
+        .stderr(contains("isn't valid"))
+        .stderr(contains("office: owners"))
+        .stderr(contains("personal: owners"))
+        .stderr(contains("needs a GitHub owner or a folder"))
+        .stderr(contains("Run: githop edit office --owner <org>"))
+        .stderr(contains(
+            "Then run this command again with --owner <org> or --folder <path>.",
+        ));
+
+    // With an owner for the new one, the first (owner-less) profile still blocks.
+    env.githop()
+        .args([
+            "add",
+            "--id",
+            "personal",
+            "--name",
+            "Me",
+            "--email",
+            PERSONAL_EMAIL,
+            "--owner",
+            "me-personal",
+        ])
+        .assert()
+        .code(2)
+        .stderr(contains("\"Office\" needs a GitHub owner or a folder"))
+        .stderr(contains("Run: githop edit office --owner <org>"))
+        .stderr(contains("Then run this command again."))
+        .stderr(contains("personal: owners").not());
+    let (_, v) = json(&env, &env.home(), &["list"]);
+    assert_eq!(v["profiles"].as_array().unwrap().len(), 1);
+
+    // Following the hint works.
+    env.githop()
+        .args(["edit", "office", "--owner", "office-org"])
+        .assert()
+        .code(0);
+    env.githop()
+        .args([
+            "add",
+            "--id",
+            "personal",
+            "--name",
+            "Me",
+            "--email",
+            PERSONAL_EMAIL,
+            "--owner",
+            "me-personal",
+        ])
+        .assert()
+        .code(0);
+
+    // Taking the last owner away again is refused with the same hint.
+    env.githop()
+        .args(["edit", "office", "--no-owners"])
+        .assert()
+        .code(2)
+        .stderr(contains("needs a GitHub owner or a folder"))
+        .stderr(contains("Run: githop edit office --owner <org>"));
+}
+
+#[test]
 fn add_derives_id_from_label() {
     let env = TestEnv::new();
     env.githop()
@@ -336,6 +426,8 @@ fn wipe_delete_keys_only_removes_githop_keys() {
             "Me",
             "--email",
             "own@example.com",
+            "--folder",
+            "C:/no-repos-here/own",
             "--key",
         ])
         .arg(&own_key)
