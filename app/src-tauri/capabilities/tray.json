@@ -1,15 +1,15 @@
 {
   "identifier": "tray",
-  "description": "Small frameless tray menu window: list profiles, switch the default profile, open the main window, quit.",
+  "description": "Small frameless tray menu window: list profiles, switch the default profile, open the main window, quit, hide itself.",
   "windows": ["tray"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "core:window:allow-hide",
     "core:window:allow-set-size",
     "allow-list-profiles",
     "allow-set-default",
-    "allow-tray-open-main",
-    "allow-tray-hide",
-    "allow-tray-quit"
+    "allow-show-main",
+    "allow-quit-app"
   ]
 }

@@ -74,11 +74,13 @@ pub fn run() -> i32 {
             commands::settings::export_profiles,
             commands::settings::import_preview,
             commands::settings::import_apply,
+            commands::settings::restore_profiles_backup,
+            commands::settings::save_diagnostics,
+            commands::repos::cancel_scan,
             commands::system::open_external,
             commands::system::app_info,
-            commands::system::tray_open_main,
-            commands::system::tray_hide,
-            commands::system::tray_quit,
+            commands::system::show_main,
+            commands::system::quit_app,
         ])
         .on_window_event(|window, event| {
             // Close hides to the tray; "Quit" lives in the tray menu (Design §4.4).

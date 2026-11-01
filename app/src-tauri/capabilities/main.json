@@ -16,6 +16,7 @@
     "allow-read-public-key",
     "allow-test-connection",
     "allow-scan",
+    "allow-cancel-scan",
     "allow-pin",
     "allow-unpin",
     "allow-pin-all",
@@ -24,14 +25,18 @@
     "allow-fix-apply",
     "allow-fix-undo",
     "allow-doctor",
+    "allow-save-diagnostics",
     "allow-update-settings",
     "allow-install-hooks",
     "allow-wipe",
     "allow-export-profiles",
     "allow-import-preview",
     "allow-import-apply",
+    "allow-restore-profiles-backup",
     "allow-open-external",
     "allow-app-info",
+    "allow-show-main",
+    "allow-quit-app",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-ask",
@@ -42,7 +47,8 @@
       "identifier": "opener:allow-open-url",
       "allow": [
         { "url": "https://github.com/settings/keys" },
-        { "url": "https://github.com/githop-placeholder/githop/releases" }
+        { "url": "https://github.com/githop-placeholder/githop/releases" },
+        { "url": "https://github.com/githop-placeholder/githop/blob/main/docs/user-guide.md" }
       ]
     }
   ]

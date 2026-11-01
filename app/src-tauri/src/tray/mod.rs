@@ -354,7 +354,10 @@ fn create_menu_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWi
             .minimizable(false)
             .skip_taskbar(true)
             .always_on_top(true)
-            .shadow(true)
+            // The UI draws its own rounded card and shadow (Design 7.14) on a
+            // transparent window; a native shadow would outline the square frame.
+            .transparent(true)
+            .shadow(false)
             .visible(false)
             .focused(true)
             .build()?;

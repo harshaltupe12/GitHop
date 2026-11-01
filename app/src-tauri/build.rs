@@ -38,12 +38,14 @@ const COMMANDS: &[&str] = &[
     "import_preview",
     "import_apply",
     // system
+    "restore_profiles_backup",
+    "save_diagnostics",
+    "cancel_scan",
+    // system
     "open_external",
     "app_info",
-    // tray menu window (app-only, not in IPC.md's main table)
-    "tray_open_main",
-    "tray_hide",
-    "tray_quit",
+    "show_main",
+    "quit_app",
 ];
 
 fn main() {

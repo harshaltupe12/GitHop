@@ -1,17 +1,20 @@
-//! Repo commands: scan (worker thread + progress events), pin, unpin, pin all,
-//! husky snippet.
+//! Repo commands: scan (worker thread + progress events, cancellable), pin,
+//! unpin, pin all, husky snippet.
+//!
+//! Every repo row carries `unpushed_offenders` (from core `fix::plan`) so the
+//! Repos screen can show "N wrong commits" without a `fix_plan` call per row.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use githop_core::paths::{folder_key, to_slash};
 use githop_core::scan::{self, ScannedRepo};
-use githop_core::{hooks, pin as core_pin, Git, ProfileSet, Repo};
+use githop_core::{fix, hooks, pin as core_pin, Git, Paths, ProfileSet, Repo};
 use tauri::{AppHandle, Emitter, Runtime};
 
-use crate::dto::{IpcError, IpcResult, ScanProgress};
+use crate::dto::{IpcError, IpcResult, RepoRow, ScanProgress};
 use crate::events;
 use crate::ops::{self, blocking};
 use crate::validate;
@@ -21,13 +24,19 @@ const MAX_THREADS: usize = 8;
 /// Minimum gap between two `scan://progress` events.
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 
+/// Set by `cancel_scan`, cleared when a scan starts.
+static SCAN_CANCEL: AtomicBool = AtomicBool::new(false);
+
 /// Find repos under `folder` and resolve each. Emits `scan://progress`.
+/// A cancelled scan (`cancel_scan`) returns an empty list.
 #[tauri::command]
-pub async fn scan<R: Runtime>(app: AppHandle<R>, folder: String) -> IpcResult<Vec<ScannedRepo>> {
+pub async fn scan<R: Runtime>(app: AppHandle<R>, folder: String) -> IpcResult<Vec<RepoRow>> {
     let root = validate::existing_dir(&folder)?;
+    SCAN_CANCEL.store(false, Ordering::SeqCst);
     blocking(move || {
         let git = ops::git()?;
         let store = ops::store()?;
+        let paths = store.paths().clone();
         let set = store.profiles().clone();
         let aliases = store.settings().github_host_aliases.clone();
         let label = to_slash(&root);
@@ -41,18 +50,25 @@ pub async fn scan<R: Runtime>(app: AppHandle<R>, folder: String) -> IpcResult<Ve
                 eprintln!("GitHop: couldn't send scan progress: {e}");
             }
         };
-        Ok(scan_with_progress(&git, &root, &set, &aliases, emit))
+        let count = |r: &ScannedRepo| unpushed_offenders(&git, &paths, r);
+        Ok(
+            scan_with_progress(&git, &root, &set, &aliases, &SCAN_CANCEL, count, emit)
+                .unwrap_or_default(),
+        )
     })
     .await
 }
 
+/// Stop a running `scan` (its results are dropped).
+#[tauri::command]
+pub async fn cancel_scan() -> IpcResult<()> {
+    SCAN_CANCEL.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
 /// Pin `repo` to profile `id`.
 #[tauri::command]
-pub async fn pin<R: Runtime>(
-    app: AppHandle<R>,
-    repo: String,
-    id: String,
-) -> IpcResult<ScannedRepo> {
+pub async fn pin<R: Runtime>(app: AppHandle<R>, repo: String, id: String) -> IpcResult<RepoRow> {
     let dir = validate::existing_dir(&repo)?;
     validate::profile_id(&id)?;
     let out = blocking(move || {
@@ -63,7 +79,8 @@ pub async fn pin<R: Runtime>(
         let repo = Repo::discover(&git, &dir)?;
         core_pin::pin_repo(&repo, &profile)?;
         ops::remember_pinned(&mut store, repo.root())?;
-        rescan_one(&git, repo.root(), &store)
+        let scanned = rescan_one(&git, repo.root(), &store)?;
+        Ok(row(&git, store.paths(), scanned))
     })
     .await?;
     events::data_changed(&app);
@@ -72,7 +89,7 @@ pub async fn pin<R: Runtime>(
 
 /// Remove the pin from `repo` (no-op if it isn't pinned).
 #[tauri::command]
-pub async fn unpin<R: Runtime>(app: AppHandle<R>, repo: String) -> IpcResult<ScannedRepo> {
+pub async fn unpin<R: Runtime>(app: AppHandle<R>, repo: String) -> IpcResult<RepoRow> {
     let dir = validate::existing_dir(&repo)?;
     let out = blocking(move || {
         let _guard = ops::write_lock();
@@ -81,7 +98,8 @@ pub async fn unpin<R: Runtime>(app: AppHandle<R>, repo: String) -> IpcResult<Sca
         let repo = Repo::discover(&git, &dir)?;
         core_pin::unpin_repo(&repo)?;
         ops::forget_pinned(&mut store, repo.root())?;
-        rescan_one(&git, repo.root(), &store)
+        let scanned = rescan_one(&git, repo.root(), &store)?;
+        Ok(row(&git, store.paths(), scanned))
     })
     .await?;
     events::data_changed(&app);
@@ -91,10 +109,7 @@ pub async fn unpin<R: Runtime>(app: AppHandle<R>, repo: String) -> IpcResult<Sca
 /// Pin each repo to the profile it currently resolves to. Repos that don't
 /// resolve are returned unchanged; a repo that fails gets `error` set.
 #[tauri::command]
-pub async fn pin_all<R: Runtime>(
-    app: AppHandle<R>,
-    repos: Vec<String>,
-) -> IpcResult<Vec<ScannedRepo>> {
+pub async fn pin_all<R: Runtime>(app: AppHandle<R>, repos: Vec<String>) -> IpcResult<Vec<RepoRow>> {
     let dirs = validate::repo_list(&repos)?;
     let out = blocking(move || {
         let _guard = ops::write_lock();
@@ -135,7 +150,8 @@ pub async fn pin_all<R: Runtime>(
                 Ok(())
             })?;
         }
-        Ok(out)
+        let paths = store.paths().clone();
+        Ok(out.into_iter().map(|r| row(&git, &paths, r)).collect())
     })
     .await?;
     events::data_changed(&app);
@@ -173,20 +189,46 @@ fn rescan_one(git: &Git, root: &Path, store: &githop_core::Store) -> IpcResult<S
     })
 }
 
+fn row(git: &Git, paths: &Paths, repo: ScannedRepo) -> RepoRow {
+    let unpushed_offenders = unpushed_offenders(git, paths, &repo);
+    RepoRow {
+        repo,
+        unpushed_offenders,
+    }
+}
+
+/// Unpushed commits with the wrong identity (`fix::plan`), 0 when the repo
+/// couldn't be read, is unresolved, or the fix is blocked.
+fn unpushed_offenders(git: &Git, paths: &Paths, r: &ScannedRepo) -> usize {
+    if r.error.is_some() || r.resolution.profile_id.is_none() {
+        return 0;
+    }
+    match fix::plan(git, Path::new(&r.root), paths) {
+        Ok(plan) if plan.blocked_reason.is_none() => plan.offenders.len(),
+        _ => 0,
+    }
+}
+
 /// Core's scan, split so progress can be reported: find repos (one walk), then
-/// resolve each on a small thread pool, emitting `(found, done)` as it goes.
+/// resolve each on a small thread pool (plus `count` per repo), emitting
+/// `(found, done)` as it goes. `None` when `cancel` was set.
 pub fn scan_with_progress(
     git: &Git,
     root: &Path,
     set: &ProfileSet,
     aliases: &[String],
+    cancel: &AtomicBool,
+    count: impl Fn(&ScannedRepo) -> usize + Sync,
     emit: impl Fn(usize, usize) + Sync,
-) -> Vec<ScannedRepo> {
+) -> Option<Vec<RepoRow>> {
     let dirs: Vec<PathBuf> = scan::find_repos(root, scan::DEFAULT_MAX_DEPTH);
     let found = dirs.len();
+    if cancel.load(Ordering::SeqCst) {
+        return None;
+    }
     emit(found, 0);
     if dirs.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
@@ -195,20 +237,29 @@ pub fn scan_with_progress(
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
     let last_emit = Mutex::new((Instant::now(), 0usize));
-    let results: Mutex<Vec<ScannedRepo>> = Mutex::new(Vec::with_capacity(found));
+    let results: Mutex<Vec<RepoRow>> = Mutex::new(Vec::with_capacity(found));
 
     std::thread::scope(|s| {
         for _ in 0..threads {
             s.spawn(|| loop {
+                if cancel.load(Ordering::SeqCst) {
+                    break;
+                }
                 let i = next.fetch_add(1, Ordering::Relaxed);
                 let Some(dir) = dirs.get(i) else {
                     break;
                 };
                 // max_depth 0 = resolve just this repo (find_repos never
                 // descends into a repo, so nothing is missed).
-                let one = scan::scan(git, dir, set, aliases, 0);
+                let rows: Vec<RepoRow> = scan::scan(git, dir, set, aliases, 0)
+                    .into_iter()
+                    .map(|repo| RepoRow {
+                        unpushed_offenders: count(&repo),
+                        repo,
+                    })
+                    .collect();
                 if let Ok(mut r) = results.lock() {
-                    r.extend(one);
+                    r.extend(rows);
                 }
                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                 // Emit in order (never a smaller `done` after a larger one),
@@ -223,15 +274,18 @@ pub fn scan_with_progress(
             });
         }
     });
+    if cancel.load(Ordering::SeqCst) {
+        return None;
+    }
 
     let mut out = results.into_inner().unwrap_or_else(|p| p.into_inner());
     out.sort_by(|a, b| {
-        folder_key(&a.root)
-            .cmp(&folder_key(&b.root))
-            .then_with(|| a.root.cmp(&b.root))
+        folder_key(&a.repo.root)
+            .cmp(&folder_key(&b.repo.root))
+            .then_with(|| a.repo.root.cmp(&b.repo.root))
     });
-    out.dedup_by(|a, b| folder_key(&a.root) == folder_key(&b.root));
-    out
+    out.dedup_by(|a, b| folder_key(&a.repo.root) == folder_key(&b.repo.root));
+    Some(out)
 }
 
 #[cfg(test)]
@@ -274,15 +328,24 @@ mod tests {
             git.run(&dir, &["init", "-q"]).unwrap();
         }
         let events = Mutex::new(Vec::new());
-        let out = scan_with_progress(&git, &root, &ProfileSet::default(), &[], |f, d| {
-            events.lock().unwrap().push((f, d));
-        });
+        let cancel = AtomicBool::new(false);
+        let out = scan_with_progress(
+            &git,
+            &root,
+            &ProfileSet::default(),
+            &[],
+            &cancel,
+            |_| 7,
+            |f, d| events.lock().unwrap().push((f, d)),
+        )
+        .unwrap();
         let names: Vec<String> = out
             .iter()
-            .map(|r| r.root.rsplit('/').next().unwrap_or("").to_string())
+            .map(|r| r.repo.root.rsplit('/').next().unwrap_or("").to_string())
             .collect();
         assert_eq!(names, ["a-repo", "b-repo", "c-repo"]);
-        assert!(out.iter().all(|r| r.error.is_none()), "{out:?}");
+        assert!(out.iter().all(|r| r.repo.error.is_none()), "{out:?}");
+        assert!(out.iter().all(|r| r.unpushed_offenders == 7));
         let events = events.into_inner().unwrap();
         assert_eq!(events.first(), Some(&(3, 0)));
         assert_eq!(events.last(), Some(&(3, 3)));
@@ -296,10 +359,70 @@ mod tests {
             return;
         };
         let events = Mutex::new(Vec::new());
-        let out = scan_with_progress(&git, tmp.path(), &ProfileSet::default(), &[], |f, d| {
-            events.lock().unwrap().push((f, d));
-        });
+        let cancel = AtomicBool::new(false);
+        let out = scan_with_progress(
+            &git,
+            tmp.path(),
+            &ProfileSet::default(),
+            &[],
+            &cancel,
+            |_| 0,
+            |f, d| events.lock().unwrap().push((f, d)),
+        )
+        .unwrap();
         assert!(out.is_empty());
         assert_eq!(events.into_inner().unwrap(), vec![(0, 0)]);
+    }
+
+    #[test]
+    fn cancelled_scan_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(git) = isolated_git(tmp.path()) else {
+            return;
+        };
+        let dir = tmp.path().join("code").join("a");
+        std::fs::create_dir_all(&dir).unwrap();
+        git.run(&dir, &["init", "-q"]).unwrap();
+        let cancel = AtomicBool::new(true);
+        let out = scan_with_progress(
+            &git,
+            &tmp.path().join("code"),
+            &ProfileSet::default(),
+            &[],
+            &cancel,
+            |_| 0,
+            |_, _| {},
+        );
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn unresolved_or_unreadable_repos_count_zero_offenders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(git) = isolated_git(tmp.path()) else {
+            return;
+        };
+        let paths = Paths::at(tmp.path().join("githop"));
+        let mut r = ScannedRepo {
+            root: "C:/nowhere".into(),
+            resolution: githop_core::Resolution {
+                profile_id: None,
+                source: None,
+                remote_name: None,
+                remote: None,
+                pinned: None,
+                warnings: vec![],
+            },
+            identity: None,
+            error: None,
+        };
+        assert_eq!(unpushed_offenders(&git, &paths, &r), 0);
+        r.resolution.profile_id = Some("office".into());
+        r.error = Some("broken".into());
+        assert_eq!(unpushed_offenders(&git, &paths, &r), 0);
+        // Resolved but the folder isn't a repo → plan errors → 0.
+        r.error = None;
+        r.root = tmp.path().to_string_lossy().replace('\\', "/");
+        assert_eq!(unpushed_offenders(&git, &paths, &r), 0);
     }
 }

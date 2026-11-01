@@ -4,7 +4,9 @@
 
 use tauri::async_runtime::block_on;
 
-use crate::dto::{ErrorCode, ImportAction, ImportResolution};
+use githop_core::export::{ImportAction, ImportResolution};
+
+use crate::dto::ErrorCode;
 
 use super::{fix, keys, profiles, repos, settings};
 

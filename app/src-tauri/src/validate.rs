@@ -7,7 +7,9 @@ use std::path::{Component, Path, PathBuf};
 
 use githop_core::{Profile, Severity, ValidationIssue};
 
-use crate::dto::{ImportAction, ImportResolution, IpcError, IpcResult};
+use githop_core::export::{ImportAction, ImportResolution};
+
+use crate::dto::{IpcError, IpcResult};
 
 /// Longest path GitHop accepts from the UI.
 const MAX_PATH_LEN: usize = 4096;

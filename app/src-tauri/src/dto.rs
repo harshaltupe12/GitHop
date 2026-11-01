@@ -5,10 +5,10 @@
 
 use std::io::ErrorKind;
 
+use githop_core::export::ExportError;
 use githop_core::hooks::HookHealth;
-use githop_core::{
-    CoreError, EnforceMode, Identity, Profile, ProfileSet, Settings, ValidationIssue,
-};
+use githop_core::scan::ScannedRepo;
+use githop_core::{CoreError, EnforceMode, Identity, ProfileSet, Settings, ValidationIssue};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -93,6 +93,19 @@ impl std::fmt::Display for IpcError {
 
 impl std::error::Error for IpcError {}
 
+impl From<ExportError> for IpcError {
+    fn from(e: ExportError) -> Self {
+        match e {
+            ExportError::Core(core) => core.into(),
+            ExportError::InvalidProfiles(issues) => IpcError::validation(issues),
+            ExportError::Conflict(msg) => IpcError::conflict(msg),
+            ExportError::NoHome => IpcError::internal(e.to_string()),
+            other if other.is_user_error() => IpcError::bad_input(other.to_string()),
+            other => IpcError::internal(other.to_string()),
+        }
+    }
+}
+
 impl From<CoreError> for IpcError {
     fn from(e: CoreError) -> Self {
         let message = e.to_string();
@@ -147,6 +160,8 @@ pub struct OnboardingState {
     /// `"welcome"` (nothing done yet) · `"first-profile"` (backup made, no profile)
     /// · `"protection"` (profiles exist, hooks not installed) · `"done"`.
     pub step_hint: String,
+    /// Where GitHop keeps its backups (forward slashes), shown in "Safety first".
+    pub backup_dir: String,
 }
 
 /// Everything the main window needs on start and on focus.
@@ -183,6 +198,16 @@ pub struct ScanProgress {
     pub folder: String,
     pub found: usize,
     pub done: usize,
+}
+
+/// `ScannedRepo` (core) plus the app-side count of unpushed wrong-identity
+/// commits (`fix::plan(..).offenders.len()`, 0 when unresolved/blocked/error),
+/// so the Repos screen needs no `fix_plan` per row. Serialises flat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoRow {
+    #[serde(flatten)]
+    pub repo: ScannedRepo,
+    pub unpushed_offenders: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -234,52 +259,6 @@ pub struct WipeStep {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WipeReport {
     pub steps: Vec<WipeStep>,
-}
-
-// INTEGRATE: replace with core type `githop_core::export::ImportConflictKind`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ImportConflictKind {
-    Id,
-    Email,
-    Color,
-    Owner,
-    KeyFile,
-}
-
-// INTEGRATE: replace with core type `githop_core::export::ImportConflict`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImportConflict {
-    pub profile_id: String,
-    pub kind: ImportConflictKind,
-    pub existing_id: String,
-}
-
-// INTEGRATE: replace with core type `githop_core::export::ImportPreview`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImportPreview {
-    pub profiles: Vec<Profile>,
-    pub conflicts: Vec<ImportConflict>,
-    pub keys: Vec<String>,
-    pub include_settings: bool,
-}
-
-// INTEGRATE: replace with core type `githop_core::export::ImportAction`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ImportAction {
-    Skip,
-    Replace,
-    Rename,
-}
-
-// INTEGRATE: replace with core type `githop_core::export::ImportResolution`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImportResolution {
-    pub profile_id: String,
-    pub action: ImportAction,
-    #[serde(default)]
-    pub new_id: Option<String>,
 }
 
 #[cfg(test)]
@@ -366,16 +345,55 @@ mod tests {
     }
 
     #[test]
-    fn integrate_dtos_match_contract() {
-        let c = ImportConflict {
-            profile_id: "a".into(),
-            kind: ImportConflictKind::KeyFile,
-            existing_id: "b".into(),
+    fn repo_row_serialises_flat() {
+        let row = RepoRow {
+            repo: ScannedRepo {
+                root: "C:/code/a".into(),
+                resolution: githop_core::Resolution {
+                    profile_id: None,
+                    source: None,
+                    remote_name: None,
+                    remote: None,
+                    pinned: None,
+                    warnings: vec![],
+                },
+                identity: None,
+                error: None,
+            },
+            unpushed_offenders: 2,
         };
-        assert_eq!(serde_json::to_value(c).unwrap()["kind"], "key_file");
-        let r: ImportResolution =
-            serde_json::from_str(r#"{"profile_id":"a","action":"rename","new_id":"c"}"#).unwrap();
-        assert_eq!(r.action, ImportAction::Rename);
+        let v = serde_json::to_value(&row).unwrap();
+        assert_eq!(v["root"], "C:/code/a");
+        assert_eq!(v["unpushed_offenders"], 2);
+        assert!(v.get("repo").is_none());
+    }
+
+    #[test]
+    fn export_errors_map_to_codes() {
+        assert_eq!(
+            IpcError::from(ExportError::WrongPassword).code,
+            ErrorCode::BadInput
+        );
+        assert_eq!(
+            IpcError::from(ExportError::Conflict("taken".into())).code,
+            ErrorCode::Conflict
+        );
+        assert_eq!(
+            IpcError::from(ExportError::InvalidProfiles(vec![])).code,
+            ErrorCode::Validation
+        );
+        assert_eq!(
+            IpcError::from(ExportError::Core(CoreError::Locked)).code,
+            ErrorCode::Locked
+        );
+        assert_eq!(
+            IpcError::from(ExportError::NoHome).code,
+            ErrorCode::Internal
+        );
+    }
+
+    #[test]
+    fn integrate_dtos_match_contract() {
         let d = DoctorCheck {
             id: "hooks".into(),
             status: DoctorStatus::Problem,
