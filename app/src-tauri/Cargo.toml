@@ -6,14 +6,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-default-run = "GitHop"
+default-run = "GitHopApp"
 
 [lib]
 name = "githop_app"
 path = "src/lib.rs"
 
+# Not "GitHop": Windows file names ignore case, so GitHop.exe would be the same
+# file as the CLI's githop.exe in target/release and in the install dir.
 [[bin]]
-name = "GitHop"
+name = "GitHopApp"
 path = "src/main.rs"
 
 [build-dependencies]

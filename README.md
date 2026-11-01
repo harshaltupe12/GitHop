@@ -136,6 +136,18 @@ cargo fmt --all
 cargo deny check                            # licences, advisories, banned network crates
 ```
 
+Tray app and installer (needs Node.js LTS; WebView2 ships with Windows 11):
+
+```powershell
+npm --prefix app/ui ci; npm --prefix app/ui run lint; npm --prefix app/ui test
+npm --prefix app ci                          # Tauri CLI
+cd app; npm run tauri dev                    # run the tray app
+npm run build:installer                      # → target/release/bundle/nsis/GitHop_<ver>_x64-setup.exe
+```
+
+The app binary is `GitHopApp.exe` (not `GitHop.exe`: Windows file names ignore
+case, and the CLI next to it is `githop.exe`).
+
 Hook performance (isolated temp env, uses `hyperfine` if installed):
 `powershell -ExecutionPolicy Bypass -File benches\perf.ps1 [-Check] [-Trace]`.
 `-Check` compares p95 with `perf-baseline.json`; `-Trace` shows each check's git spawns.
@@ -145,6 +157,7 @@ Hook performance (isolated temp env, uses `hyperfine` if installed):
 ```
 crates/githop-core/   library: profiles, store, resolver, git config, hooks, checks
 crates/githop-cli/    githop.exe — CLI and git hook entry point
-app/                  Tauri tray app (later)
+app/src-tauri/        GitHopApp.exe — Tauri 2 tray app (Rust side, NSIS installer config)
+app/ui/               React + TypeScript + Tailwind screens
 docs/decisions/       architecture decision records
 ```

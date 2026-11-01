@@ -4,7 +4,7 @@
   sidecar: app/src-tauri/binaries/githop-<target-triple>.exe.
 
 .DESCRIPTION
-  The installer ships the CLI next to GitHop.exe (`bundle.externalBin` in
+  The installer ships the CLI next to GitHopApp.exe (`bundle.externalBin` in
   app/src-tauri/tauri.release.conf.json). Tauri looks for the file with the
   Rust target triple appended and strips the suffix when bundling, so the
   installed file is plain `githop.exe`.

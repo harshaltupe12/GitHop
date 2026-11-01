@@ -16,3 +16,6 @@ app/ui/dist/
 *.log
 .env*
 /tmp/
+
+# Playwright MCP scratch output
+/.playwright-mcp/
