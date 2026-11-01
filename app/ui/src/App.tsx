@@ -254,7 +254,10 @@ function Layout({
           {current === 'profiles' ? (
             <ProfilesScreen profiles={state.profiles} />
           ) : current === 'repos' ? (
-            <ReposScreen profiles={state.profiles} />
+            <ReposScreen
+              profiles={state.profiles}
+              httpsPolicy={state.settings.remote_https_policy}
+            />
           ) : current === 'fix' ? (
             <FixScreen profiles={state.profiles} />
           ) : (

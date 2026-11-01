@@ -83,7 +83,7 @@ App-only DTOs (defined in `app/src-tauri/src/dto.rs`):
 ```ts
 type OnboardingState = { has_profiles: boolean; hooks_installed: boolean; global_identity?: Identity; step_hint: string };
 type AppState = { profiles: ProfileSet; settings: Settings; hooks: HookHealth; onboarding: OnboardingState; autostart: boolean };
-type SettingsPatch = { enforce?: EnforceMode; logging?: boolean; autostart?: boolean };
+type SettingsPatch = { enforce?: EnforceMode; logging?: boolean; autostart?: boolean; remote_https_policy?: RemoteHttpsPolicy };
 type AppInfo = { version: string; licenses: string };
 type ScanProgress = { folder: string; found: number; done: number };
 ```
@@ -129,6 +129,39 @@ type ScanProgress = { folder: string; found: number; done: number };
 `unpushed_offenders: number` (count from `fix::plan`, 0 when unresolved or blocked),
 so the Repos screen doesn't call `fix_plan` per row. `OnboardingState` also carries
 `backup_dir: string`.
+
+## HTTPS → SSH and the passphrase (ADR 0006)
+
+```ts
+type RemoteHttpsPolicy = "ask" | "auto" | "never";   // Settings.remote_https_policy, default "ask"
+// A GitHub HTTPS remote (fetch or push URL). `url` never contains a password/token.
+type HttpsRemote = { name: string; url: string; ssh_url: string };
+// Extra RepoRow fields (every command that returns RepoRow):
+//   https_remotes: HttpsRemote[]   GitHub HTTPS remotes still in place (pushes sign in with Windows' saved account)
+//   ssh_switched: string[]         remotes GitHop switched to SSH (githop.saved-remote-url-*): "Undo" available
+//   switched: string[]             remotes switched to SSH by THIS call (pin/pin_all under policy "auto", remote_ssh*)
+type PassphraseState = "no-key" | "no-passphrase" | "remembered" | "asks-each-time" | "agent-off" | "unknown";
+//   remembered: the Windows ssh-agent holds this key · asks-each-time: agent running, key not added
+//   agent-off: the ssh-agent service is stopped or disabled · unknown: not Windows, or GitHop can't tell
+type RememberOutcome = "remembered" | "no-passphrase" | "agent-off" | "cancelled" | "not-added";
+//   cancelled: the Windows admin (UAC) prompt was declined · not-added: the ssh-add console was closed or the passphrase was wrong
+```
+
+| Command | Args | Returns | Notes |
+|---|---|---|---|
+| `remote_ssh` | `repo: string, remote?: string` | `RepoRow` | Switch every GitHub HTTPS remote (or just `remote`) to SSH; the old URL is saved for undo |
+| `remote_ssh_all` | `repos: string[]` | `RepoRow[]` | Bulk "Switch all to SSH"; a failing repo gets `error` |
+| `remote_undo` | `repo: string` | `RepoRow` | Restore the URLs GitHop switched |
+| `passphrase_state` | `id: string` | `PassphraseState` | Key panel status line |
+| `remember_passphrase` | `id: string` | `RememberOutcome` | Agent running → `ssh-add <key>` in a visible console (the passphrase is typed there, never in GitHop) |
+| `turn_on_agent` | `id: string` | `RememberOutcome` | One UAC prompt: sets the ssh-agent service to start automatically and starts it, then `ssh-add` as above |
+
+`pin` and `pin_all` apply `remote_https_policy`: `auto` switches GitHub HTTPS remotes to
+SSH (reported in `switched`); `ask` and `never` leave them (under `ask` the UI asks, with an
+"Always do this" checkbox that sets the policy to `auto`).
+`test_connection`, `generate_key`, `save_profile` (key file exists), `pin`, `pin_all` and
+`remote_ssh*` first add GitHub's published host keys to `~/.ssh/known_hosts` when it has no
+`github.com` entry (best effort, backup first), so the first SSH connect never asks yes/no.
 
 ## Events (Rust → UI)
 

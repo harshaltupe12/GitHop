@@ -847,6 +847,100 @@ fn push_blocks_exactly_the_wrong_commit() {
     assert_eq!(r.offending.len(), 1, "{r:?}");
 }
 
+/// ADR 0006: a fresh clone over GitHub HTTPS, policy `auto` → pinned, switched
+/// to SSH, GitHub's host keys added (temp HOME). Policy `ask` → only a hint.
+#[test]
+fn clone_switches_https_remote_under_auto_and_seeds_known_hosts() {
+    for policy in ["auto", "ask"] {
+        let env = TestEnv::new();
+        write_profiles(&env);
+        std::fs::write(
+            env.paths().settings_file(),
+            format!("version = 1\nremote_https_policy = \"{policy}\"\n"),
+        )
+        .unwrap();
+        let dest = env.init_repo("billing-api");
+        env.git(
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/office-org/billing-api.git",
+            ],
+            &dest,
+        );
+        let args = vec!["0".repeat(40), "0".repeat(40), "1".to_string()];
+        let r = check::run_check(Stage::Clone, &args, "", &ctx(&env, &dest));
+        assert_eq!(
+            r.outcome,
+            Outcome::Pinned {
+                profile_id: "office".into()
+            },
+            "{r:?}"
+        );
+        let url = env.git(&["config", "--local", "remote.origin.url"], &dest);
+        let texts: Vec<&str> = r.messages.iter().map(|m| m.text.as_str()).collect();
+        if policy == "auto" {
+            assert_eq!(url, "git@github.com:office-org/billing-api.git");
+            assert!(
+                texts.contains(&"GitHop: switched origin to SSH, so pushes use Office's key"),
+                "{texts:?}"
+            );
+        } else {
+            assert_eq!(url, "https://github.com/office-org/billing-api.git");
+            assert!(
+                texts
+                    .iter()
+                    .any(|t| t.contains("Uses HTTPS: Office's SSH key isn't used")),
+                "{texts:?}"
+            );
+        }
+        let kh = std::fs::read_to_string(env.home().join(".ssh").join("known_hosts")).unwrap();
+        assert!(githop_core::ssh::known_hosts_trusts_github(&kh));
+    }
+}
+
+/// ADR 0006: pushing to a GitHub HTTPS URL warns (never blocks) unless the
+/// policy is `never`.
+#[test]
+fn push_over_https_warns_without_blocking() {
+    for (policy, warned) in [("ask", true), ("auto", true), ("never", false)] {
+        let env = TestEnv::new();
+        write_profiles(&env);
+        std::fs::write(
+            env.paths().settings_file(),
+            format!("version = 1\nremote_https_policy = \"{policy}\"\n"),
+        )
+        .unwrap();
+        let repo = env.init_repo("billing-api");
+        env.git(
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/office-org/billing-api.git",
+            ],
+            &repo,
+        );
+        let head = env.commit_as(&repo, "a.txt", "H", OFFICE);
+        let args = vec![
+            "origin".to_string(),
+            "https://github.com/office-org/billing-api.git".to_string(),
+        ];
+        let stdin = format!(
+            "refs/heads/main {head} refs/heads/main {}\n",
+            "0".repeat(40)
+        );
+        let r = check::run_check(Stage::Push, &args, &stdin, &ctx(&env, &repo));
+        assert_eq!(r.exit_code(), 0, "{r:?}");
+        let has = r
+            .messages
+            .iter()
+            .any(|m| m.text.starts_with("GitHop: this push uses HTTPS"));
+        assert_eq!(has, warned, "{policy}: {r:?}");
+    }
+}
+
 #[test]
 fn clone_pins_to_owner_profile() {
     let env = TestEnv::new();

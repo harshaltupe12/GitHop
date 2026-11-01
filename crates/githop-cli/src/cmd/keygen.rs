@@ -56,6 +56,8 @@ pub fn run(ctx: &Ctx, args: KeygenArgs) -> Result<Exit> {
     }
 
     ui.ok(&format!("Key created: {}", key_display(&key)));
+    // GitHub's published host keys, so the first push never asks yes/no (ADR 0006).
+    ssh::ensure_github_known_hosts_best_effort(git, store.paths());
     if args.no_passphrase {
         ui.warn("This key has no passphrase. Anyone who can read the file can use it.");
     }

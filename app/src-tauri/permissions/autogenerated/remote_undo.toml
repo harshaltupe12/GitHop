@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-remote-undo"
+description = "Enables the remote_undo command without any pre-configured scope."
+commands.allow = ["remote_undo"]
+
+[[permission]]
+identifier = "deny-remote-undo"
+description = "Denies the remote_undo command without any pre-configured scope."
+commands.deny = ["remote_undo"]

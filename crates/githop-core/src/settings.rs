@@ -23,6 +23,43 @@ pub enum EnforceMode {
     BlockStrict,
 }
 
+/// What GitHop does with a GitHub HTTPS remote when it pins a repo (ADR 0006).
+///
+/// Over HTTPS, git signs in with the account Windows saved (Git Credential
+/// Manager), not the profile's SSH key, so a pinned repo can still push as the
+/// wrong account.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteHttpsPolicy {
+    /// Ask before switching (app: confirm dialog; CLI: prompt on a terminal).
+    #[default]
+    Ask,
+    /// Switch GitHub HTTPS remotes to SSH without asking, and say so.
+    Auto,
+    /// Never switch; only warn.
+    Never,
+}
+
+impl RemoteHttpsPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RemoteHttpsPolicy::Ask => "ask",
+            RemoteHttpsPolicy::Auto => "auto",
+            RemoteHttpsPolicy::Never => "never",
+        }
+    }
+
+    /// Parse `ask` / `auto` / `never` (case-insensitive).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ask" => Some(Self::Ask),
+            "auto" => Some(Self::Auto),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
 /// Contents of `settings.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -59,6 +96,8 @@ pub struct Settings {
     /// SHA-256 of GitHop's `hooks.gitconfig` include file as last written
     /// (include mode only; `""` = none), for tamper detection by doctor.
     pub hooks_include_hash: String,
+    /// GitHub HTTPS remotes on pin: ask (default), switch to SSH, or leave them.
+    pub remote_https_policy: RemoteHttpsPolicy,
 }
 
 impl Default for Settings {
@@ -79,6 +118,30 @@ impl Default for Settings {
             managed_global_keys: Vec::new(),
             all_hook_stubs: false,
             hooks_include_hash: String::new(),
+            remote_https_policy: RemoteHttpsPolicy::Ask,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn https_policy_defaults_to_ask_and_round_trips() {
+        let s: Settings = toml::from_str("version = 1\n").unwrap();
+        assert_eq!(s.remote_https_policy, RemoteHttpsPolicy::Ask);
+        let s: Settings = toml::from_str("remote_https_policy = \"auto\"\n").unwrap();
+        assert_eq!(s.remote_https_policy, RemoteHttpsPolicy::Auto);
+        let text = toml::to_string(&s).unwrap();
+        assert!(text.contains("remote_https_policy = \"auto\""), "{text}");
+        for p in [
+            RemoteHttpsPolicy::Ask,
+            RemoteHttpsPolicy::Auto,
+            RemoteHttpsPolicy::Never,
+        ] {
+            assert_eq!(RemoteHttpsPolicy::parse(p.as_str()), Some(p));
+        }
+        assert_eq!(RemoteHttpsPolicy::parse("Always"), None);
     }
 }

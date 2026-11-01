@@ -33,6 +33,9 @@ export type ProfileSet = {
 
 export type EnforceMode = 'block' | 'warn' | 'block-strict';
 
+/** What pinning does with a GitHub HTTPS remote (ADR 0006). */
+export type RemoteHttpsPolicy = 'ask' | 'auto' | 'never';
+
 export type Settings = {
   version: number;
   logging: boolean;
@@ -48,6 +51,8 @@ export type Settings = {
   managed_global_keys: string[];
   /** Also install the optional hook stubs (reference-transaction, post-index-change). */
   all_hook_stubs: boolean;
+  /** GitHub HTTPS remotes on pin: ask (default), switch to SSH, or leave them. */
+  remote_https_policy: RemoteHttpsPolicy;
 };
 
 export type Severity = 'error' | 'warning' | 'info';
@@ -99,7 +104,24 @@ export type ScannedRepo = {
  * What `scan` / `pin` / `pin_all` return (IPC.md): `ScannedRepo` plus the
  * app-side count of unpushed wrong-identity commits (0 when unresolved or blocked).
  */
-export type RepoRow = ScannedRepo & { unpushed_offenders: number };
+export type RepoRow = ScannedRepo & {
+  unpushed_offenders: number;
+  /** GitHub HTTPS remotes still in place: pushes sign in with Windows' saved account. */
+  https_remotes: HttpsRemote[];
+  /** Remotes GitHop switched to SSH (undo available). */
+  ssh_switched: string[];
+  /** Remotes switched to SSH by the call that returned this row. */
+  switched: string[];
+};
+
+/** A GitHub HTTPS remote (`url` never contains a password or token). */
+export type HttpsRemote = { name: string; url: string; ssh_url: string };
+
+/** Key panel: is the passphrase remembered by the Windows ssh-agent? */
+export type PassphraseState =
+  'no-key' | 'no-passphrase' | 'remembered' | 'asks-each-time' | 'agent-off' | 'unknown';
+export type RememberOutcome =
+  'remembered' | 'no-passphrase' | 'agent-off' | 'cancelled' | 'not-added';
 
 export type ConnectionTest =
   { kind: 'connected'; user: string } | { kind: 'denied' } | { kind: 'failed'; reason: string };
@@ -231,7 +253,12 @@ export type AppState = {
   onboarding: OnboardingState;
   autostart: boolean;
 };
-export type SettingsPatch = { enforce?: EnforceMode; logging?: boolean; autostart?: boolean };
+export type SettingsPatch = {
+  enforce?: EnforceMode;
+  logging?: boolean;
+  autostart?: boolean;
+  remote_https_policy?: RemoteHttpsPolicy;
+};
 export type AppInfo = { version: string; licenses: string };
 export type ScanProgress = { folder: string; found: number; done: number };
 

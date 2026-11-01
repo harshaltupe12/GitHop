@@ -176,6 +176,9 @@ input, wrong password, bad file) · `3` internal error (hooks treat it as fail-o
 | `githop import <file> [--on-conflict skip\|replace\|rename] [-y]` | Add profiles from an export file. |
 | `githop wipe [-y] [--keep-keys \| --delete-keys] [--keep-pins] [--keep-data] [--from-uninstaller]` | Remove GitHop and restore your original git settings. See [§7](#7-uninstall-and-wipe). |
 | `githop hooks install\|uninstall\|status\|snippet <stage>` | Install, remove or check the hooks; print the line for husky/lefthook. `install` works even when `profiles.toml` is damaged. |
+| `githop remote ssh [--all-in <folder>]` | Switch this repo's GitHub HTTPS remotes (or every repo with a profile in a folder) to SSH, so pushes use the profile's key. The old URL is kept for undo. See [§6](#pushes-sign-in-as-the-wrong-account-https-remote). |
+| `githop remote undo` | Put back the HTTPS URLs GitHop switched in this repo. |
+| `githop remote policy [ask\|auto\|never]` | What pinning does with a GitHub HTTPS remote: ask (default), switch to SSH, or leave it. |
 | `githop check --stage clone\|commit\|push` | Used by the hooks. You don't normally run it yourself. |
 
 ---
@@ -307,20 +310,69 @@ with their line numbers. Fixes:
   GitHop recognises them as GitHub.
 
 GitHop sets `core.sshCommand` with `-i <key> -o IdentitiesOnly=yes`, so ssh
-offers only the profile's key, even when ssh-agent holds several.
+offers only the profile's key, even when ssh-agent holds several. (This only
+applies to SSH remotes — see the next section for HTTPS.)
 
-### ssh-agent keeps asking for the passphrase
+### Pushes sign in as the wrong account (HTTPS remote)
 
-Windows' OpenSSH agent can remember your key passphrase. In an admin PowerShell:
+A pin gives the repo the profile's SSH key, but a remote like
+`https://github.com/you/repo.git` doesn't use SSH: Windows signs in with the
+GitHub account it saved (Git Credential Manager). If that's your office
+account, a push to a personal repo fails with 403 — or goes out as the wrong
+account.
 
-```powershell
-Get-Service ssh-agent | Set-Service -StartupType Automatic
-Start-Service ssh-agent
-ssh-add $env:USERPROFILE\.ssh\githop_personal
-```
+- **App:** the Repos screen shows the pill "HTTPS — signs in with Windows' saved
+  account" with **Switch to SSH** (and **Switch all to SSH** when several repos
+  need it). The toast has **Undo**.
+- **CLI:** `githop remote ssh` in the repo (or `githop remote ssh --all-in C:/code`),
+  `githop remote undo` to go back.
+
+Only the remote address changes, to `git@github.com:owner/repo.git`. Other hosts
+(GitLab, Bitbucket, …) are never touched. A token in the old URL is never kept.
+`githop status`, `githop doctor` and the pre-push hook warn about HTTPS remotes
+(the push still goes through).
+
+When GitHop pins a repo (Pin, Pin all, `githop pin`, `githop scan --apply`, or
+automatically after `git clone`), it follows **Settings → GitHub HTTPS remotes**
+(`githop remote policy`): **Ask** (default: a dialog with "Always do this", or a
+prompt in the terminal), **Switch to SSH** (`auto`), or **Leave** (`never`, only
+a warning).
+
+### The first SSH push asks "Are you sure you want to continue connecting?"
+
+GitHop adds GitHub's published host keys to `~/.ssh/known_hosts` (after a
+backup) when you create a key, save a profile with a key, test a connection,
+pin a repo or switch a remote to SSH. The keys are built into GitHop — it
+doesn't download anything. VS Code can't answer this question, so this matters
+for its Sync/Push. `githop doctor` tells you when the keys are missing.
+
+### ssh-agent keeps asking for the passphrase (or VS Code's push fails)
+
+VS Code's Git has no terminal, so it can't ask for a key passphrase. Let Windows
+remember it once:
+
+- **App:** edit the profile. Under the public key, the status says "Asks for
+  your passphrase on each push" or "Passphrase remembered by Windows". Click
+  **Remember my passphrase**: a console window opens and you type the
+  passphrase there (GitHop never sees it). If Windows' ssh-agent is off, the
+  button is **Turn on and remember**: Windows asks for admin rights once to turn
+  the service on, then the console opens.
+- **By hand**, in an admin PowerShell:
+
+  ```powershell
+  Get-Service ssh-agent | Set-Service -StartupType Automatic
+  Start-Service ssh-agent
+  ssh-add $env:USERPROFILE\.ssh\githop_personal
+  ```
+
+GitHop's `core.sshCommand` runs Windows' own OpenSSH
+(`"C:/Windows/System32/OpenSSH/ssh.exe" -i "<key>" -o IdentitiesOnly=yes`), the
+ssh that talks to that agent; Git for Windows' bundled ssh can't. Terminal git
+and VS Code read the same setting. Repos pinned before this change are updated
+when you click Remember my passphrase (or run `githop pin <profile>` again).
 
 On an office PC you may not have admin rights. Then git asks for the passphrase
-on each push, or use the agent that comes with Git for Windows.
+on each push in a terminal, and VS Code can't push with that key.
 
 ### `git commit --no-verify`
 

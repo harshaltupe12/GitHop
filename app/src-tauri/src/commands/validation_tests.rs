@@ -108,6 +108,34 @@ fn missing_folders_are_not_found() {
 }
 
 #[test]
+fn passphrase_commands_reject_bad_ids() {
+    for id in BAD_IDS {
+        assert_eq!(
+            code(block_on(keys::passphrase_state(id.into()))),
+            ErrorCode::BadInput
+        );
+        assert_eq!(
+            code(block_on(keys::remember_passphrase(id.into()))),
+            ErrorCode::BadInput
+        );
+        assert_eq!(
+            code(block_on(keys::turn_on_agent(id.into()))),
+            ErrorCode::BadInput
+        );
+    }
+}
+
+#[test]
+fn remote_names_are_validated() {
+    for bad in ["", "-oProxyCommand=calc", "a b", "x\n", "a..b"] {
+        assert!(crate::validate::remote_name(bad).is_err(), "{bad:?}");
+    }
+    for good in ["origin", "my-fork", "upstream_2", "team/main"] {
+        assert!(crate::validate::remote_name(good).is_ok(), "{good:?}");
+    }
+}
+
+#[test]
 fn unknown_stage_is_rejected() {
     for stage in ["", "merge", "pre-commit", "COMMIT", "commit && calc"] {
         assert_eq!(

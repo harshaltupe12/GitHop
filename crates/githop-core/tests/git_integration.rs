@@ -341,7 +341,14 @@ fn set_default_profile_global_writes_isolated_config_only() {
         gitconfig::get_global(&git, "core.sshCommand")
             .unwrap()
             .as_deref(),
-        Some(r#"ssh -i "C:/Users/Jane Doe/.ssh/id_personal" -o IdentitiesOnly=yes"#)
+        Some(pin::ssh_command_for(&p.ssh_key).as_str())
+    );
+    let ssh = gitconfig::get_global(&git, "core.sshCommand")
+        .unwrap()
+        .unwrap();
+    assert!(
+        ssh.ends_with(r#" -i "C:/Users/Jane Doe/.ssh/id_personal" -o IdentitiesOnly=yes"#),
+        "{ssh}"
     );
     assert_eq!(gitconfig::get_global(&git, PIN_KEY).unwrap(), None);
 

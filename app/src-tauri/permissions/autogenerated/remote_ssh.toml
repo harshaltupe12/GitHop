@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-remote-ssh"
+description = "Enables the remote_ssh command without any pre-configured scope."
+commands.allow = ["remote_ssh"]
+
+[[permission]]
+identifier = "deny-remote-ssh"
+description = "Denies the remote_ssh command without any pre-configured scope."
+commands.deny = ["remote_ssh"]

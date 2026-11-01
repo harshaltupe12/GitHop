@@ -77,6 +77,8 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
     let aliases = githop_core::aliases::current(store.paths(), git, store.settings());
     let res = resolve(&snapshot, repo.root(), set, &aliases);
     let profile = res.profile_id.as_deref().and_then(|id| set.get(id));
+    // ADR 0006: GitHub HTTPS remotes don't use the profile's SSH key.
+    let https = githop_core::remote_ssh::https_remotes(&snapshot);
     let ssh_command = snapshot.get("core.sshCommand").map(str::to_string);
     let repo_key = ssh_command
         .as_deref()
@@ -120,6 +122,7 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
             "key_matches": key_matches,
             "warnings": warnings,
             "hooks_override": hooks_override,
+            "https_remotes": https,
         }))?;
         return Ok(Exit::Ok);
     }
@@ -227,6 +230,9 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
                 ui.hint(&format!("Not pinned yet. Pin it now: githop pin {}", p.id));
             }
         }
+    }
+    if let Some(p) = profile {
+        super::remote::status_lines(ctx, &https, &p.label);
     }
     for w in &res.warnings {
         ui.warn(&describe_warning(w, set));

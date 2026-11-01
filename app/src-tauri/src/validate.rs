@@ -166,6 +166,21 @@ pub fn backup_ref(s: &str) -> IpcResult<&str> {
     Ok(s)
 }
 
+/// A git remote name for `remote_ssh`: 1–100 characters, no control
+/// characters or whitespace, not starting with `-` (never read as an option).
+pub fn remote_name(s: &str) -> IpcResult<&str> {
+    let ok = !s.is_empty()
+        && s.len() <= 100
+        && !s.starts_with('-')
+        && !s.chars().any(|c| c.is_control() || c.is_whitespace())
+        && !s.contains("..");
+    if ok {
+        Ok(s)
+    } else {
+        Err(IpcError::bad_input("That remote name isn't valid."))
+    }
+}
+
 /// Export/import password: 12–1024 characters. Never echoed back.
 pub fn password(s: &str) -> IpcResult<&str> {
     let n = s.chars().count();

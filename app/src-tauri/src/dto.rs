@@ -7,8 +7,11 @@ use std::io::ErrorKind;
 
 use githop_core::export::ExportError;
 use githop_core::hooks::HookHealth;
+use githop_core::remote_ssh::HttpsRemote;
 use githop_core::scan::ScannedRepo;
-use githop_core::{CoreError, EnforceMode, Identity, ProfileSet, Settings, ValidationIssue};
+use githop_core::{
+    CoreError, EnforceMode, Identity, ProfileSet, RemoteHttpsPolicy, Settings, ValidationIssue,
+};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -183,6 +186,9 @@ pub struct SettingsPatch {
     pub logging: Option<bool>,
     #[serde(default)]
     pub autostart: Option<bool>,
+    /// What pinning does with GitHub HTTPS remotes (ADR 0006).
+    #[serde(default)]
+    pub remote_https_policy: Option<RemoteHttpsPolicy>,
 }
 
 /// About box.
@@ -203,11 +209,21 @@ pub struct ScanProgress {
 /// `ScannedRepo` (core) plus the app-side count of unpushed wrong-identity
 /// commits (`fix::plan(..).offenders.len()`, 0 when unresolved/blocked/error),
 /// so the Repos screen needs no `fix_plan` per row. Serialises flat.
+///
+/// ADR 0006: `https_remotes` = GitHub HTTPS remotes still in place (pushes sign
+/// in with Windows' saved account), `ssh_switched` = remotes GitHop switched
+/// (undo available), `switched` = remotes switched to SSH by this call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoRow {
     #[serde(flatten)]
     pub repo: ScannedRepo,
     pub unpushed_offenders: usize,
+    #[serde(default)]
+    pub https_remotes: Vec<HttpsRemote>,
+    #[serde(default)]
+    pub ssh_switched: Vec<String>,
+    #[serde(default)]
+    pub switched: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -316,10 +332,22 @@ mod tests {
                 error: None,
             },
             unpushed_offenders: 2,
+            https_remotes: vec![HttpsRemote {
+                name: "origin".into(),
+                url: "https://github.com/o/r".into(),
+                ssh_url: "git@github.com:o/r.git".into(),
+            }],
+            ssh_switched: vec![],
+            switched: vec!["upstream".into()],
         };
         let v = serde_json::to_value(&row).unwrap();
         assert_eq!(v["root"], "C:/code/a");
         assert_eq!(v["unpushed_offenders"], 2);
+        assert_eq!(v["https_remotes"][0]["ssh_url"], "git@github.com:o/r.git");
+        assert_eq!(v["ssh_switched"], serde_json::json!([]));
+        assert_eq!(v["switched"][0], "upstream");
+        let p: SettingsPatch = serde_json::from_str(r#"{"remote_https_policy":"auto"}"#).unwrap();
+        assert_eq!(p.remote_https_policy, Some(RemoteHttpsPolicy::Auto));
         assert!(v.get("repo").is_none());
     }
 

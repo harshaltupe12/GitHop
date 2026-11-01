@@ -19,6 +19,8 @@ import type {
   ImportPreview,
   ImportResolution,
   IpcError,
+  PassphraseState,
+  RememberOutcome,
   IpcErrorCode,
   Profile,
   ProfileSet,
@@ -91,6 +93,13 @@ export const generateKey = (id: string, noPassphrase: boolean) =>
 export const readPublicKey = (id: string) => call<string>('read_public_key', { id });
 /** Network (ssh -T) — only ever called from a user click. */
 export const testConnection = (id: string) => call<ConnectionTest>('test_connection', { id });
+/** Is the key's passphrase remembered by the Windows ssh-agent? (local only) */
+export const passphraseState = (id: string) => call<PassphraseState>('passphrase_state', { id });
+/** ssh-add in a visible console window; the passphrase is typed there, never here. */
+export const rememberPassphrase = (id: string) =>
+  call<RememberOutcome>('remember_passphrase', { id });
+/** One UAC prompt turns the ssh-agent service on, then ssh-add as above. */
+export const turnOnAgent = (id: string) => call<RememberOutcome>('turn_on_agent', { id });
 
 // ---- Repos -------------------------------------------------------------------
 
@@ -101,6 +110,12 @@ export const pin = (repo: string, id: string) => call<RepoRow>('pin', { repo, id
 export const unpin = (repo: string) => call<RepoRow>('unpin', { repo });
 export const pinAll = (repos: string[]) => call<RepoRow[]>('pin_all', { repos });
 export const hooksSnippet = (stage: HookStage) => call<string>('hooks_snippet', { stage });
+/** Switch the repo's GitHub HTTPS remotes (or just `remote`) to SSH (ADR 0006). */
+export const remoteSsh = (repo: string, remote?: string) =>
+  call<RepoRow>('remote_ssh', { repo, remote });
+export const remoteSshAll = (repos: string[]) => call<RepoRow[]>('remote_ssh_all', { repos });
+/** Put back the HTTPS URLs GitHop switched. */
+export const remoteUndo = (repo: string) => call<RepoRow>('remote_undo', { repo });
 
 // ---- Fix ---------------------------------------------------------------------
 

@@ -32,13 +32,17 @@ pub async fn update_settings<R: Runtime>(
     let settings = blocking(move || {
         let _guard = ops::write_lock();
         let mut store = ops::store()?;
-        if patch.enforce.is_some() || patch.logging.is_some() {
+        if patch.enforce.is_some() || patch.logging.is_some() || patch.remote_https_policy.is_some()
+        {
             store.update_settings(|s| {
                 if let Some(enforce) = patch.enforce {
                     s.enforce = enforce;
                 }
                 if let Some(logging) = patch.logging {
                     s.logging = logging;
+                }
+                if let Some(policy) = patch.remote_https_policy {
+                    s.remote_https_policy = policy;
                 }
                 Ok(())
             })?;

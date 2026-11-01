@@ -35,16 +35,43 @@ pub const SAVED_KEYS: [&str; 3] = [
 ///
 /// OpenSSH expands `%` tokens (`%d`, `%u`, …) in `-i` paths, so a literal `%`
 /// is written as `%%` ([`escape_ssh_percent`]); [`key_from_ssh_command`] undoes it.
+///
+/// The program is Windows' own OpenSSH (`"C:/Windows/System32/OpenSSH/ssh.exe"`,
+/// quoted) when it exists, else plain `ssh` (ADR 0006): only Windows OpenSSH
+/// talks to the Windows ssh-agent, so a remembered passphrase is used by
+/// terminal git and by VS Code's Git (same git config) without a prompt.
+/// `IdentitiesOnly=yes` with `-i` still lets ssh use the agent's copy of that
+/// key.
 pub fn ssh_command_for(key: &Path) -> String {
+    ssh_command_with(crate::ssh::git_ssh_program().as_deref(), key)
+}
+
+/// [`ssh_command_for`] with an explicit ssh program (`None` = plain `ssh`). Pure.
+pub fn ssh_command_with(program: Option<&Path>, key: &Path) -> String {
     let path = escape_ssh_percent(&key.to_string_lossy().replace('\\', "/"));
-    let mut quoted = String::with_capacity(path.len() + 2);
-    for c in path.chars() {
+    let program = match program {
+        Some(p) => format!(
+            "\"{}\"",
+            sh_quote_inner(&p.to_string_lossy().replace('\\', "/"))
+        ),
+        None => "ssh".to_string(),
+    };
+    format!(
+        "{program} -i \"{}\" -o IdentitiesOnly=yes",
+        sh_quote_inner(&path)
+    )
+}
+
+/// Backslash-escape what `sh` treats specially inside double quotes.
+fn sh_quote_inner(s: &str) -> String {
+    let mut quoted = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
         if matches!(c, '"' | '$' | '`' | '\\') {
             quoted.push('\\');
         }
         quoted.push(c);
     }
-    format!("ssh -i \"{quoted}\" -o IdentitiesOnly=yes")
+    quoted
 }
 
 /// `%` → `%%`, so OpenSSH's token expansion of `-i` / `IdentityFile` yields the
@@ -295,10 +322,37 @@ mod tests {
         ];
         for (input, want) in cases {
             assert_eq!(
-                ssh_command_for(&PathBuf::from(input)),
+                ssh_command_with(None, &PathBuf::from(input)),
                 *want,
                 "input {input:?}"
             );
+        }
+    }
+
+    /// ADR 0006: Windows OpenSSH (where the ssh-agent lives) is quoted, with
+    /// forward slashes, and the key is still found by `key_from_ssh_command`.
+    #[test]
+    fn ssh_command_with_windows_openssh_program() {
+        let cmd = ssh_command_with(
+            Some(Path::new(r"C:\Windows\System32\OpenSSH\ssh.exe")),
+            Path::new(r"C:\Users\Jane Doe\.ssh\githop_personal"),
+        );
+        assert_eq!(
+            cmd,
+            r#""C:/Windows/System32/OpenSSH/ssh.exe" -i "C:/Users/Jane Doe/.ssh/githop_personal" -o IdentitiesOnly=yes"#
+        );
+        assert_eq!(
+            key_from_ssh_command(&cmd).as_deref(),
+            Some("C:/Users/Jane Doe/.ssh/githop_personal")
+        );
+        // What pins write on this machine: Windows OpenSSH when it exists.
+        let live = ssh_command_for(Path::new("C:/k/id"));
+        match crate::ssh::git_ssh_program() {
+            Some(_) => assert!(
+                live.starts_with('"') && live.contains("/OpenSSH/ssh.exe\" -i \"C:/k/id\""),
+                "{live}"
+            ),
+            None => assert_eq!(live, r#"ssh -i "C:/k/id" -o IdentitiesOnly=yes"#),
         }
     }
 
@@ -313,7 +367,7 @@ mod tests {
             r#"/home/x/we"ird"#,
             r"C:\Users\me\100%\id_%d%%",
         ] {
-            let cmd = ssh_command_for(Path::new(p));
+            let cmd = ssh_command_with(None, Path::new(p));
             assert_eq!(
                 key_from_ssh_command(&cmd).as_deref(),
                 Some(p.replace('\\', "/").as_str()),

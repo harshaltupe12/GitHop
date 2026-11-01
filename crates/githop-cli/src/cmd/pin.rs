@@ -40,6 +40,8 @@ pub fn run_pin(ctx: &Ctx, args: PinArgs) -> Result<Exit> {
             .ui
             .hint(&format!("Commits in this repo now use {}.", profile.email)),
     }
+    // ADR 0006: GitHub HTTPS remote → policy (ask prompts on a terminal).
+    super::remote::after_pin(ctx, &store, &repo, &profile.label, true);
     Ok(Exit::Ok)
 }
 

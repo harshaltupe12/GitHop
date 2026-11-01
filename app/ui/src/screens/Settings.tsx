@@ -21,6 +21,7 @@ import type {
   DoctorReport,
   EnforceMode,
   IpcError,
+  RemoteHttpsPolicy,
   SettingsPatch,
   WipeReport,
 } from '../lib/types';
@@ -119,6 +120,28 @@ export function SettingsScreen({ state }: { state: AppState }) {
               if (v !== enforce) void patch({ enforce: v });
             }}
             options={enforceOptions(enforce)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          title={S.settings.https}
+          titleId="set-https"
+          helper={S.settings.httpsHelp}
+          helperId="set-https-help"
+        >
+          <Segmented<RemoteHttpsPolicy>
+            labelledBy="set-https"
+            describedBy="set-https-help"
+            value={state.settings.remote_https_policy ?? 'ask'}
+            busy={busy === 'remote_https_policy'}
+            onChange={(v) => {
+              if (v !== state.settings.remote_https_policy) void patch({ remote_https_policy: v });
+            }}
+            options={[
+              { value: 'auto', label: S.settings.httpsAuto },
+              { value: 'ask', label: S.settings.httpsAsk },
+              { value: 'never', label: S.settings.httpsNever },
+            ]}
           />
         </SettingRow>
 

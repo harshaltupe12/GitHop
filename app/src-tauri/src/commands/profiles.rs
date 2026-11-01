@@ -198,6 +198,11 @@ fn save_profile_blocking(profile: Profile, original_id: Option<String>) -> IpcRe
             || !b.email.eq_ignore_ascii_case(&candidate.email)
             || b.ssh_key != candidate.ssh_key
     });
+    // A profile with a key: trust GitHub's published host keys now, so its
+    // first push never asks yes/no (ADR 0006). Best effort.
+    if candidate.ssh_key.is_file() {
+        githop_core::ssh::ensure_github_known_hosts_best_effort(&git, store.paths());
+    }
     if is_default
         && identity_changed
         && before

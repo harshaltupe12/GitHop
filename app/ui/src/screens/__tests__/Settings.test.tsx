@@ -216,14 +216,15 @@ describe('Settings screen', () => {
     expect(m.updateSettings).toHaveBeenCalledWith({ enforce: 'warn' });
     const warn = screen.getByRole('radio', { name: 'Warn' });
     expect(warn).toHaveFocus();
-    expect(screen.getByRole('radiogroup')).toHaveAttribute('aria-busy', 'true');
+    const group = screen.getByRole('radiogroup', { name: 'When identity is wrong' });
+    expect(group).toHaveAttribute('aria-busy', 'true');
     expect(warn).not.toBeDisabled();
     // Input is ignored while busy, focus doesn't move.
     await user.keyboard('{ArrowLeft}');
     expect(m.updateSettings).toHaveBeenCalledTimes(1);
     expect(warn).toHaveFocus();
     done(settings({ enforce: 'warn' }));
-    await waitFor(() => expect(screen.getByRole('radiogroup')).not.toHaveAttribute('aria-busy'));
+    await waitFor(() => expect(group).not.toHaveAttribute('aria-busy'));
     expect(document.activeElement).not.toBe(document.body);
   });
 

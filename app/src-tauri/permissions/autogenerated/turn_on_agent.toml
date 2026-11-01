@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-turn-on-agent"
+description = "Enables the turn_on_agent command without any pre-configured scope."
+commands.allow = ["turn_on_agent"]
+
+[[permission]]
+identifier = "deny-turn-on-agent"
+description = "Denies the turn_on_agent command without any pre-configured scope."
+commands.deny = ["turn_on_agent"]
