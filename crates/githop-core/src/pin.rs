@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::error::Result;
 use crate::git::Git;
-use crate::gitconfig::{self, git_failed};
+use crate::gitconfig::{self, ConfigSnapshot};
 use crate::profile::Profile;
 use crate::repo::Repo;
 
@@ -18,14 +18,25 @@ pub const PIN_KEY: &str = "githop.profile";
 /// half-finished pin can always be undone by `unpin_repo`.
 const PINNED_KEYS: [&str; 3] = ["user.name", "user.email", "core.sshCommand"];
 
+/// Where `pin_repo` keeps the user's own value of each of [`PINNED_KEYS`]
+/// (same order), restored by `unpin_repo`.
+pub const SAVED_KEYS: [&str; 3] = [
+    "githop.saved-name",
+    "githop.saved-email",
+    "githop.saved-sshcommand",
+];
+
 /// `ssh -i "<key with forward slashes>" -o IdentitiesOnly=yes` (always quoted, C16).
 ///
 /// git runs `core.sshCommand` through `sh`, so inside the double quotes the
 /// characters sh treats specially (`"`, `$`, `` ` ``, `\`) are backslash-escaped.
 /// Backslashes in the path become `/` first, so on Windows only `$` and `` ` ``
 /// (both legal in file names) ever need escaping.
+///
+/// OpenSSH expands `%` tokens (`%d`, `%u`, …) in `-i` paths, so a literal `%`
+/// is written as `%%` ([`escape_ssh_percent`]); [`key_from_ssh_command`] undoes it.
 pub fn ssh_command_for(key: &Path) -> String {
-    let path = key.to_string_lossy().replace('\\', "/");
+    let path = escape_ssh_percent(&key.to_string_lossy().replace('\\', "/"));
     let mut quoted = String::with_capacity(path.len() + 2);
     for c in path.chars() {
         if matches!(c, '"' | '$' | '`' | '\\') {
@@ -36,13 +47,25 @@ pub fn ssh_command_for(key: &Path) -> String {
     format!("ssh -i \"{quoted}\" -o IdentitiesOnly=yes")
 }
 
+/// `%` → `%%`, so OpenSSH's token expansion of `-i` / `IdentityFile` yields the
+/// literal path (review #6).
+pub fn escape_ssh_percent(path: &str) -> String {
+    path.replace('%', "%%")
+}
+
+/// Undo [`escape_ssh_percent`]: `%%` → `%`. Other `%` tokens are left as written.
+pub fn unescape_ssh_percent(path: &str) -> String {
+    path.replace("%%", "%")
+}
+
 /// Extract the `-i` key path from a `core.sshCommand` value (quoted or bare), for
 /// comparing a repo's key with its profile's key. `None` when there is no `-i`.
 ///
 /// Understands `-i path`, `-ipath`, `-i"path"`, `-i 'path'`, flags combined with
 /// `-i` (`-vi path`), and `-o IdentityFile=path` / `-oIdentityFile path`. The
-/// first key found wins. The path is returned unquoted but otherwise as written
-/// (no slash normalisation — compare with `paths` helpers).
+/// first key found wins. The path is returned unquoted, with ssh's `%%`
+/// escape undone, but otherwise as written (no slash normalisation — compare
+/// with `paths` helpers).
 pub fn key_from_ssh_command(cmd: &str) -> Option<String> {
     /// ssh options that take an argument (OpenSSH `getopt` string).
     const ARG_FLAGS: &str = "BbcDEeFIiJLlmOoPpQRSWw";
@@ -66,11 +89,11 @@ pub fn key_from_ssh_command(cmd: &str) -> Option<String> {
                     rest
                 };
                 if c == 'i' {
-                    return Some(arg.to_string());
+                    return Some(unescape_ssh_percent(arg));
                 }
                 if c == 'o' {
                     if let Some(p) = identity_file_option(arg) {
-                        return Some(p);
+                        return Some(unescape_ssh_percent(&p));
                     }
                 }
                 break;
@@ -164,11 +187,31 @@ fn shell_words(s: &str) -> Vec<String> {
 
 /// Set local `user.name`, `user.email`, `core.sshCommand`, `githop.profile`.
 ///
-/// `githop.profile` is written first so that even a pin interrupted halfway is
-/// recognised (and fully removed) by [`unpin_repo`].
+/// The user's own local values are kept (review 2026-10-31 #3): when the repo
+/// is not pinned yet, any existing local `user.name` / `user.email` /
+/// `core.sshCommand` is first copied to `githop.saved-name` /
+/// `githop.saved-email` / `githop.saved-sshcommand` (an existing saved value
+/// is never overwritten), and [`unpin_repo`] puts it back. Values are saved
+/// even when they equal the profile's, so unpinning never drops a value the
+/// user set. Re-pinning an already pinned repo saves nothing (the current
+/// values are GitHop's own).
+///
+/// Order: saved copies → `githop.profile` → values. A pin interrupted halfway
+/// is still recognised (and fully undone) by [`unpin_repo`]. Spawns: one
+/// `git config --local --list` plus one per key written.
 pub fn pin_repo(repo: &Repo, profile: &Profile) -> Result<()> {
     let git = repo.git();
     let root = repo.root();
+    let local = ConfigSnapshot::read_local(git, root)?;
+    if local.get(PIN_KEY).is_none() {
+        for (key, saved) in PINNED_KEYS.iter().zip(SAVED_KEYS) {
+            if let Some(value) = local.get(key) {
+                if local.get(saved).is_none() {
+                    gitconfig::set_local(git, root, saved, value)?;
+                }
+            }
+        }
+    }
     gitconfig::set_local(git, root, PIN_KEY, &profile.id)?;
     gitconfig::set_local(git, root, "user.name", &profile.name)?;
     gitconfig::set_local(git, root, "user.email", &profile.email)?;
@@ -184,19 +227,24 @@ pub fn pin_repo(repo: &Repo, profile: &Profile) -> Result<()> {
 /// Remove the keys `pin_repo` set — only if `githop.profile` is present.
 /// Returns `true` when a pin was removed.
 ///
-/// Only local scope is touched; any other local keys the user set are kept.
+/// A key with a `githop.saved-*` copy gets the user's value back (and the copy
+/// is removed); a key without one is unset. Only local scope is touched; any
+/// other local keys the user set are kept. `githop.profile` is removed last.
 pub fn unpin_repo(repo: &Repo) -> Result<bool> {
     let git = repo.git();
     let root = repo.root();
-    let args = ["config", "--local", "--get", PIN_KEY];
-    let out = git.output(root, &args, None)?;
-    match out.status.code() {
-        Some(0) => {}
-        Some(1) => return Ok(false),
-        _ => return Err(git_failed(&args, &out)),
+    let local = ConfigSnapshot::read_local(git, root)?;
+    if local.get(PIN_KEY).is_none() {
+        return Ok(false);
     }
-    for key in PINNED_KEYS {
-        gitconfig::unset_local(git, root, key)?;
+    for (key, saved) in PINNED_KEYS.iter().zip(SAVED_KEYS) {
+        match local.get(saved) {
+            Some(value) => {
+                gitconfig::set_local(git, root, key, value)?;
+                gitconfig::unset_local(git, root, saved)?;
+            }
+            None => gitconfig::unset_local(git, root, key)?,
+        }
     }
     gitconfig::unset_local(git, root, PIN_KEY)?;
     Ok(true)
@@ -239,6 +287,11 @@ mod tests {
                 r"C:\Users\a$b`c\key",
                 r#"ssh -i "C:/Users/a\$b\`c/key" -o IdentitiesOnly=yes"#,
             ),
+            // Review #6: ssh expands %d/%u/… in -i; a literal % is %%.
+            (
+                r"C:\Users\me\100%\id_%d",
+                r#"ssh -i "C:/Users/me/100%%/id_%%d" -o IdentitiesOnly=yes"#,
+            ),
         ];
         for (input, want) in cases {
             assert_eq!(
@@ -258,6 +311,7 @@ mod tests {
             r"\\server\share\keys\id",
             r"C:\Users\a$b`c\key",
             r#"/home/x/we"ird"#,
+            r"C:\Users\me\100%\id_%d%%",
         ] {
             let cmd = ssh_command_for(Path::new(p));
             assert_eq!(
@@ -307,6 +361,8 @@ mod tests {
             ("ssh -F /cfg host", None),
             ("ssh -- -i /k", None),
             ("ssh -i \"unterminated", Some("unterminated")),
+            ("ssh -i C:/a%%b/id", Some("C:/a%b/id")),
+            ("ssh -o IdentityFile=C:/a%%b", Some("C:/a%b")),
         ];
         for (input, want) in cases {
             assert_eq!(

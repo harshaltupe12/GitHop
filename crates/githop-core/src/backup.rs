@@ -17,11 +17,13 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use serde::{Deserialize, Serialize};
 use time::macros::format_description;
 use time::OffsetDateTime;
 
 use crate::error::{CoreError, Result};
 use crate::git::Git;
+use crate::gitconfig;
 use crate::paths::Paths;
 use crate::store::{atomic_write, list_names, write_new, write_timestamped};
 
@@ -119,9 +121,14 @@ pub fn original_gitconfig(paths: &Paths) -> Option<PathBuf> {
 ///
 /// The current global config (if any) is first copied to
 /// `backups/prerestore.gitconfig.<timestamp>`. If the chosen backup has an
-/// `.absent` marker, the global config file is deleted instead of written.
-/// A symlinked global config is written through to its target.
+/// `.absent` marker, the global config file is deleted instead of written (a
+/// symlinked global config: only the link is removed, never its target).
+/// Otherwise a symlinked global config is written through to its target.
 /// No backup to restore from → `CoreError::BackupFailed`.
+///
+/// This replaces the **whole file**, dropping any edit made since the backup —
+/// for an explicit "restore my backup" action only. Wipe uses
+/// [`restore_managed_keys`], which restores just GitHop's keys.
 pub fn restore_global_gitconfig(paths: &Paths, git: &Git, original: bool) -> Result<()> {
     let source = if original {
         original_gitconfig(paths).ok_or_else(|| {
@@ -139,7 +146,8 @@ pub fn restore_global_gitconfig(paths: &Paths, git: &Git, original: bool) -> Res
         std::fs::read(&source).map_err(|e| CoreError::io(&source, e))?
     };
 
-    let dest = write_target(&git.global_config_path()?)?;
+    let global = git.global_config_path()?;
+    let dest = write_target(&global)?;
 
     // Back up what's there now before replacing it.
     match std::fs::read(&dest) {
@@ -152,10 +160,78 @@ pub fn restore_global_gitconfig(paths: &Paths, git: &Git, original: bool) -> Res
     }
 
     if absent {
-        remove_if_exists(&dest)
+        // "There was no file": remove the global config itself. When it is a
+        // symlink (dotfiles), remove only the link — never the file it points to.
+        remove_if_exists(&global)
     } else {
         atomic_write(&dest, &bytes)
     }
+}
+
+/// What [`restore_managed_keys`] did to one key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyRestore {
+    pub key: String,
+    /// The values the key has now, from `gitconfig.original` (in order). Empty =
+    /// the key was not set originally, so it was removed.
+    pub values: Vec<String>,
+}
+
+/// Wipe-style restore (Plan §7.7): put back only the **values** of `keys`
+/// (normally `settings.managed_global_keys`) from `gitconfig.original`, leaving
+/// every other line of the user's current global config — including edits made
+/// after GitHop was installed — untouched.
+///
+/// The current global config is backed up first (rule 4). Each key is read
+/// from the original with `git config --file <original> --get-all` (includes
+/// not followed: a value that lived in an included file comes back by itself
+/// once GitHop's value is removed), then unset globally and re-set to the
+/// original value(s). An original taken when there was no global config (the
+/// `.absent` marker) means every key is unset. Writes go to the same file as
+/// [`gitconfig::set_global`]. No original → `CoreError::BackupFailed`.
+pub fn restore_managed_keys(paths: &Paths, git: &Git, keys: &[String]) -> Result<Vec<KeyRestore>> {
+    let original = original_gitconfig(paths).ok_or_else(|| {
+        CoreError::BackupFailed("there's no original backup of your git config".into())
+    })?;
+    let absent = marker_for(&original).is_file();
+
+    // Read everything before writing anything.
+    let mut plan = Vec::with_capacity(keys.len());
+    for key in keys {
+        let key = key.trim();
+        if key.is_empty()
+            || plan
+                .iter()
+                .any(|r: &KeyRestore| gitconfig::key_eq(&r.key, key))
+        {
+            continue;
+        }
+        let values = if absent {
+            Vec::new()
+        } else {
+            gitconfig::get_all_file(git, &original, key)?
+        };
+        plan.push(KeyRestore {
+            key: key.to_string(),
+            values,
+        });
+    }
+    if plan.is_empty() {
+        return Ok(plan);
+    }
+
+    backup_global_gitconfig(paths, git)?;
+    for r in &plan {
+        gitconfig::unset_global(git, &r.key)?;
+        let mut values = r.values.iter();
+        if let Some(first) = values.next() {
+            gitconfig::set_global(git, &r.key, first)?;
+            for more in values {
+                gitconfig::add_global(git, &r.key, more)?;
+            }
+        }
+    }
+    Ok(plan)
 }
 
 /// Newest `gitconfig.<timestamp>` in `dir` (not `.original`, not markers).
@@ -309,6 +385,33 @@ mod tests {
         // Restoring "no file" when there is no file is fine too.
         restore_global_gitconfig(&paths, &git, false).unwrap();
         assert!(!global.exists());
+    }
+
+    /// Review #4b: restoring "no file" through a dotfiles symlink must remove
+    /// the link only, never the file it points to.
+    #[test]
+    fn absent_restore_through_symlink_keeps_target() {
+        let (d, paths, git, global) = isolated();
+        backup_global_gitconfig(&paths, &git).unwrap(); // records "absent"
+        let target = d.path().join("dotfiles").join("gitconfig");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "[user]\n\temail = dotfiles@example.com\n").unwrap();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&target, &global);
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&target, &global);
+        if let Err(e) = linked {
+            // Creating symlinks needs Developer Mode or admin on Windows.
+            eprintln!("skipping: can't create a symlink here: {e}");
+            return;
+        }
+        restore_global_gitconfig(&paths, &git, true).unwrap();
+        assert!(std::fs::symlink_metadata(&global).is_err(), "link removed");
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "[user]\n\temail = dotfiles@example.com\n",
+            "target untouched"
+        );
     }
 
     #[test]

@@ -54,6 +54,12 @@ pub enum CoreError {
     #[error("GitHop data is in use by another GitHop window or command. Try again")]
     Locked,
 
+    /// A data file changed on disk since this `Store` loaded it (another GitHop
+    /// window, command or hook saved in between). Nothing was written; reload
+    /// (`Store::reload`) and apply the change again, or use `Store::update`.
+    #[error("{} was changed by another GitHop window or command. Nothing was saved. Try again", .path.display())]
+    Conflict { path: PathBuf },
+
     /// A backup couldn't be created or restored.
     #[error("backup failed: {0}")]
     BackupFailed(String),
