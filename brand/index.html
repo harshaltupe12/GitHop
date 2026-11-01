@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHop brand kit</title>
+<link rel="icon" href="svg/githop-favicon.svg">
+<style>
+:root { --bg:#F4F3F6; --surface:#fff; --border:#DFDCE3; --text:#1F1D24; --muted:#6E6A74; --ink:#0E3B35; --aqua:#4ABDAC; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:14px/20px "IBM Plex Sans","Segoe UI",system-ui,sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:32px 16px 64px; }
+h1 { font-size:24px; line-height:32px; font-weight:500; margin:16px 0 4px; }
+h2 { font-size:16px; font-weight:500; margin:36px 0 12px; }
+p.lead { color:var(--muted); margin:0 0 8px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+.wide { grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
+figure { margin:0; background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+figure .art { display:flex; align-items:center; justify-content:center; padding:24px; min-height:150px; }
+figure .art.dark { background:#1F1D24; }
+figure .art img { max-width:100%; max-height:120px; }
+figure.big .art img { max-height:none; }
+figcaption { padding:10px 12px; border-top:1px solid var(--border); display:flex; justify-content:space-between; gap:8px; font-size:12px; }
+figcaption a { color:#1F6F63; text-decoration:none; font-family:"IBM Plex Mono",Consolas,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+figcaption a:hover { text-decoration:underline; }
+.sizes { display:flex; align-items:flex-end; gap:16px; flex-wrap:wrap; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; }
+.sizes div { text-align:center; font-size:11px; color:var(--muted); }
+.swatches { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+.sw { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.sw i { display:block; height:56px; }
+.sw div { padding:8px 12px; font-size:12px; }
+.sw code { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <img src="svg/githop-lockup-horizontal.svg" alt="GitHop" height="48">
+  <h1>Brand kit</h1>
+  <p class="lead">Rising loop: switch identity, then move forward. Click any file name to open it. Usage rules are in <a href="README.md">README.md</a>.</p>
+
+  <h2>App icons</h2>
+  <div class="grid">
+    <figure><div class="art"><img src="svg/githop-icon-light.svg" alt="" width="96"></div><figcaption><span>Primary</span><a href="svg/githop-icon-light.svg">icon-light.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="svg/githop-icon-dark.svg" alt="" width="96"></div><figcaption><span>Dark</span><a href="svg/githop-icon-dark.svg">icon-dark.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="svg/githop-icon-aqua.svg" alt="" width="96"></div><figcaption><span>Aqua</span><a href="svg/githop-icon-aqua.svg">icon-aqua.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="svg/githop-favicon.svg" alt="" width="96"></div><figcaption><span>Small sizes</span><a href="svg/githop-favicon.svg">favicon.svg</a></figcaption></figure>
+  </div>
+
+  <h2>Small sizes (PNG)</h2>
+  <div class="sizes">
+    <div><img src="png/icon-light/githop-icon-light-16.png" alt=""><br>16</div>
+    <div><img src="png/icon-light/githop-icon-light-20.png" alt=""><br>20</div>
+    <div><img src="png/icon-light/githop-icon-light-24.png" alt=""><br>24</div>
+    <div><img src="png/icon-light/githop-icon-light-32.png" alt=""><br>32</div>
+    <div><img src="png/icon-light/githop-icon-light-48.png" alt=""><br>48</div>
+    <div><img src="png/icon-light/githop-icon-light-64.png" alt=""><br>64</div>
+    <div><img src="png/icon-light/githop-icon-light-128.png" alt=""><br>128</div>
+    <div style="margin-left:auto">ICO: <a href="ico/githop.ico">githop.ico</a> · <a href="ico/favicon.ico">favicon.ico</a></div>
+  </div>
+
+  <h2>Marks</h2>
+  <div class="grid">
+    <figure><div class="art"><img src="svg/githop-mark-color.svg" alt="" width="96"></div><figcaption><span>Colour</span><a href="svg/githop-mark-color.svg">mark-color.svg</a></figcaption></figure>
+    <figure><div class="art dark"><img src="svg/githop-mark-reverse.svg" alt="" width="96"></div><figcaption><span>Reverse</span><a href="svg/githop-mark-reverse.svg">mark-reverse.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="svg/githop-mark-mono-ink.svg" alt="" width="96"></div><figcaption><span>Mono ink</span><a href="svg/githop-mark-mono-ink.svg">mark-mono-ink.svg</a></figcaption></figure>
+    <figure><div class="art dark"><img src="svg/githop-mark-mono-white.svg" alt="" width="96"></div><figcaption><span>Mono white</span><a href="svg/githop-mark-mono-white.svg">mark-mono-white.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="svg/githop-mark-mono-aqua.svg" alt="" width="96"></div><figcaption><span>Mono aqua</span><a href="svg/githop-mark-mono-aqua.svg">mark-mono-aqua.svg</a></figcaption></figure>
+  </div>
+
+  <h2>Wordmark and lockups</h2>
+  <div class="grid wide">
+    <figure><div class="art"><img src="svg/githop-lockup-horizontal.svg" alt="" height="64"></div><figcaption><span>Horizontal</span><a href="svg/githop-lockup-horizontal.svg">lockup-horizontal.svg</a></figcaption></figure>
+    <figure><div class="art dark"><img src="svg/githop-lockup-horizontal-reverse.svg" alt="" height="64"></div><figcaption><span>Horizontal reverse</span><a href="svg/githop-lockup-horizontal-reverse.svg">lockup-horizontal-reverse.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="svg/githop-lockup-stacked.svg" alt="" height="120"></div><figcaption><span>Stacked</span><a href="svg/githop-lockup-stacked.svg">lockup-stacked.svg</a></figcaption></figure>
+    <figure><div class="art dark"><img src="svg/githop-lockup-stacked-reverse.svg" alt="" height="120"></div><figcaption><span>Stacked reverse</span><a href="svg/githop-lockup-stacked-reverse.svg">lockup-stacked-reverse.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="svg/githop-wordmark.svg" alt="" height="56"></div><figcaption><span>Wordmark</span><a href="svg/githop-wordmark.svg">wordmark.svg</a></figcaption></figure>
+    <figure><div class="art dark"><img src="svg/githop-wordmark-reverse.svg" alt="" height="56"></div><figcaption><span>Wordmark reverse</span><a href="svg/githop-wordmark-reverse.svg">wordmark-reverse.svg</a></figcaption></figure>
+  </div>
+
+  <h2>Graphics</h2>
+  <div class="grid wide">
+    <figure class="big"><div class="art" style="padding:0"><img src="graphics/githop-social-preview.svg" alt=""></div><figcaption><span>Social preview 1280×640</span><a href="graphics/githop-social-preview.svg">social-preview.svg</a></figcaption></figure>
+    <figure class="big"><div class="art" style="padding:0"><img src="graphics/githop-readme-banner.svg" alt=""></div><figcaption><span>README banner</span><a href="graphics/githop-readme-banner.svg">readme-banner.svg</a></figcaption></figure>
+    <figure class="big"><div class="art" style="padding:0"><img src="graphics/githop-readme-banner-dark.svg" alt=""></div><figcaption><span>README banner dark</span><a href="graphics/githop-readme-banner-dark.svg">readme-banner-dark.svg</a></figcaption></figure>
+    <figure><div class="art"><img src="graphics/githop-construction.svg" alt="" width="200"></div><figcaption><span>Construction grid</span><a href="graphics/githop-construction.svg">construction.svg</a></figcaption></figure>
+  </div>
+
+  <h2>Colours</h2>
+  <div class="swatches">
+    <div class="sw"><i style="background:#0E3B35"></i><div>Ink <code>#0E3B35</code></div></div>
+    <div class="sw"><i style="background:#4ABDAC"></i><div>Aqua <code>#4ABDAC</code></div></div>
+    <div class="sw"><i style="background:#FFFFFF;border-bottom:1px solid #DFDCE3"></i><div>White <code>#FFFFFF</code></div></div>
+    <div class="sw"><i style="background:#DFDCE3"></i><div>Clean <code>#DFDCE3</code></div></div>
+    <div class="sw"><i style="background:#1F1D24"></i><div>Text <code>#1F1D24</code></div></div>
+  </div>
+</main>
+</body>
+</html>
