@@ -324,6 +324,7 @@ impl ProfileSet {
             check_owners(&mut out, p, earlier);
             check_folders(&mut out, p, earlier);
         }
+        self.check_unrouted(&mut out);
 
         match self.default.as_deref().map(str::trim) {
             Some("") => out.push(
@@ -342,6 +343,44 @@ impl ProfileSet {
         }
 
         out.0
+    }
+
+    /// With two or more profiles, a profile with no owners and no folders is never
+    /// picked for a repo by rule — only by a pin or as the default. Its repos then
+    /// quietly use the default profile (how an office repo got a personal commit:
+    /// Office had no owners while Personal was the default). Warning, not error.
+    fn check_unrouted(&self, out: &mut Issues) {
+        if self.profiles.len() < 2 {
+            return;
+        }
+        let default = self.default.as_deref().map(str::trim);
+        let default_label = default
+            .and_then(|d| self.profiles.iter().find(|p| p.id.trim() == d))
+            .map(Profile::display_name);
+        for p in &self.profiles {
+            let has_owner = p.owners.iter().any(|o| !o.trim().is_empty());
+            let has_folder = p.folders.iter().any(|f| !f.trim().is_empty());
+            if has_owner || has_folder {
+                continue;
+            }
+            let fallback = match default_label {
+                Some(d) if default != Some(p.id.trim()) => {
+                    format!("Its repos use your default profile ({d}) unless you pin them.")
+                }
+                _ => "Other repos only use it while it's the default profile.".to_string(),
+            };
+            out.push(
+                Some(p),
+                "owners",
+                Severity::Warning,
+                format!(
+                    "{} has no GitHub owners or folders, so GitHop can't tell which repos are \
+                     its. {fallback} Add the GitHub organisation or user that owns its repos, \
+                     like your company's org.",
+                    quoted_profile(p)
+                ),
+            );
+        }
     }
 
     /// `Ok(())` when there are no `Severity::Error` issues; otherwise `Err` with **all** issues.
