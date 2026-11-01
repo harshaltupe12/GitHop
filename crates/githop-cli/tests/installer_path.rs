@@ -8,6 +8,7 @@
 //! command line.
 
 #![cfg(windows)]
+#![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod support;
 
