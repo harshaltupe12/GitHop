@@ -328,7 +328,25 @@ pub fn run_check(stage: Stage, args: &[String], stdin: &str, ctx: &CheckContext)
             result.outcome.log_label(enforce),
         );
     }
+    if matches!(result.outcome, Outcome::Mismatch { .. }) && result.exit_code() == 1 {
+        record_block(&ctx.paths);
+    }
     result
+}
+
+/// File the tray reads to show its "recently blocked" dot: unix seconds, ASCII.
+pub const LAST_BLOCK_FILE: &str = "last-block";
+
+/// Best effort: note the time of a block (no repo, profile or email data).
+/// Only when the data dir already exists — a check never creates it.
+fn record_block(paths: &Paths) {
+    if !paths.root().is_dir() {
+        return;
+    }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let _ = std::fs::write(paths.root().join(LAST_BLOCK_FILE), secs.to_string());
 }
 
 // ---------------------------------------------------------------------------

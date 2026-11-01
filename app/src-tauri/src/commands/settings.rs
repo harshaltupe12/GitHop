@@ -7,7 +7,7 @@ use std::path::Path;
 use githop_core::export::{self, ImportPreview, ImportResolution};
 use githop_core::hooks::{self, HookHealth};
 use githop_core::profile::PROFILES_VERSION;
-use githop_core::{backup, CoreError, Paths, ProfileSet, Settings, Store};
+use githop_core::{backup, doctor, wipe, CoreError, Paths, ProfileSet, Settings, Store};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_autostart::ManagerExt as _;
 
@@ -81,15 +81,21 @@ pub async fn install_hooks<R: Runtime>(app: AppHandle<R>) -> IpcResult<HookHealt
 
 #[tauri::command]
 pub async fn doctor() -> IpcResult<DoctorReport> {
-    blocking(|| {
-        let _git = ops::git()?;
-        let _store = ops::store()?;
-        // INTEGRATE: Ok(githop_core::doctor::run(&_git, &_store))
-        Err(IpcError::unsupported(
-            "Doctor isn't available in the app in this build yet. Run: githop doctor",
-        ))
-    })
-    .await
+    blocking(run_doctor).await
+}
+
+/// Run core doctor as the app: git may be missing (reported as a check), the
+/// hooks are compared with the bundled `githop.exe`, aliases are refreshed.
+fn run_doctor() -> IpcResult<DoctorReport> {
+    let paths = Paths::resolve()?;
+    let git = ops::git().ok();
+    let current_exe = ops::githop_exe("").ok();
+    let opts = doctor::DoctorOptions {
+        cwd: None,
+        current_exe,
+        refresh_aliases: true,
+    };
+    Ok(doctor::diagnose(&paths, git.as_ref(), &opts))
 }
 
 /// Remove GitHop: restore git config, remove hooks, optionally unpin repos and
@@ -98,20 +104,19 @@ pub async fn doctor() -> IpcResult<DoctorReport> {
 pub async fn wipe<R: Runtime>(app: AppHandle<R>, opts: WipeOptions) -> IpcResult<WipeReport> {
     let report = blocking(move || {
         let _guard = ops::write_lock();
-        let _git = ops::git()?;
-        let _ = opts;
-        // INTEGRATE: once core `wipe` exists:
-        //   let paths = githop_core::Paths::resolve()?;
-        //   let report = githop_core::wipe::wipe(&paths, &_git, &opts)?;
-        //   Ok(report)
-        // and, outside `blocking`, before returning: `set_autostart(&app, false)`
-        // (wipe removes the autostart entry, Phase 6 §4).
-        Err::<WipeReport, _>(IpcError::unsupported(
-            "Wipe isn't available in the app in this build yet. Run: githop wipe",
-        ))
+        let git = ops::git()?;
+        let paths = Paths::resolve()?;
+        Ok(wipe::wipe(&paths, &git, &opts)?)
     })
     .await?;
-    if report.steps.iter().all(|s| s.ok) {
+    // Core removes its own Run entry; the autostart plugin's entry too (Phase 6 §4).
+    if let Err(e) = set_autostart(&app, false) {
+        eprintln!(
+            "GitHop: couldn't turn off start with Windows: {}",
+            e.message
+        );
+    }
+    if report.is_complete() {
         let handle = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(QUIT_AFTER_WIPE);
@@ -182,18 +187,30 @@ pub async fn import_apply<R: Runtime>(
 pub async fn save_diagnostics(path: String) -> IpcResult<()> {
     let target = validate::new_file_in_existing_dir(&path)?;
     blocking(move || {
-        let _git = ops::git()?;
-        let _ = target;
-        // INTEGRATE: once core `doctor` exists:
-        //   let report = githop_core::doctor::run(&_git, &ops::store()?);
-        //   let text = serde_json::to_string_pretty(&report)?; // or a core text renderer
-        //   std::fs::write(&target, text).map_err(|e| CoreError::io(&target, e))?;
-        //   Ok(())
-        Err(IpcError::unsupported(
-            "Saving diagnostics isn't available in the app in this build yet. Run: githop doctor",
-        ))
+        let report = run_doctor()?;
+        let text = diagnostics_text(&report);
+        std::fs::write(&target, text).map_err(|e| CoreError::io(&target, e))?;
+        Ok(())
     })
     .await
+}
+
+/// Plain-text diagnostics: one block per check (what doctor already shows — no
+/// extra paths, emails or repo data).
+fn diagnostics_text(report: &DoctorReport) -> String {
+    let mut out = format!("GitHop {} diagnostics\n\n", env!("CARGO_PKG_VERSION"));
+    for c in &report.checks {
+        let status = match c.status {
+            doctor::CheckStatus::Ok => "ok",
+            doctor::CheckStatus::Warning => "warning",
+            doctor::CheckStatus::Problem => "problem",
+        };
+        out.push_str(&format!("[{status}] {} — {}\n", c.title, c.detail));
+        if let Some(fix) = &c.fix {
+            out.push_str(&format!("    fix: {fix}\n"));
+        }
+    }
+    out
 }
 
 /// Design §8.7 "Restore last backup": replace `profiles.toml` with the newest

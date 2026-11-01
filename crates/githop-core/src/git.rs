@@ -155,6 +155,14 @@ impl Git {
                 None => cmd.env_remove(k),
             };
         }
+        // GitHop's git calls are never interactive (all I/O piped): don't let a
+        // console window flash when the GUI (no console of its own) spawns git.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         cmd
     }
 

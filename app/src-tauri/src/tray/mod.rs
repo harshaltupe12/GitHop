@@ -1,7 +1,7 @@
 //! System tray: runtime-rendered icon, tooltip, native right-click menu and
 //! the small frameless tray menu window (Design §6.2, §7.14).
 //!
-//! INTEGRATE (core `check`): when a commit/push is blocked, write the current
+//! Core `check` (`check::LAST_BLOCK_FILE`): when a commit/push is blocked, it writes the current
 //! unix time in seconds (ASCII) to `<data dir>/last-block`
 //! ([`model::LAST_BLOCK_FILE`]) — e.g. in `check::run_check` when the outcome is
 //! a block. Best effort, never fail the hook on it. The file watcher picks it

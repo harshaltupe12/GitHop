@@ -789,6 +789,18 @@ fn commit_check_spawn_budget() {
 }
 
 #[test]
+fn blocked_commit_records_last_block_for_the_tray() {
+    let env = TestEnv::new();
+    let repo = office_repo(&env);
+    let marker = env.appdata().join(check::LAST_BLOCK_FILE);
+    assert!(!marker.exists());
+    let (_, outcome) = spawns_for(Stage::Commit, &ctx(&env, &repo), &[], "");
+    assert!(matches!(outcome, Outcome::Mismatch { .. }), "{outcome:?}");
+    let secs: u64 = std::fs::read_to_string(&marker).unwrap().parse().unwrap();
+    assert!(secs > 1_700_000_000);
+}
+
+#[test]
 fn commit_check_in_linked_worktree_spawn_budget() {
     let env = TestEnv::new();
     let repo = office_repo(&env);

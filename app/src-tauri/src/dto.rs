@@ -211,55 +211,10 @@ pub struct RepoRow {
 }
 
 // ---------------------------------------------------------------------------
-// Types owned by other agents' core modules. Shapes follow app/IPC.md exactly.
+// Core types re-exported for the IPC layer (shapes in app/IPC.md).
 
-// INTEGRATE: replace with core type `githop_core::doctor::DoctorCheck`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DoctorCheck {
-    pub id: String,
-    pub status: DoctorStatus,
-    pub title: String,
-    pub detail: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fix: Option<String>,
-}
-
-// INTEGRATE: replace with core type `githop_core::doctor::DoctorStatus`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DoctorStatus {
-    Ok,
-    Warning,
-    Problem,
-}
-
-// INTEGRATE: replace with core type `githop_core::doctor::DoctorReport`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DoctorReport {
-    pub checks: Vec<DoctorCheck>,
-}
-
-// INTEGRATE: replace with core type `githop_core::wipe::WipeOptions`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WipeOptions {
-    pub unpin_repos: bool,
-    pub delete_keys: bool,
-    pub keep_data: bool,
-}
-
-// INTEGRATE: replace with core type `githop_core::wipe::WipeStep`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WipeStep {
-    pub step: String,
-    pub ok: bool,
-    pub detail: String,
-}
-
-// INTEGRATE: replace with core type `githop_core::wipe::WipeReport`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WipeReport {
-    pub steps: Vec<WipeStep>,
-}
+pub use githop_core::doctor::DoctorReport;
+pub use githop_core::wipe::{WipeOptions, WipeReport};
 
 #[cfg(test)]
 mod tests {
@@ -393,10 +348,10 @@ mod tests {
     }
 
     #[test]
-    fn integrate_dtos_match_contract() {
-        let d = DoctorCheck {
+    fn core_dtos_match_contract() {
+        let d = githop_core::doctor::DoctorCheck {
             id: "hooks".into(),
-            status: DoctorStatus::Problem,
+            status: githop_core::doctor::CheckStatus::Problem,
             title: "t".into(),
             detail: "d".into(),
             fix: None,
