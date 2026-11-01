@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-suggest-key-path"
+description = "Enables the suggest_key_path command without any pre-configured scope."
+commands.allow = ["suggest_key_path"]
+
+[[permission]]
+identifier = "deny-suggest-key-path"
+description = "Denies the suggest_key_path command without any pre-configured scope."
+commands.deny = ["suggest_key_path"]

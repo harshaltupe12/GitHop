@@ -9,6 +9,19 @@
 
 [graph]
 all-features = false
+# Only the platforms GitHop is built for (Windows) plus Linux, where CI runs the
+# core/CLI tests. Without this, cargo-deny also walks Tauri's Android/iOS-only
+# dependency on `reqwest` (tauri's Cargo.toml: `[target.'cfg(any(target_os =
+# "android", all(target_vendor = "apple", not(target_os = "macos"))))'
+# .dependencies.reqwest]`), which can never be compiled into a Windows build.
+# Check: `cargo tree -p githop-app --target x86_64-pc-windows-msvc -i reqwest`
+# prints nothing. The [bans] list itself is unchanged and still applies in full
+# to every target listed here.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
 
 [advisories]
 version = 2
@@ -29,6 +42,11 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "OFL-1.1",
+    # Boost Software License 1.0 — permissive, OSI approved. clipboard-win and
+    # error-code (via arboard ← tauri-plugin-clipboard-manager, Windows clipboard).
+    "BSL-1.0",
+    # Public-domain dedication — permissive. notify (file watcher for profiles.toml).
+    "CC0-1.0",
 ]
 
 [bans]

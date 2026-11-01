@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hooks-snippet"
+description = "Enables the hooks_snippet command without any pre-configured scope."
+commands.allow = ["hooks_snippet"]
+
+[[permission]]
+identifier = "deny-hooks-snippet"
+description = "Denies the hooks_snippet command without any pre-configured scope."
+commands.deny = ["hooks_snippet"]

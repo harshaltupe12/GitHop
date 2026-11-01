@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pin-all"
+description = "Enables the pin_all command without any pre-configured scope."
+commands.allow = ["pin_all"]
+
+[[permission]]
+identifier = "deny-pin-all"
+description = "Denies the pin_all command without any pre-configured scope."
+commands.deny = ["pin_all"]

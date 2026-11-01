@@ -1,0 +1,3 @@
+# Sidecar binaries are build output (app/scripts/prepare-sidecar.ps1).
+*
+!.gitignore
