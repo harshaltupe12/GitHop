@@ -154,6 +154,37 @@ impl Store {
         self.update(|_, s| f(s))
     }
 
+    /// Like [`Store::update_settings`], but without a `Store`: only
+    /// `settings.toml` is read and written (under the lock), so it works even
+    /// when `profiles.toml` can't be read (e.g. `githop hooks install` while
+    /// the profiles are broken, regression D5). Returns `f`'s value and the
+    /// settings now on disk.
+    pub fn update_settings_at<T>(
+        paths: &Paths,
+        f: impl FnOnce(&mut Settings) -> Result<T>,
+    ) -> Result<(T, Settings)> {
+        paths.ensure_dirs()?;
+        with_lock(paths, Duration::from_millis(LOCK_TIMEOUT_MS), || {
+            let path = paths.settings_file();
+            let (s0, _) = load_versioned::<Settings>(&path, SETTINGS_VERSION)?;
+            let s0 = s0.unwrap_or_default();
+            let mut s = s0.clone();
+            let value = f(&mut s)?;
+            if s != s0 {
+                s.version = SETTINGS_VERSION;
+                atomic_write(&path, to_toml(&s, &path)?.as_bytes())?;
+            }
+            Ok((value, s))
+        })
+    }
+
+    /// Read only `settings.toml` (defaults when missing). Never touches profiles.
+    pub fn load_settings_at(paths: &Paths) -> Result<Settings> {
+        Ok(load_versioned::<Settings>(&paths.settings_file(), SETTINGS_VERSION)?
+            .0
+            .unwrap_or_default())
+    }
+
     pub fn paths(&self) -> &Paths {
         &self.paths
     }
@@ -325,15 +356,28 @@ pub(crate) fn with_lock<T>(
     f: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
     let lock_path = paths.lock_file();
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|e| CoreError::io(&lock_path, e))?;
-    let mut lock = fd_lock::RwLock::new(file);
     let deadline = Instant::now() + timeout;
+    // Another program (virus scanner, backup tool) may hold `.lock` open with
+    // no sharing for a moment: retry the open until the same deadline.
+    let file = loop {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(f) => break f,
+            Err(e) if is_lock_busy(&e) => {
+                if Instant::now() >= deadline {
+                    return Err(CoreError::Locked);
+                }
+                std::thread::sleep(LOCK_POLL);
+            }
+            Err(e) => return Err(CoreError::io(&lock_path, e)),
+        }
+    };
+    let mut lock = fd_lock::RwLock::new(file);
     loop {
         match lock.try_write() {
             Ok(guard) => {

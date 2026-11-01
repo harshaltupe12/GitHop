@@ -3,7 +3,7 @@
 GITHOP="@@GITHOP@@"
 HOOK=pre-commit
 PREV="@@PREVIOUS@@"
-STRICT=@@STRICT@@
+SETTINGS="@@SETTINGS@@"
 
 @@LOCATE@@
 @@CHECK@@

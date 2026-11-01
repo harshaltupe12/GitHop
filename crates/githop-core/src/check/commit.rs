@@ -6,9 +6,14 @@
 //!    `GIT_COMMITTER_EMAIL` env → pass without `git var`.
 //! 2. Otherwise resolve; unresolved → pass (hint once per repo).
 //! 3. Effective identity (`git var -l`, 2nd spawn). Match → pass.
-//! 4. Mismatch: repo not pinned → pin now, block with "run the commit again"
-//!    (git loaded the identity before the hook ran). Pinned → block with the
-//!    Design §9.3 message. `enforce = warn` → same facts as a warning, exit 0.
+//! 4. Mismatch: repo not pinned and an owner or folder rule decided → pin
+//!    now, block with "run the commit again" (git loaded the identity before
+//!    the hook ran). Only the default profile matched → block (never pin: a
+//!    pin would overwrite the user's own local `user.email` and later beat an
+//!    owner rule, ADR 0003 #6, regression D2) with "pin it" advice. Pinned →
+//!    block with the Design §9.3 message, naming the config value that
+//!    overrides the pin when there is one (regression D8). `enforce = warn` →
+//!    same facts as a warning, exit 0.
 
 use crate::error::Result;
 use crate::gitconfig::{ConfigScope, ConfigSnapshot};
@@ -169,10 +174,91 @@ pub fn decide(
 pub enum PinAttempt {
     /// Repo was already pinned; nothing tried.
     AlreadyPinned,
+    /// Already pinned, but a config value wider than the pin (or a `-c`)
+    /// sets the email the commit uses (regression D8).
+    Overridden(IdentityOverride),
     /// Pinned now.
     Pinned,
     /// Pinning failed (reason).
     Failed(String),
+    /// Only the default profile matched: not pinned on purpose (ADR 0003 #6).
+    /// Holds the profile ids to offer, comma separated.
+    DefaultOnly(String),
+}
+
+/// A git config value that decides the commit email although the repo is
+/// pinned: `author.email` / `committer.email` at any scope, or a `user.email`
+/// from `git -c`, a worktree config or anything read after the local file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityOverride {
+    /// `author.email`, `committer.email` or `user.email`.
+    pub key: String,
+    pub scope: ConfigScope,
+    /// Where it is set (`--show-origin` without `file:`), e.g. `C:/Users/me/.gitconfig`.
+    pub origin: String,
+}
+
+impl IdentityOverride {
+    /// "author.email is set in ~/.gitconfig and overrides the pin."
+    pub fn why(&self) -> String {
+        match self.scope {
+            ConfigScope::Command => format!(
+                "{} is set with git -c for this command, and it overrides the pin.",
+                self.key
+            ),
+            _ if self.origin.is_empty() => {
+                format!("{} is set in your git config and overrides the pin.", self.key)
+            }
+            _ => format!(
+                "{} is set in {} and overrides the pin.",
+                self.key,
+                crate::text::one_line(&self.origin)
+            ),
+        }
+    }
+
+    /// The one next step.
+    pub fn action(&self) -> String {
+        match self.scope {
+            ConfigScope::Command => format!("Drop -c {}=…", self.key),
+            ConfigScope::Global => format!("Run: git config --global --unset {}", self.key),
+            ConfigScope::Local => format!("Run: git config --unset {}", self.key),
+            ConfigScope::Worktree => format!("Run: git config --worktree --unset {}", self.key),
+            ConfigScope::System => format!(
+                "It's in the system git config, which GitHop never changes. \
+                 As an admin, run: git config --system --unset {}",
+                self.key
+            ),
+            ConfigScope::Unknown => format!("Remove {} from that file", self.key),
+        }
+    }
+}
+
+/// What sets the commit email when it isn't the pinned profile's `expected`
+/// email although the repo is pinned (regression D8). `None` when the local
+/// `user.email` itself is wrong (then `githop pin` fixes it). Pure.
+pub fn identity_override(snapshot: &ConfigSnapshot, expected: &str) -> Option<IdentityOverride> {
+    let mk = |e: &crate::gitconfig::ConfigEntry| IdentityOverride {
+        key: e.key.to_ascii_lowercase(),
+        scope: e.scope,
+        origin: e.origin.trim_start_matches("file:").to_string(),
+    };
+    for key in ["author.email", "committer.email"] {
+        if let Some(e) = snapshot.get_entry(key) {
+            if !e.value.as_deref().is_some_and(|v| email_eq(v, expected)) {
+                return Some(mk(e));
+            }
+        }
+    }
+    match snapshot.get_entry("user.email") {
+        Some(e)
+            if e.scope != ConfigScope::Local
+                && !e.value.as_deref().is_some_and(|v| email_eq(v, expected)) =>
+        {
+            Some(mk(e))
+        }
+        _ => None,
+    }
 }
 
 /// The line explaining an env override (C9), and what to do (without the
@@ -207,7 +293,25 @@ pub fn mismatch_messages(m: &CommitMismatch, mode: EnforceMode, pin: &PinAttempt
     ];
     let would_line = Message::info(format!("Commit would use {would}."));
     let pin_hint = format!("Run: githop pin {}", m.profile_id);
+    if let PinAttempt::DefaultOnly(ids) = pin {
+        out[1] = Message::info(format!(
+            "No owner or folder rule matches this repo, so GitHop expects your default profile ({}).",
+            m.label
+        ));
+        out.push(would_line);
+        let hint = format!("Pin the right profile: githop pin <profile> ({ids})");
+        out.push(
+            Message::info("GitHop didn't pin this repo, so your own settings here are unchanged.")
+                .hint(if warn {
+                    format!("{hint}. To re-stamp this commit: githop fix")
+                } else {
+                    hint
+                }),
+        );
+        return out;
+    }
     match (pin, m.env_var) {
+        (PinAttempt::DefaultOnly(_), _) => {}
         (PinAttempt::Pinned, _) if warn => {
             out.push(would_line);
             out.push(
@@ -240,13 +344,21 @@ pub fn mismatch_messages(m: &CommitMismatch, mode: EnforceMode, pin: &PinAttempt
                 "GitHop couldn't pin this repo: {reason}"
             )));
         }
-        (PinAttempt::AlreadyPinned, Some(var)) => {
+        (PinAttempt::AlreadyPinned | PinAttempt::Overridden(_), Some(var)) => {
             let (why, action) = env_override_lines(var, would);
             out.push(would_line);
             out.push(Message::info(why).hint(if warn {
                 format!("{action}. To re-stamp this commit: githop fix")
             } else {
                 format!("{action}, then commit again.")
+            }));
+        }
+        (PinAttempt::Overridden(o), None) => {
+            out.push(would_line);
+            out.push(Message::info(o.why()).hint(if warn {
+                format!("{}. To re-stamp this commit: githop fix", o.action())
+            } else {
+                format!("{}, then commit again.", o.action())
             }));
         }
         (PinAttempt::AlreadyPinned, None) => {
@@ -276,7 +388,7 @@ pub(crate) fn run(ctx: &CheckContext, enforce: EnforceMode) -> Result<CheckResul
         return Ok(result);
     }
 
-    let aliases = store.settings().github_host_aliases.clone();
+    let aliases = crate::aliases::current(&ctx.paths, &ctx.git, store.settings());
     let resolution = resolver::resolve(&snapshot, &root, store.profiles(), &aliases);
     if super::resolved_profile(store.profiles(), resolution.profile_id.as_deref()).is_none() {
         result.outcome = Outcome::Unresolved;
@@ -294,7 +406,24 @@ pub(crate) fn run(ctx: &CheckContext, enforce: EnforceMode) -> Result<CheckResul
     };
 
     let pin = if m.pinned {
-        PinAttempt::AlreadyPinned
+        match identity_override(&snapshot, &m.expected_email) {
+            Some(o) if m.env_var.is_none() => PinAttempt::Overridden(o),
+            _ => PinAttempt::AlreadyPinned,
+        }
+    } else if !matches!(
+        resolution.source,
+        Some(ResolutionSource::Owner | ResolutionSource::Folder)
+    ) {
+        // Regression D2: only owner/folder matches pin (ADR 0003 #6).
+        PinAttempt::DefaultOnly(
+            store
+                .profiles()
+                .profiles
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
     } else {
         let profile = store.profiles().get(&m.profile_id).cloned();
         match profile {
@@ -309,6 +438,17 @@ pub(crate) fn run(ctx: &CheckContext, enforce: EnforceMode) -> Result<CheckResul
         pinned_now: (pin == PinAttempt::Pinned).then(|| m.profile_id.clone()),
     };
     result.messages = mismatch_messages(&m, enforce, &pin);
+    if enforce != EnforceMode::Warn
+        && ctx
+            .git
+            .env_var("GITHOP_MERGE")
+            .is_some_and(|v| v.to_string_lossy().trim() == "1")
+    {
+        // pre-merge-commit: the merge is still in progress (security #3).
+        result.messages.push(
+            Message::info("The merge is still in progress.").hint("To stop it: git merge --abort"),
+        );
+    }
     Ok(result)
 }
 

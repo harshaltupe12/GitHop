@@ -3,7 +3,7 @@
 GITHOP="@@GITHOP@@"
 HOOK=pre-push
 PREV="@@PREVIOUS@@"
-STRICT=@@STRICT@@
+SETTINGS="@@SETTINGS@@"
 
 @@LOCATE@@
 # pre-push gets the ref lines on stdin. Buffer them once only when another hook

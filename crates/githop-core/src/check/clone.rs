@@ -1,6 +1,9 @@
 //! `check --stage clone` (post-checkout) — Phase 3 §3.3, Plan §7.2, C3.
 //!
-//! Runs only when `$1` (previous HEAD) is the null id, i.e. a fresh clone.
+//! Runs when `$1` (previous HEAD) is the null id, i.e. a fresh clone, or when
+//! the hook says the checkout is in a submodule (`GITHOP_SUBMODULE=1`: git
+//! checks a new submodule out with a non-null previous HEAD, regression D10).
+//! In a submodule that isn't fresh, only an owner/folder pin happens, quietly.
 //! Owner/folder match and not pinned → pin (`✓ GitHop: pinned to Office`).
 //! Default profile only → not pinned, hint (same rule as `scan --apply`, ADR
 //! 0003 #6). Unresolved → hint. Local `core.hooksPath` (husky etc.) → warning.
@@ -13,6 +16,9 @@ use crate::settings::EnforceMode;
 
 use super::push::is_null_sha;
 use super::{CheckContext, CheckResult, Message, Outcome, Stage};
+
+/// Set by the post-checkout hook when the repo is a submodule.
+pub const SUBMODULE_ENV: &str = "GITHOP_SUBMODULE";
 
 /// True when post-checkout args say this is the checkout at the end of a clone.
 pub fn is_fresh_clone(args: &[String]) -> bool {
@@ -79,17 +85,27 @@ pub(crate) fn run(
     enforce: EnforceMode,
 ) -> Result<CheckResult> {
     let mut result = CheckResult::new(Stage::Clone, enforce, Outcome::Pass);
-    if !is_fresh_clone(args) {
+    let fresh = is_fresh_clone(args);
+    let submodule = ctx
+        .git
+        .env_var(SUBMODULE_ENV)
+        .is_some_and(|v| v.to_string_lossy().trim() == "1");
+    if !fresh && !submodule {
         return Ok(result);
     }
     let repo = super::hook_repo(ctx)?;
     let root = repo.root().to_path_buf();
     let snapshot = ConfigSnapshot::read(&ctx.git, &root)?;
     let mut store = super::open_store(ctx)?;
-    let aliases = store.settings().github_host_aliases.clone();
+    let aliases = crate::aliases::current(&ctx.paths, &ctx.git, store.settings());
     let resolution = resolver::resolve(&snapshot, &root, store.profiles(), &aliases);
 
-    match decide(&resolution, |id| store.profiles().get(id).is_some()) {
+    let decision = decide(&resolution, |id| store.profiles().get(id).is_some());
+    if !fresh && !matches!(decision, CloneDecision::Pin { .. }) {
+        // Every later checkout in a submodule: nothing to say.
+        return Ok(result);
+    }
+    match decision {
         CloneDecision::AlreadyPinned { profile_id } => result.profile_id = Some(profile_id),
         CloneDecision::Pin { profile_id } => {
             result.profile_id = Some(profile_id.clone());

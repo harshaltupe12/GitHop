@@ -11,19 +11,20 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
     /// File system error, with the path that failed.
-    #[error("couldn't access {path}: {source}")]
+    #[error("couldn't access {}: {source}", crate::paths::to_slash(.path))]
     Io {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
 
-    /// A TOML file couldn't be parsed or written.
-    #[error("couldn't read {path}: {message}")]
+    /// A TOML file couldn't be parsed or written. The message shown is the
+    /// first line of the parser's report; `message` holds all of it.
+    #[error("couldn't read {}: {}", crate::paths::to_slash(.path), first_line(.message))]
     Toml { path: PathBuf, message: String },
 
     /// A file was written by a newer GitHop.
-    #[error("{path} has version {found}, this GitHop understands version {supported}")]
+    #[error("{} has version {found}, this GitHop understands version {supported}", crate::paths::to_slash(.path))]
     UnsupportedVersion {
         path: PathBuf,
         found: u32,
@@ -31,7 +32,7 @@ pub enum CoreError {
     },
 
     /// Profiles failed validation. Holds **all** issues (errors and warnings).
-    #[error("profiles are not valid ({} issue(s))", .0.len())]
+    #[error("profiles are not valid ({})", crate::text::plural(.0.len(), "issue", "issues"))]
     Validation(Vec<ValidationIssue>),
 
     /// `git` is not on PATH.
@@ -57,7 +58,7 @@ pub enum CoreError {
     /// A data file changed on disk since this `Store` loaded it (another GitHop
     /// window, command or hook saved in between). Nothing was written; reload
     /// (`Store::reload`) and apply the change again, or use `Store::update`.
-    #[error("{} was changed by another GitHop window or command. Nothing was saved. Try again", .path.display())]
+    #[error("{} was changed by another GitHop window or command. Nothing was saved. Try again", crate::paths::to_slash(.path))]
     Conflict { path: PathBuf },
 
     /// A backup couldn't be created or restored.
@@ -72,6 +73,15 @@ pub enum CoreError {
     /// complete, user-facing sentence with the next step (Design §9).
     #[error("{0}")]
     FixRefused(String),
+}
+
+/// First non-empty line of a (possibly multi-line) parser message, trimmed.
+fn first_line(message: &str) -> &str {
+    message
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
 }
 
 impl CoreError {

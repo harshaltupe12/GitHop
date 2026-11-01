@@ -13,11 +13,15 @@
 //!
 //! Scripts are POSIX `sh` (run by Git for Windows' bundled `sh`), LF only, no
 //! BOM. `githop.exe` is embedded as an absolute, quoted path, so hooks never
-//! depend on `PATH`. Exit semantics inside the scripts: githop exit 1 → block;
-//! 3 → continue (githop already printed the warning); anything else → print the
-//! fail-open warning and continue. With `enforce = "block-strict"` (baked in
-//! as `STRICT=1`) a missing githop or any non-zero exit blocks. `post-checkout`
-//! never blocks.
+//! depend on `PATH`. Exit semantics inside the scripts: githop exit 1 → block
+//! (githop also exits 1 for its own error under `block-strict`); 3 → continue
+//! (githop already printed the warning); anything else, or no githop at all →
+//! block when `settings.toml` says `enforce = "block-strict"`, else print the
+//! fail-open warning and continue. The scripts read that one setting at run
+//! time with shell built-ins, and only on that failure path, so the hooks
+//! never go stale when the mode changes, by hand or not (regression D5).
+//! `post-checkout` never blocks. With `GITHOP_DISABLE=1`, `pre-push` still
+//! hands the ref lines to githop, which only records them (regression D4).
 //!
 //! Callers ([`install_hooks`] / [`uninstall_hooks`]) must back up the global git
 //! config first (`backup::backup_global_gitconfig`) and save `settings`
@@ -34,7 +38,7 @@ use crate::error::{CoreError, Result};
 use crate::git::Git;
 use crate::gitconfig;
 use crate::paths::{self, Paths};
-use crate::settings::{EnforceMode, Settings};
+use crate::settings::Settings;
 
 /// Global git config key GitHop sets.
 pub const HOOKS_PATH_KEY: &str = "core.hooksPath";
@@ -101,13 +105,23 @@ const TPL_LOCATE: &str = include_str!("templates/locate.sh");
 const TPL_DYNAMIC: &str = include_str!("templates/dynamic.sh");
 const TPL_CHECK: &str = include_str!("templates/check.sh");
 const TPL_CHAIN: &str = include_str!("templates/chain.sh");
+const TPL_HELPERS: &str = include_str!("templates/helpers.sh");
 
 /// How the check snippet calls githop for the commit-time hooks.
-const INVOKE_COMMIT: &str = "    \"$GITHOP\" check --stage commit -- \"$@\"";
+const INVOKE_COMMIT: &str = "  \"$GITHOP\" check --stage commit -- \"$@\"";
 /// pre-push: feed the buffered ref lines when another hook also needs them.
-const INVOKE_PUSH: &str = "    if [ -n \"$BUFFERED\" ]; then\n      \
-     { [ -z \"$INPUT\" ] || printf '%s\\n' \"$INPUT\"; } | \"$GITHOP\" check --stage push -- \"$@\"\n    \
-     else\n      \"$GITHOP\" check --stage push -- \"$@\"\n    fi";
+const INVOKE_PUSH: &str = "  if [ -n \"$BUFFERED\" ]; then\n    \
+     { [ -z \"$INPUT\" ] || printf '%s\\n' \"$INPUT\"; } | \"$GITHOP\" check --stage push -- \"$@\"\n  \
+     else\n    \"$GITHOP\" check --stage push -- \"$@\"\n  fi";
+/// `GITHOP_DISABLE=1`, commit-time hooks: nothing to do.
+const DISABLED_COMMIT: &str = "  :";
+/// `GITHOP_DISABLE=1`, pre-push: githop only records what the push publishes,
+/// so Fix never rewrites it (regression D4). It prints nothing; its exit code
+/// is ignored.
+const DISABLED_PUSH: &str = "  if [ -f \"$GITHOP\" ]; then\n    \
+     if [ -n \"$BUFFERED\" ]; then\n      \
+     { [ -z \"$INPUT\" ] || printf '%s\\n' \"$INPUT\"; } | \"$GITHOP\" check --stage push -- \"$@\" >/dev/null 2>&1\n    \
+     else\n      \"$GITHOP\" check --stage push -- \"$@\" >/dev/null 2>&1\n    fi\n  fi";
 
 /// File (in GitHop's data dir) that holds GitHop's `core.hooksPath` when an
 /// included git config file also sets one; the global config includes it last.
@@ -242,10 +256,11 @@ pub struct RenderOptions {
     pub githop_exe: String,
     /// Previous global hooks path to chain to, already `~`-expanded; empty = none.
     pub previous: String,
-    /// `enforce = "block-strict"`: a missing or crashing `githop.exe` blocks
-    /// instead of failing open (Plan §12). Baked in, because the scripts can't
-    /// read `settings.toml` cheaply; [`refresh_if_installed`] re-renders.
-    pub strict: bool,
+    /// `settings.toml` (absolute). The scripts read `enforce` from it only
+    /// when githop is missing or crashed, to decide block-strict at run time
+    /// (regression D5): the hooks don't change with the enforce mode, so a
+    /// mode changed by hand applies at once. Empty = never strict.
+    pub settings_file: String,
     /// `Some(GitHop's hooks dir)` when an included git config file sets
     /// `core.hooksPath`: the scripts then pick the folder to chain to at run
     /// time (`git config --get-all core.hooksPath`, last value that isn't
@@ -303,15 +318,29 @@ pub fn render_hook_with(name: &str, opts: &RenderOptions) -> Result<String> {
         None => String::new(),
     };
     let locate = substitute(&lf(TPL_LOCATE), &[("DYNAMIC", &dynamic)]);
-    let check = substitute(&lf(TPL_CHECK), &[("INVOKE", invoke), ("WHAT", what)]);
+    let disabled = if name == "pre-push" {
+        DISABLED_PUSH
+    } else {
+        DISABLED_COMMIT
+    };
+    let helpers = lf(TPL_HELPERS);
+    let check = format!(
+        "{}{}",
+        helpers,
+        substitute(
+            &lf(TPL_CHECK),
+            &[("INVOKE", invoke), ("WHAT", what), ("DISABLED", disabled)],
+        )
+    );
     let chain = lf(TPL_CHAIN);
-    let strict = if opts.strict { "1" } else { "0" };
+    let settings = sh_quote_value(&opts.settings_file)?;
     let rendered = substitute(
         &lf(template),
         &[
             ("GITHOP", &exe),
             ("PREVIOUS", &prev),
-            ("STRICT", strict),
+            ("SETTINGS", &settings),
+            ("HELPERS", helpers.trim_end()),
             ("HOOK", name),
             ("LOCATE", locate.trim_end()),
             ("CHECK", check.trim_end()),
@@ -365,6 +394,15 @@ pub fn snippet(stage: &str, githop_exe: &str) -> Result<String> {
         other => return Err(invalid_input(format!("unknown stage {other}"))),
     };
     let exe = sh_quote_value(githop_exe)?;
+    if stage == "push" {
+        // pre-push gets the ref lines on stdin, and the rest of the repo's
+        // hook (e.g. `git lfs pre-push`) needs them too (regression D6): read
+        // them once, feed githop a copy, then give the hook's stdin back.
+        return Ok(format!(
+            "GITHOP_IN=$(cat); printf '%s\\n' \"$GITHOP_IN\" | \"{exe}\" check --stage push -- \"$@\"; \
+             [ $? -ne 1 ] || exit 1; exec <<GITHOP_EOF\n$GITHOP_IN\nGITHOP_EOF"
+        ));
+    }
     Ok(format!(
         "\"{exe}\" check --stage {stage} -- \"$@\"; [ $? -ne 1 ] || exit 1"
     ))
@@ -751,7 +789,7 @@ fn plan_render(
     let opts = RenderOptions {
         githop_exe: exe.to_string(),
         previous: expand_home(previous, home),
-        strict: settings.enforce == EnforceMode::BlockStrict,
+        settings_file: paths::to_slash(&paths.settings_file()),
         dynamic_ours: layout.include_mode().then(|| hooks_dir_value(paths)),
     };
     let names = installed_hook_names(wants_all_stubs(
@@ -809,7 +847,7 @@ fn write_hook_files(
 ///    becomes `settings.previous_hooks_path`. If it *is* GitHop's (re-install),
 ///    the recorded previous path is kept, so hooks never chain to themselves.
 /// 2. Render every script (fails before touching anything if the exe path is
-///    unusable). `enforce = "block-strict"` is baked in.
+///    unusable).
 /// 3. Write each file atomically; remove old GitHop hook files no longer generated.
 /// 4. Point git at the hooks dir:
 ///    * **Usual case** (no included file sets `core.hooksPath`): set it in the
@@ -886,7 +924,9 @@ pub fn install_hooks(
         if let Some(dir) = inc.parent() {
             std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
         }
-        crate::store::atomic_write(&inc, include_file_contents(&ours)?.as_bytes())?;
+        let inc_text = include_file_contents(&ours)?;
+        crate::store::atomic_write(&inc, inc_text.as_bytes())?;
+        settings.hooks_include_hash = sha256_hex(inc_text.as_bytes());
         let ours_wins = layout
             .file_value
             .as_deref()
@@ -900,6 +940,7 @@ pub fn install_hooks(
             remove_our_include(git, paths, &layout.file)?;
         }
         remove_include_file(paths)?;
+        settings.hooks_include_hash.clear();
         gitconfig::set_global(git, HOOKS_PATH_KEY, &ours)?;
     }
 
@@ -926,8 +967,9 @@ fn remove_include_file(paths: &Paths) -> Result<()> {
     }
 }
 
-/// Re-render the hook files when the hooks are installed (e.g. after
-/// `enforce` changed, which is baked into the scripts). Rewrites only GitHop's
+/// Re-render the hook files when the hooks are installed (e.g. after an
+/// upgrade or a stub setting changed; the enforce mode isn't baked in, so it
+/// doesn't need this any more). Rewrites only GitHop's
 /// hook files and `settings.hook_hashes`; never writes git config, so no
 /// backup is needed. Returns `false` when there was nothing to refresh (not
 /// installed, or no recorded `githop.exe`). Caller saves `settings`.
@@ -1043,6 +1085,7 @@ pub fn uninstall_hooks(
 
     settings.hooks_installed = false;
     settings.hook_hashes.clear();
+    settings.hooks_include_hash.clear();
     settings.previous_hooks_path.clear();
     Ok(UninstallReport {
         hooks_path: change,
@@ -1074,8 +1117,12 @@ pub struct HookHealth {
     /// Files whose SHA-256 differs from the one recorded at install (edited by hand).
     pub tampered: Vec<String>,
     /// Files unchanged since install but not what this GitHop would write now
-    /// (older templates, or a changed setting such as `enforce`).
+    /// (older templates, or a changed setting).
     pub stale: Vec<String>,
+    /// Files in GitHop's hooks folder that GitHop didn't write (git runs any
+    /// file there named like a hook, in every repo; security regression #5).
+    #[serde(default)]
+    pub unexpected: Vec<String>,
     /// `githop.exe` path embedded in the hooks.
     pub githop_exe: String,
     /// That exe no longer exists.
@@ -1099,6 +1146,7 @@ impl HookHealth {
             && self.missing.is_empty()
             && self.tampered.is_empty()
             && self.stale.is_empty()
+            && self.unexpected.is_empty()
             && !self.exe_missing
             && !self.previous_missing
             && self.sh_path.is_some()
@@ -1170,6 +1218,33 @@ pub fn verify_hooks(paths: &Paths, git: &Git, settings: &Settings) -> HookHealth
         })
         .unwrap_or_default();
     let dir = paths.hooks_dir();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        let mut extra: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !names.contains(&n.as_str()) && !n.starts_with(".githop-hook-"))
+            .collect();
+        extra.sort();
+        h.unexpected = extra;
+    }
+    // Include mode: GitHop's include file is read last, so anything added to
+    // it beats the user's own global config (security regression #5).
+    let inc = include_file_path(paths);
+    if layout.include_mode() || layout.our_include || !settings.hooks_include_hash.is_empty() {
+        match std::fs::read(&inc) {
+            Ok(bytes) => {
+                let expected = include_file_contents(&hooks_dir_value(paths))
+                    .map(|t| sha256_hex(t.as_bytes()))
+                    .unwrap_or_default();
+                if sha256_hex(&bytes) != expected {
+                    h.tampered.push(INCLUDE_FILE.to_string());
+                }
+            }
+            Err(_) if layout.our_include => h.missing.push(INCLUDE_FILE.to_string()),
+            Err(_) => {}
+        }
+    }
     for name in names {
         let p = dir.join(name);
         let Ok(bytes) = std::fs::read(&p) else {
@@ -1334,9 +1409,11 @@ mod tests {
         assert!(s.contains("\"$GITHOP\" check --stage commit -- \"$@\"\n"));
         assert!(s.contains("if [ $rc -eq 1 ]; then exit 1; fi"));
         assert!(s.contains(
-            "echo \"! GitHop couldn't check this commit (it went through). Run: githop doctor\" >&2"
+            "echo \"$GW GitHop couldn't check this commit (it went through). Run: githop doctor\" >&2"
         ));
-        assert!(s.contains("if [ \"$GITHOP_DISABLE\" != \"1\" ]; then"));
+        assert!(s.contains("if [ \"$GITHOP_DISABLE\" = \"1\" ]; then\n  :\n"));
+        // Design §9.3 wording for a missing githop too (regression D22).
+        assert!(!s.contains("is not installed correctly (it went through)"));
         assert!(!s.contains("$(cat)"), "pre-commit must not read stdin");
     }
 
@@ -1394,42 +1471,46 @@ mod tests {
         assert!(p.contains("\"$GITHOP\" check --stage commit -- \"$@\"\n"));
         // Only for revert/cherry-pick: `git commit` (incl. --no-verify, C15)
         // exports GIT_AUTHOR_EMAIL and is checked in pre-commit.
-        assert!(p.contains("if [ \"$2\" = \"message\" ] && [ -z \"${GIT_AUTHOR_EMAIL+x}\" ]"));
+        assert!(p.contains("message) GITHOP_SEQ=1 ;;"));
+        assert!(p.contains("if [ -n \"$GITHOP_SEQ\" ] && [ -z \"${GIT_AUTHOR_EMAIL+x}\" ]"));
         assert!(p.contains("rebase-merge"));
         assert!(render_hook("pre-merge-commit", "relative/githop.exe", "").is_err());
     }
 
-    /// Review 2026-11-01 #9: block-strict is baked in.
+    /// Regression D5: block-strict is read from settings.toml at run time,
+    /// never baked in; D4: a disabled push still records.
     #[test]
-    fn strict_mode_is_rendered_into_checked_hooks() {
-        let plain = render_hook("pre-commit", EXE, "").unwrap();
-        assert!(plain.contains("STRICT=0\n"));
-        let strict = render_hook_with(
-            "pre-push",
-            &RenderOptions {
-                strict: true,
-                ..RenderOptions::new(EXE, "")
-            },
-        )
-        .unwrap();
-        assert!(strict.contains("STRICT=1\n"));
-        assert!(strict.contains("so the push was blocked (block-strict mode)"));
-        assert!(strict.contains("| \"$GITHOP\" check --stage push -- \"$@\""));
-        assert_ne!(sha256_hex(plain.as_bytes()), {
-            let s = render_hook_with(
-                "pre-commit",
-                &RenderOptions {
-                    strict: true,
-                    ..RenderOptions::new(EXE, "")
-                },
-            )
-            .unwrap();
-            sha256_hex(s.as_bytes())
-        });
-        // Stubs don't check, so they don't change with the mode.
+    fn strict_mode_is_read_at_run_time() {
+        let opts = RenderOptions {
+            settings_file: r"C:\Users\a$b\githop\settings.toml".into(),
+            ..RenderOptions::new(EXE, "")
+        };
+        let push = render_hook_with("pre-push", &opts).unwrap();
+        assert!(push.contains("SETTINGS=\"C:/Users/a\\$b/githop/settings.toml\"\n"));
+        assert!(push.contains("githop_strict()"));
+        assert!(push.contains("enforce*block-strict*) return 0 ;;"));
+        assert!(push.contains("so the push was blocked (block-strict mode)"));
+        assert!(push.contains("| \"$GITHOP\" check --stage push -- \"$@\""));
+        assert!(!push.contains("STRICT="));
+        // Disabled: the push is still handed to githop, quietly.
+        assert!(push.contains("check --stage push -- \"$@\" >/dev/null 2>&1"));
+        let commit = render_hook_with("pre-commit", &opts).unwrap();
+        assert!(commit.contains("if [ $rc -ne 0 ] && [ $rc -ne 3 ]; then"));
         assert!(!render_hook("commit-msg", EXE, "")
             .unwrap()
-            .contains("STRICT"));
+            .contains("githop_strict"));
+        // ASCII symbols for the scripts' own lines (regression D13).
+        assert!(commit.contains("GX=\"[blocked]\"; GW=\"[warn]\""));
+        // Merge source too (security regression #3).
+        let p = render_hook("prepare-commit-msg", EXE, "").unwrap();
+        assert!(p.contains("merge) case \"$GIT_REFLOG_ACTION\" in merge*|pull*) ;;"));
+        assert!(render_hook("pre-merge-commit", EXE, "")
+            .unwrap()
+            .contains("GITHOP_MERGE=1"));
+        // Submodule checkouts run the clone check (regression D10).
+        assert!(render_hook("post-checkout", EXE, "")
+            .unwrap()
+            .contains("*/.git/modules/*"));
     }
 
     /// Review 2026-11-01 #1/#8: chain target picked at run time only when an
@@ -1510,6 +1591,10 @@ mod tests {
             "\"C:/Users/Harshal/AppData/Local/Programs/GitHop/githop.exe\" check --stage commit -- \"$@\"; [ $? -ne 1 ] || exit 1"
         );
         assert!(snippet("nope", EXE).is_err());
+        // Regression D6: the push snippet hands stdin back to the hook.
+        let p = snippet("push", EXE).unwrap();
+        assert!(p.starts_with("GITHOP_IN=$(cat); printf '%s\\n' \"$GITHOP_IN\" | \""));
+        assert!(p.contains("[ $? -ne 1 ] || exit 1; exec <<GITHOP_EOF\n$GITHOP_IN\nGITHOP_EOF"));
     }
 
     #[test]

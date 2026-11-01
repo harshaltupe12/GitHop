@@ -7,8 +7,14 @@
 //!   the console code page; the env var exists for fonts/log viewers that can't.
 //! - Only the symbol is coloured; profile names and emails stay plain text.
 //! - Prompts are only shown when stdin is a terminal.
+//! - Every line is made terminal-safe before printing: control characters
+//!   (escape sequences in a commit subject, a label, a path…) become `?`
+//!   (security regression #2). JSON output is escaped by serde instead.
+//! - Widths are display columns (wide CJK characters count 2, regression D15).
 
 use std::io::{self, BufRead, IsTerminal, Write};
+
+use githop_core::text::{char_width, display_width, terminal_safe};
 
 use crate::cli::GlobalArgs;
 
@@ -122,19 +128,35 @@ pub fn paint_dim(text: &str, color: bool) -> String {
     paint(text, DIM, color)
 }
 
-/// `<symbol> <message>`, symbol coloured when `color`.
+/// `<symbol> <message>`, symbol coloured when `color`. The message is made
+/// terminal-safe; in ASCII mode `—` and `…` become `-` and `...`.
 pub fn status_line(status: Status, msg: &str, color: bool, ascii: bool) -> String {
     let code = match status {
         Status::Ok => CYAN,
         Status::Blocked => RED,
         Status::Warn => YELLOW,
     };
-    format!("{} {msg}", paint(symbol(status, ascii), code, color))
+    format!(
+        "{} {}",
+        paint(symbol(status, ascii), code, color),
+        safe(msg, ascii)
+    )
 }
 
-/// Number of display columns (approximation: one per char).
+/// Text ready to print: control characters neutralised, and in ASCII mode
+/// the punctuation GitHop itself uses swapped for ASCII (regression D13).
+pub fn safe(msg: &str, ascii: bool) -> String {
+    let s = terminal_safe(msg);
+    if ascii {
+        s.replace('—', "-").replace('…', "...").replace('•', "*").replace('→', "->")
+    } else {
+        s.into_owned()
+    }
+}
+
+/// Number of display columns (wide characters count 2).
 fn width(s: &str) -> usize {
-    s.chars().count()
+    display_width(s)
 }
 
 /// Cut `s` to `max` columns, ending with `…` (or `...` in ASCII mode) when cut.
@@ -144,7 +166,16 @@ pub fn truncate(s: &str, max: usize, ascii: bool) -> String {
     }
     let ellipsis = if ascii { "..." } else { "…" };
     let keep = max.saturating_sub(width(ellipsis));
-    let mut out: String = s.chars().take(keep).collect();
+    let mut out = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let w = char_width(c);
+        if used + w > keep {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
     out.push_str(ellipsis);
     out
 }
@@ -158,8 +189,12 @@ pub fn render_table(
     ascii: bool,
 ) -> String {
     let cols = headers.len();
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|r| r.iter().map(|c| one_line(c)).collect())
+        .collect();
     let mut widths: Vec<usize> = headers.iter().map(|h| width(h)).collect();
-    for row in rows {
+    for row in &rows {
         for (i, cell) in row.iter().enumerate().take(cols) {
             widths[i] = widths[i].max(width(cell));
         }
@@ -191,9 +226,14 @@ pub fn render_table(
     };
     push_row(headers.iter().map(|h| h.to_string()).collect());
     for row in rows {
-        push_row(row.clone());
+        push_row(row);
     }
     out
+}
+
+/// A table cell on one line, terminal-safe.
+fn one_line(s: &str) -> String {
+    githop_core::text::one_line(s)
 }
 
 /// Output handle shared by every command.
@@ -274,21 +314,29 @@ impl Ui {
     /// Dim hint line on stdout (suppressed by `-q` and `--json`).
     pub fn hint(&self, msg: &str) {
         if self.human() && !self.quiet {
-            println!("{}", paint(msg, DIM, self.color_out));
+            println!("{}", paint(&safe(msg, self.ascii), DIM, self.color_out));
+        }
+    }
+
+    /// Dim hint line on stdout that `-q` keeps (the one next step of a
+    /// warning or problem, Design §9.1; suppressed only by `--json`).
+    pub fn fix_hint(&self, msg: &str) {
+        if self.human() {
+            println!("{}", paint(&safe(msg, self.ascii), DIM, self.color_out));
         }
     }
 
     /// Plain line on stdout (suppressed by `-q` and `--json`).
     pub fn line(&self, msg: &str) {
         if self.human() && !self.quiet {
-            println!("{msg}");
+            println!("{}", safe(msg, self.ascii));
         }
     }
 
     /// Extra detail, only with `-v`.
     pub fn detail(&self, msg: &str) {
         if self.human() && self.verbose {
-            println!("{}", paint(msg, DIM, self.color_out));
+            println!("{}", paint(&safe(msg, self.ascii), DIM, self.color_out));
         }
     }
 
@@ -309,12 +357,12 @@ impl Ui {
 
     /// Plain line on stderr — always printed.
     pub fn error_line(&self, msg: &str) {
-        eprintln!("{msg}");
+        eprintln!("{}", safe(msg, self.ascii));
     }
 
     /// Dim hint on stderr — always printed.
     pub fn error_hint(&self, msg: &str) {
-        eprintln!("{}", paint(msg, DIM, self.color_err));
+        eprintln!("{}", paint(&safe(msg, self.ascii), DIM, self.color_err));
     }
 
     /// Print a JSON value on stdout (pretty, one document).
@@ -474,6 +522,36 @@ mod tests {
         let t = render_table(&["One", "Two"], &rows, 80, false);
         assert!(t.lines().all(|l| !l.ends_with(' ')));
         assert_eq!(t.lines().count(), 3);
+    }
+
+    /// Regression D15: wide characters count two columns.
+    #[test]
+    fn table_aligns_wide_characters() {
+        let rows = vec![
+            vec!["work".to_string(), "Ünïcødé Wörk 日本".to_string(), "x".into()],
+            vec!["home".to_string(), "Home".to_string(), "y".into()],
+        ];
+        let t = render_table(&["Id", "Label", "End"], &rows, 80, false);
+        let cols: Vec<usize> = t
+            .lines()
+            .map(|l| {
+                let i = l.rfind(' ').unwrap();
+                display_width(&l[..=i])
+            })
+            .collect();
+        assert!(cols.iter().all(|c| *c == cols[0]), "{t}\n{cols:?}");
+        assert_eq!(truncate("日本語テキスト", 7, false), "日本語…");
+    }
+
+    /// Security regression #2: escape sequences never reach the terminal.
+    #[test]
+    fn control_characters_are_neutralised() {
+        let evil = "fix\x1b]0;OWNED\x07\x1b[2J\x1b[31mFAKE";
+        let line = status_line(Status::Blocked, evil, false, false);
+        assert!(!line.contains('\x1b') && !line.contains('\x07'), "{line:?}");
+        let t = render_table(&["Subject"], &[vec![evil.to_string()]], 80, false);
+        assert!(!t.contains('\x1b'), "{t:?}");
+        assert_eq!(safe("a — b…", true), "a - b...");
     }
 
     #[test]

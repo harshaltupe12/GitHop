@@ -39,6 +39,20 @@ pub enum ResolutionWarning {
     NonGithubHost { host: String },
     /// Repo sets `core.hooksPath` locally (husky etc.) — GitHop hooks won't run (C3).
     LocalHooksPath { path: String },
+    /// The pin decided, but the repo's owner or folder rule now names another
+    /// profile (regression D7): e.g. pinned to Personal before `acme-corp` was
+    /// added to Office's owners. The pin still wins; this says so.
+    PinOwnerDisagree {
+        /// Profile the repo is pinned to.
+        pinned_profile: String,
+        /// Profile the owner (or folder) rule picks.
+        rule_profile: String,
+        /// `owner` or `folder`.
+        rule: ResolutionSource,
+        /// The remote's owner, for an owner rule.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<String>,
+    },
 }
 
 /// Result of [`resolve`].
@@ -121,6 +135,23 @@ pub fn resolve(
         if set.get(pin).is_some() {
             res.profile_id = Some(pin.to_string());
             res.source = Some(ResolutionSource::Pin);
+            // D7: say when the owner/folder rule would now pick another profile.
+            let owner = remote
+                .as_ref()
+                .filter(|i| i.is_github(github_aliases))
+                .and_then(|i| owner_match(set, &i.owner).map(|p| (p, i.owner.clone())));
+            let rule = match owner {
+                Some((p, o)) => Some((p, ResolutionSource::Owner, Some(o))),
+                None => folder_match(repo_root, set).map(|p| (p, ResolutionSource::Folder, None)),
+            };
+            if let Some((rule_profile, rule, owner)) = rule.filter(|(p, _, _)| *p != pin) {
+                warnings.push(ResolutionWarning::PinOwnerDisagree {
+                    pinned_profile: pin.to_string(),
+                    rule_profile: rule_profile.to_string(),
+                    rule,
+                    owner,
+                });
+            }
             res.warnings = warnings;
             return res;
         }
@@ -143,15 +174,7 @@ pub fn resolve(
             });
             None
         }
-        (_, _, Some(info)) => set
-            .profiles
-            .iter()
-            .find(|p| {
-                p.owners
-                    .iter()
-                    .any(|o| o.trim().eq_ignore_ascii_case(&info.owner))
-            })
-            .map(|p| p.id.as_str()),
+        (_, _, Some(info)) => owner_match(set, &info.owner),
         _ => None,
     };
 
@@ -181,6 +204,14 @@ pub fn resolve(
     }
     res.warnings = warnings;
     res
+}
+
+/// Profile whose owner rules list `owner` (case-insensitive).
+fn owner_match<'a>(set: &'a ProfileSet, owner: &str) -> Option<&'a str> {
+    set.profiles
+        .iter()
+        .find(|p| p.owners.iter().any(|o| o.trim().eq_ignore_ascii_case(owner)))
+        .map(|p| p.id.as_str())
 }
 
 /// Non-empty value of `key` set in the repo itself (worktree beats local).
@@ -430,6 +461,46 @@ mod tests {
             Some("gitlab.com")
         );
         assert!(r.warnings.is_empty());
+    }
+
+    /// Regression D7: a pin that the owner/folder rule disagrees with is reported.
+    #[test]
+    fn pin_owner_disagreement_is_reported() {
+        let s = snap(vec![
+            origin("https://github.com/acme/svc.git"),
+            local("githop.profile", "personal"),
+        ]);
+        let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
+        assert_eq!(r.source, Some(ResolutionSource::Pin));
+        assert_eq!(id(&r), Some("personal"));
+        assert_eq!(
+            r.warnings,
+            vec![ResolutionWarning::PinOwnerDisagree {
+                pinned_profile: "personal".into(),
+                rule_profile: "office".into(),
+                rule: ResolutionSource::Owner,
+                owner: Some("acme".into()),
+            }]
+        );
+        // Folder rule disagreeing.
+        let s = snap(vec![local("githop.profile", "personal")]);
+        let r = resolve(&s, Path::new("C:/Office/x"), &two(), &[]);
+        assert!(matches!(
+            r.warnings.as_slice(),
+            [ResolutionWarning::PinOwnerDisagree {
+                rule: ResolutionSource::Folder,
+                owner: None,
+                ..
+            }]
+        ));
+        // Agreement: no warning.
+        let s = snap(vec![
+            origin("https://github.com/acme/svc.git"),
+            local("githop.profile", "office"),
+        ]);
+        assert!(resolve(&s, Path::new("D:/x"), &two(), &[])
+            .warnings
+            .is_empty());
     }
 
     #[test]

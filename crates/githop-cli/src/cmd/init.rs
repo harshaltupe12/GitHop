@@ -34,11 +34,11 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
                 profile_display(p)
             )),
             None => ui.ok(&format!(
-                "GitHop is already set up with {} profile(s).",
-                set.profiles.len()
+                "GitHop is already set up with {}.",
+                githop_core::text::plural(set.profiles.len(), "profile", "profiles")
             )),
         }
-        install_hooks_step(ctx, &mut store, &args)?;
+        install_hooks_step(ctx, &store, &args)?;
         ui.hint("Add another profile: githop add");
         return Ok(Exit::Ok);
     }
@@ -51,14 +51,6 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
     match (&current_name, &current_email) {
         (Some(n), Some(e)) => ui.line(&format!("Your current git identity: {n} <{e}>")),
         _ => ui.line("No global git identity is set yet."),
-    }
-
-    // Back up before anything else touches git config (CLAUDE.md rule 4).
-    paths.ensure_dirs()?;
-    let first_backup = backup::original_gitconfig(&paths).is_none();
-    backup::backup_global_gitconfig(&paths, git)?;
-    if first_backup {
-        ui.ok("Backup saved. You can restore your original settings any time.");
     }
 
     let mut id = args.id.clone();
@@ -127,6 +119,14 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
         folders: Vec::new(),
     };
 
+    // Regression D17: check everything before writing anything (no backup
+    // or data folder for input that's refused anyway).
+    let mut check = store.profiles().clone();
+    check.profiles.push(profile.clone());
+    check.default = Some(id.clone());
+    check.normalize();
+    check.validate().map_err(githop_core::CoreError::Validation)?;
+
     if ui.interactive
         && !args.yes
         && !ui.confirm(
@@ -137,8 +137,16 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
             true,
         )?
     {
-        ui.line("Nothing else was changed. Your backup is kept.");
+        ui.line("Nothing was changed.");
         return Ok(Exit::Ok);
+    }
+
+    // Back up before anything else touches git config (CLAUDE.md rule 4).
+    paths.ensure_dirs()?;
+    let first_backup = backup::original_gitconfig(&paths).is_none();
+    backup::backup_global_gitconfig(&paths, git)?;
+    if first_backup {
+        ui.ok("Backup saved. You can restore your original settings any time.");
     }
 
     // The profile mirrors the current global identity, so it becomes the default
@@ -177,15 +185,18 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
     if identity_differs {
         ui.hint(&format!("Set it as your global identity: githop use {id}"));
     }
-    install_hooks_step(ctx, &mut store, &args)?;
+    install_hooks_step(ctx, &store, &args)?;
     ui.hint("Next: add your other profile with githop add, then githop scan <folder>.");
     Ok(Exit::Ok)
 }
 
 /// Last step: install (or refresh) the hooks. Explain and ask the first time
 /// when there's a terminal; `--yes` skips the question, `--no-hooks` the step.
-fn install_hooks_step(ctx: &Ctx, store: &mut Store, args: &InitArgs) -> Result<()> {
+fn install_hooks_step(ctx: &Ctx, store: &Store, args: &InitArgs) -> Result<()> {
     if args.no_hooks {
+        if let Ok(git) = ctx.git() {
+            githop_core::aliases::refresh_best_effort(store.paths(), git);
+        }
         if !store.settings().hooks_installed {
             ctx.ui.hint(
                 "Hooks weren't installed, so commits and pushes aren't checked. \
@@ -199,8 +210,8 @@ fn install_hooks_step(ctx: &Ctx, store: &mut Store, args: &InitArgs) -> Result<(
     } else {
         Ask::Confirm
     };
-    if let Some(report) = install(ctx, store, ask)? {
-        print_install(ctx, &report);
+    if let Some(done) = install(ctx, store.paths(), ask)? {
+        print_install(ctx, &done);
     }
     Ok(())
 }

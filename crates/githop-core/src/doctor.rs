@@ -300,7 +300,10 @@ fn check_profiles(r: &mut DoctorReport, set: &ProfileSet) {
         r.ok(
             "profiles",
             "Profiles",
-            format!("{} profile(s), all valid", set.profiles.len()),
+            format!(
+                "{}, all valid",
+                crate::text::plural(set.profiles.len(), "profile", "profiles")
+            ),
         );
     }
     for i in &issues {
@@ -523,7 +526,7 @@ fn check_hooks(
                 "hooks-files",
                 CheckStatus::Problem,
                 T,
-                format!("Hook file(s) are missing: {}", list(&h.missing)),
+                format!("{} missing: {}", files_are(h.missing.len()), list(&h.missing)),
                 Some(REINSTALL),
             );
         }
@@ -533,7 +536,11 @@ fn check_hooks(
                 "hooks-files",
                 CheckStatus::Problem,
                 T,
-                format!("Hook file(s) were changed by hand: {}", list(&h.tampered)),
+                format!(
+                    "{} changed by hand: {}",
+                    if h.tampered.len() == 1 { "A hook file was" } else { "Hook files were" },
+                    list(&h.tampered)
+                ),
                 Some("Run: githop hooks install (it writes them again)"),
             );
         }
@@ -544,10 +551,31 @@ fn check_hooks(
                 CheckStatus::Warning,
                 T,
                 format!(
-                    "Hook file(s) are out of date (older GitHop, or a changed setting): {}",
+                    "{} out of date (written by an older GitHop): {}",
+                    files_are(h.stale.len()),
                     list(&h.stale)
                 ),
                 Some(REINSTALL),
+            );
+        }
+        if !h.unexpected.is_empty() {
+            files_ok = false;
+            r.add(
+                "hooks-unexpected",
+                CheckStatus::Warning,
+                T,
+                format!(
+                    "GitHop didn't write {} in its hooks folder, and git may run {}: {}",
+                    if h.unexpected.len() == 1 { "this file" } else { "these files" },
+                    if h.unexpected.len() == 1 { "it" } else { "them" },
+                    list(&h.unexpected)
+                ),
+                Some(&format!(
+                    "Delete {} from {} unless you put {} there on purpose.",
+                    if h.unexpected.len() == 1 { "it" } else { "them" },
+                    h.hooks_dir,
+                    if h.unexpected.len() == 1 { "it" } else { "them" }
+                )),
             );
         }
         if files_ok {
@@ -611,6 +639,15 @@ fn check_hooks(
             "Git for Windows' sh wasn't found next to git, so hooks can't run.",
             Some("Reinstall Git for Windows."),
         ),
+    }
+}
+
+/// "A hook file is" / "2 hook files are".
+fn files_are(n: usize) -> String {
+    if n == 1 {
+        "A hook file is".to_string()
+    } else {
+        format!("{n} hook files are")
     }
 }
 
@@ -748,7 +785,7 @@ fn check_ssh_config(r: &mut DoctorReport, git: &Git) {
 fn check_aliases(r: &mut DoctorReport, git: &Git, store: Option<&mut Store>) {
     let found = find_github_host_aliases(git);
     if let Some(store) = store {
-        if let Err(e) = save_aliases(store, &found) {
+        if let Err(e) = save_aliases(store, git, &found) {
             r.add(
                 "ssh-aliases",
                 CheckStatus::Warning,
@@ -1027,14 +1064,16 @@ fn ssh_g_hostname(config: &Path, alias: &str) -> Option<String> {
         })
 }
 
-fn save_aliases(store: &mut Store, found: &[String]) -> Result<bool> {
+fn save_aliases(store: &mut Store, git: &Git, found: &[String]) -> Result<bool> {
     let mut current = store.settings().github_host_aliases.clone();
     current.sort();
-    if current == found {
+    let stamp = crate::aliases::stamp(crate::aliases::ssh_config_path(git).as_deref());
+    if current == found && store.settings().ssh_config_stamp == stamp {
         return Ok(false);
     }
     store.update_settings(|s| {
         s.github_host_aliases = found.to_vec();
+        s.ssh_config_stamp = stamp;
         Ok(())
     })?;
     Ok(true)
@@ -1044,7 +1083,7 @@ fn save_aliases(store: &mut Store, found: &[String]) -> Result<bool> {
 /// (saved only when they changed). Returns the aliases. For `scan` and doctor.
 pub fn refresh_github_host_aliases(store: &mut Store, git: &Git) -> Result<Vec<String>> {
     let found = find_github_host_aliases(git);
-    save_aliases(store, &found)?;
+    save_aliases(store, git, &found)?;
     Ok(found)
 }
 

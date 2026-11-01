@@ -5,9 +5,13 @@
 GITHOP="@@GITHOP@@"
 HOOK=pre-merge-commit
 PREV="@@PREVIOUS@@"
-STRICT=@@STRICT@@
+SETTINGS="@@SETTINGS@@"
 
 @@LOCATE@@
+# Tells githop the block happens during a merge (its hint then says how to
+# stop the merge).
+GITHOP_MERGE=1
+export GITHOP_MERGE
 @@CHECK@@
 
 @@CHAIN@@

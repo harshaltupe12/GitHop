@@ -28,6 +28,13 @@ pub struct Git {
     spawns: Arc<AtomicUsize>,
 }
 
+/// A graft file path that doesn't exist (a folder GitHop never creates).
+fn no_graft_file() -> PathBuf {
+    std::env::temp_dir()
+        .join("githop-no-grafts.d")
+        .join("none")
+}
+
 impl Git {
     /// Locate `git` on PATH (once). Errors with [`CoreError::GitNotFound`].
     pub fn locate() -> Result<Self> {
@@ -53,6 +60,19 @@ impl Git {
     /// [`Git::command`] and spawned by the caller are not counted.
     pub fn spawn_count(&self) -> usize {
         self.spawns.load(Ordering::Relaxed)
+    }
+
+    /// This handle with replace refs and `info/grafts` turned off, so history
+    /// reads see the commits `git push` actually sends (security regression
+    /// #1, #7). `pack-objects` ignores `refs/replace/`, and a graft can hide a
+    /// parent; a check that honoured them could pass a commit the remote then
+    /// receives with the wrong email. No extra spawn: env only. A missing
+    /// graft file is read as "no grafts" without a warning or advice line.
+    #[must_use]
+    pub fn real_history(&self) -> Self {
+        self.clone()
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env("GIT_GRAFT_FILE", no_graft_file())
     }
 
     /// Set an env var for every spawned git process.

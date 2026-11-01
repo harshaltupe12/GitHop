@@ -127,6 +127,8 @@ pub enum FixBlocker {
     PushedUnknown,
     /// Shallow clone without a remote-tracking upstream for the branch.
     Shallow,
+    /// The owning profile has validation errors (hand-edited `profiles.toml`).
+    InvalidProfile,
 }
 
 /// What `fix` would do. Serde shape per `app/IPC.md` (`FixPlan`), plus the
@@ -407,6 +409,7 @@ pub fn undo(git: &Git, cwd: &Path, backup_ref: &str) -> Result<()> {
     if is_dirty(&git, root)? {
         return Err(CoreError::FixRefused(DIRTY.to_string()));
     }
+    check_undo_pair(&git, &state, backup_sha, result_sha, &manual)?;
     git.clone()
         .env("GIT_REFLOG_ACTION", "githop fix --undo")
         .run(root, &["reset", "-q", "--keep", backup_sha])?;
@@ -419,6 +422,90 @@ pub fn undo(git: &Git, cwd: &Path, backup_ref: &str) -> Result<()> {
     let script = format!("delete {backup_ref} {backup_sha}\ndelete {result_ref} {result_sha}\n");
     // The branch is restored; leftover refs are harmless.
     let _ = run_piped(&git, root, &["update-ref", "--stdin"], script.into_bytes());
+    Ok(())
+}
+
+/// Before an undo: the backup/result pair must look like a fix GitHop made,
+/// and none of the fixed commits may be published (3 spawns).
+///
+/// - Fix keeps the tree and the number of commits: `tree(backup) ==
+///   tree(result)` and as many commits on each side of `backup...result`
+///   (security regression #6: hand-made `refs/githop/*` refs are refused).
+/// - Every commit in `backup..result` must still be unpushed by Fix's own
+///   rules: not reachable from a remote-tracking ref, a tag or a recorded
+///   push (regression D3). Otherwise undo would put the wrong-identity
+///   commits back on a branch whose fixed copies are on the remote.
+fn check_undo_pair(
+    git: &Git,
+    state: &State,
+    backup_sha: &str,
+    result_sha: &str,
+    manual: &str,
+) -> Result<()> {
+    let root = state.root.as_path();
+    let mismatch = || {
+        CoreError::FixRefused(format!(
+            "This backup doesn't match the fix GitHop recorded (different files or commits), \
+             so GitHop won't undo with it. {manual}"
+        ))
+    };
+    let trees = git.run_text(
+        root,
+        &[
+            "rev-parse",
+            &format!("{backup_sha}^{{tree}}"),
+            &format!("{result_sha}^{{tree}}"),
+        ],
+    )?;
+    let trees: Vec<&str> = trees.lines().map(str::trim).collect();
+    if trees.len() != 2 || trees[0] != trees[1] {
+        return Err(mismatch());
+    }
+    let counts = git.run_text(
+        root,
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("{backup_sha}...{result_sha}"),
+        ],
+    )?;
+    let mut nums = counts
+        .split_whitespace()
+        .map(|n| n.parse::<usize>().unwrap_or(usize::MAX));
+    let (Some(old), Some(new)) = (nums.next(), nums.next()) else {
+        return Err(mismatch());
+    };
+    if old != new || new == 0 || new == usize::MAX {
+        return Err(mismatch());
+    }
+    let recorded = read_pushed(&state.common_dir)
+        .map_err(|e| CoreError::io(crate::check::push::pushed_record_path(&state.common_dir), e))?;
+    let negatives = existing_objects(git, root, &recorded)?;
+    let input: String = negatives.iter().map(|n| format!("^{n}\n")).collect();
+    let out = run_piped(
+        git,
+        root,
+        &[
+            "rev-list",
+            "--count",
+            "--stdin",
+            result_sha,
+            &format!("^{backup_sha}"),
+            "--not",
+            "--remotes",
+            "--tags",
+        ],
+        input.into_bytes(),
+    )?;
+    let unpushed: usize = String::from_utf8_lossy(&out).trim().parse().unwrap_or(0);
+    if unpushed < new {
+        return Err(CoreError::FixRefused(
+            "These fixed commits are already pushed, so undo would split your branch from \
+             the remote. GitHop never changes pushed commits, so nothing was changed."
+                .to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -564,6 +651,20 @@ fn analyze(git: &Git, cwd: &Path, paths: &Paths) -> Result<Analysis> {
             "GitHop doesn't know which profile owns this repo. Pin this repo first: \
              githop pin <profile>"
                 .to_string(),
+        ));
+    } else if let Some(msg) = profile
+        .as_ref()
+        .and_then(|p| crate::profile::profile_errors(store.profiles(), &p.id))
+    {
+        // Never stamp commits with a hand-edited profile that doesn't
+        // validate (security regression #4).
+        blocker = Some((
+            FixBlocker::InvalidProfile,
+            format!(
+                "Profile {} isn't valid, so GitHop won't re-stamp commits with it: {msg} \
+                 Run: githop doctor",
+                profile.as_ref().map(|p| p.id.as_str()).unwrap_or_default()
+            ),
         ));
     }
 
@@ -1121,9 +1222,10 @@ fn prune(git: &Git, root: &Path) -> Result<()> {
 
 // ----------------------------------------------------------------- git state
 
-/// Git handle for fix: replace refs off so we read (and rewrite) real objects.
+/// Git handle for fix: replace refs and grafts off so we read (and rewrite)
+/// real objects and real parents (security regression #7).
 fn fix_git(git: &Git) -> Git {
-    git.clone().env("GIT_NO_REPLACE_OBJECTS", "1")
+    git.real_history()
 }
 
 fn inspect(git: &Git, cwd: &Path) -> Result<State> {
