@@ -127,7 +127,10 @@ mod tests {
     fn grouping() {
         assert_eq!(group_of(&check(CheckStatus::Ok, None)), Group::Passing);
         assert_eq!(group_of(&check(CheckStatus::Ok, Some("f"))), Group::Notes);
-        assert_eq!(group_of(&check(CheckStatus::Warning, None)), Group::Warnings);
+        assert_eq!(
+            group_of(&check(CheckStatus::Warning, None)),
+            Group::Warnings
+        );
         assert_eq!(
             group_of(&check(CheckStatus::Problem, Some("f"))),
             Group::Problems

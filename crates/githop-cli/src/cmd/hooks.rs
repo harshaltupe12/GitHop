@@ -156,7 +156,11 @@ fn run_status(ctx: &Ctx) -> Result<Exit> {
         .iter()
         .filter(|c| c.status == CheckStatus::Problem)
         .count();
-    let code = if problems > 0 { Exit::Blocked } else { Exit::Ok };
+    let code = if problems > 0 {
+        Exit::Blocked
+    } else {
+        Exit::Ok
+    };
     if ui.json {
         ui.json_out(&serde_json::json!({
             "health": health,

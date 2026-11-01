@@ -272,7 +272,11 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
             }
         }
     } else {
-        report.push(STEP_BACKUP, true, "Nothing to back up: no git settings need changing.");
+        report.push(
+            STEP_BACKUP,
+            true,
+            "Nothing to back up: no git settings need changing.",
+        );
         true
     };
 
@@ -281,13 +285,21 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
     if !hooks_needed {
         report.push(STEP_HOOKS, true, "GitHop's hooks weren't installed.");
     } else if !backup_ok {
-        report.push(STEP_HOOKS, false, "Skipped removing hooks, because the backup failed.");
+        report.push(
+            STEP_HOOKS,
+            false,
+            "Skipped removing hooks, because the backup failed.",
+        );
     } else {
         if settings.previous_hooks_path.is_empty() && (!settings_ok || !settings.hooks_installed) {
             // Settings can't tell us; the original config can.
             if let Some(prev) = original
                 .as_deref()
-                .and_then(|o| read_backup_value(git, o, hooks::HOOKS_PATH_KEY).ok().flatten())
+                .and_then(|o| {
+                    read_backup_value(git, o, hooks::HOOKS_PATH_KEY)
+                        .ok()
+                        .flatten()
+                })
                 .filter(|p| !p.trim().is_empty() && !hooks::same_dir(p, &ours))
             {
                 settings.previous_hooks_path = prev;
@@ -311,14 +323,22 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
             }
             Err(e) => {
                 critical_failed = true;
-                report.push(STEP_HOOKS, false, format!("Couldn't remove GitHop's hooks: {e}"));
+                report.push(
+                    STEP_HOOKS,
+                    false,
+                    format!("Couldn't remove GitHop's hooks: {e}"),
+                );
             }
         }
     }
 
     // --- 3. identity ------------------------------------------------------------
     if managed.is_empty() {
-        report.push(STEP_IDENTITY, true, "GitHop didn't change your global identity.");
+        report.push(
+            STEP_IDENTITY,
+            true,
+            "GitHop didn't change your global identity.",
+        );
     } else if original.is_none() {
         report.push(
             STEP_IDENTITY,
@@ -513,7 +533,10 @@ fn remove_dir_retry(dir: &Path) -> std::io::Result<bool> {
 /// Delete `githop_*` files (private keys and `.pub`) directly inside `~/.ssh`.
 fn delete_githop_keys(git: &Git, profile_keys: &[PathBuf]) -> (bool, String) {
     let Some(dir) = ssh::ssh_dir(git) else {
-        return (true, "No ~/.ssh folder, so there were no keys to delete.".into());
+        return (
+            true,
+            "No ~/.ssh folder, so there were no keys to delete.".into(),
+        );
     };
     let mut deleted = 0usize;
     let mut failures = Vec::new();
@@ -551,7 +574,10 @@ fn delete_githop_keys(git: &Git, profile_keys: &[PathBuf]) -> (bool, String) {
     if failures.is_empty() {
         (true, detail)
     } else {
-        (false, format!("{detail} Couldn't delete: {}", failures.join("; ")))
+        (
+            false,
+            format!("{detail} Couldn't delete: {}", failures.join("; ")),
+        )
     }
 }
 
@@ -660,7 +686,9 @@ mod tests {
         assert_eq!(autostart_key(&real), AUTOSTART_RUN_KEY);
         let prefix_only = g.clone().env(AUTOSTART_KEY_ENV, TEST_KEY_PREFIX);
         assert_eq!(autostart_key(&prefix_only), AUTOSTART_RUN_KEY);
-        let test = g.clone().env(AUTOSTART_KEY_ENV, r"HKCU\Software\GitHopTest-123");
+        let test = g
+            .clone()
+            .env(AUTOSTART_KEY_ENV, r"HKCU\Software\GitHopTest-123");
         assert_eq!(autostart_key(&test), r"HKCU\Software\GitHopTest-123");
         let dots = g.env(AUTOSTART_KEY_ENV, r"HKCU\Software\GitHopTest\..\..\Run");
         assert_eq!(autostart_key(&dots), AUTOSTART_RUN_KEY);

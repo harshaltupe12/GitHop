@@ -147,12 +147,7 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
             .as_ref()
             .is_some_and(|s| !s.profiles().profiles.is_empty());
         let health = hooks::verify_hooks(paths, git, &settings);
-        check_hooks(
-            &mut r,
-            &health,
-            has_profiles,
-            opts.current_exe.as_deref(),
-        );
+        check_hooks(&mut r, &health, has_profiles, opts.current_exe.as_deref());
         let snapshot = ConfigSnapshot::read(git, &cwd);
         if opts.cwd.is_some() {
             check_local_hooks_path(&mut r, snapshot.as_ref().ok(), &settings, opts);
@@ -352,7 +347,8 @@ fn check_profiles(r: &mut DoctorReport, set: &ProfileSet) {
 }
 
 fn check_backups(r: &mut DoctorReport, store: &Store) {
-    let changed = !store.settings().managed_global_keys.is_empty() || store.settings().hooks_installed;
+    let changed =
+        !store.settings().managed_global_keys.is_empty() || store.settings().hooks_installed;
     match backup::original_gitconfig(store.paths()) {
         Some(p) => r.ok(
             "original",
@@ -464,10 +460,7 @@ fn check_hooks(
                 "hooks-files",
                 CheckStatus::Problem,
                 T,
-                format!(
-                    "Hook file(s) were changed by hand: {}",
-                    list(&h.tampered)
-                ),
+                format!("Hook file(s) were changed by hand: {}", list(&h.tampered)),
                 Some("Run: githop hooks install (it writes them again)"),
             );
         }
@@ -477,10 +470,7 @@ fn check_hooks(
                 "hooks-stale",
                 CheckStatus::Warning,
                 T,
-                format!(
-                    "Hook file(s) are from an older GitHop: {}",
-                    list(&h.stale)
-                ),
+                format!("Hook file(s) are from an older GitHop: {}", list(&h.stale)),
                 Some(REINSTALL),
             );
         }
@@ -496,7 +486,11 @@ fn check_hooks(
         }
         let embedded = h.githop_exe.as_str();
         if h.exe_missing {
-            let shown = if embedded.is_empty() { "(none)" } else { embedded };
+            let shown = if embedded.is_empty() {
+                "(none)"
+            } else {
+                embedded
+            };
             r.add(
                 "hooks-exe",
                 CheckStatus::Problem,
@@ -649,7 +643,10 @@ fn check_aliases(r: &mut DoctorReport, git: &Git, store: Option<&mut Store>) {
                 "ssh-aliases",
                 CheckStatus::Warning,
                 "SSH",
-                format!("Couldn't save SSH host aliases: {}", sentence(&e.to_string())),
+                format!(
+                    "Couldn't save SSH host aliases: {}",
+                    sentence(&e.to_string())
+                ),
                 None,
             );
             return;
@@ -722,7 +719,8 @@ fn check_env(r: &mut DoctorReport, var: impl Fn(&str) -> Option<std::ffi::OsStri
     let mut any = false;
     for (name, why) in OVERRIDE_ENV {
         let set = var(name).is_some_and(|v| {
-            !v.is_empty() && (*name != crate::check::DISABLE_ENV || v.to_string_lossy().trim() == "1")
+            !v.is_empty()
+                && (*name != crate::check::DISABLE_ENV || v.to_string_lossy().trim() == "1")
         });
         if set {
             any = true;
@@ -814,7 +812,10 @@ pub fn alias_candidates(config: &str) -> Vec<(String, bool)> {
             continue;
         }
         let (key, rest) = match line.find(|c: char| c.is_whitespace() || c == '=') {
-            Some(i) => (&line[..i], line[i..].trim_start_matches(|c: char| c.is_whitespace() || c == '=')),
+            Some(i) => (
+                &line[..i],
+                line[i..].trim_start_matches(|c: char| c.is_whitespace() || c == '='),
+            ),
             None => (line, ""),
         };
         let rest = rest.trim();
@@ -822,11 +823,7 @@ pub fn alias_candidates(config: &str) -> Vec<(String, bool)> {
             current = rest
                 .split_whitespace()
                 .map(|p| p.trim_matches('"').to_ascii_lowercase())
-                .filter(|p| {
-                    !p.is_empty()
-                        && !p.contains(['*', '?', '!'])
-                        && p != "github.com"
-                })
+                .filter(|p| !p.is_empty() && !p.contains(['*', '?', '!']) && p != "github.com")
                 .collect();
         } else if key.eq_ignore_ascii_case("match") {
             current.clear();
@@ -855,13 +852,14 @@ pub fn find_github_host_aliases(git: &Git) -> Vec<String> {
     let Some(dir) = ssh::ssh_dir(git) else {
         return Vec::new();
     };
-    let Ok(bytes) = std::fs::read(dir.join("config")) else {
+    let config = dir.join("config");
+    let Ok(bytes) = std::fs::read(&config) else {
         return Vec::new();
     };
     let mut out: Vec<String> = alias_candidates(&String::from_utf8_lossy(&bytes))
         .into_iter()
         .take(MAX_ALIAS_LOOKUPS)
-        .filter_map(|(alias, literal)| match ssh::resolve_alias_hostname(&alias) {
+        .filter_map(|(alias, literal)| match ssh_g_hostname(&config, &alias) {
             Some(host) => (host == "github.com").then_some(alias),
             None => literal.then_some(alias),
         })
@@ -869,6 +867,54 @@ pub fn find_github_host_aliases(git: &Git) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// `ssh -F <config> -G -- <alias>` → the `hostname` value (lower-cased).
+///
+/// Like `ssh::resolve_alias_hostname`, but pinned to the config file GitHop
+/// parsed: Windows OpenSSH finds `~` from the user profile, not `HOME`, so
+/// without `-F` it could read a different file than git's ssh does.
+fn ssh_g_hostname(config: &Path, alias: &str) -> Option<String> {
+    use std::process::{Command, Stdio};
+    let alias = alias.trim();
+    // Never let an alias be read as an option.
+    if alias.is_empty() || alias.starts_with('-') || alias.chars().any(char::is_control) {
+        return None;
+    }
+    let exe = find_on_path("ssh").or_else(|| {
+        let root = std::env::var_os("SystemRoot")?;
+        let p = PathBuf::from(root)
+            .join("System32")
+            .join("OpenSSH")
+            .join("ssh.exe");
+        p.is_file().then_some(p)
+    })?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("-F")
+        .arg(config)
+        .arg("-G")
+        .arg("--")
+        .arg(alias)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| {
+            let (k, v) = line.trim().split_once(char::is_whitespace)?;
+            let v = v.trim();
+            (k.eq_ignore_ascii_case("hostname") && !v.is_empty()).then(|| v.to_ascii_lowercase())
+        })
 }
 
 fn save_aliases(store: &mut Store, found: &[String]) -> Result<bool> {
@@ -941,7 +987,8 @@ mod tests {
 
     #[test]
     fn alias_candidates_cases() {
-        let cfg = "# c\nHost github-work gh-personal\n  HostName github.com\n  IdentityFile ~/.ssh/k\n\
+        let cfg =
+            "# c\nHost github-work gh-personal\n  HostName github.com\n  IdentityFile ~/.ssh/k\n\
                    Host *.corp\n  HostName github.com\n\
                    Host other\n  HostName gitlab.com\n\
                    Host=tok\n  HostName=%h.github.com\n\
