@@ -31,8 +31,7 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
     }
     let git = ctx.git()?;
     let mut store = ctx.store()?;
-    let mut set = store.profiles().clone();
-    let settings = store.settings().clone();
+    let set = store.profiles().clone();
     let ui = &ctx.ui;
 
     let AddArgs {
@@ -143,11 +142,13 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
         owners,
         folders,
     };
-    set.profiles.push(profile);
-    set.normalize();
-    store.save(&set, &settings)?;
+    store.update(|p, _| {
+        p.profiles.push(profile);
+        p.normalize();
+        Ok(())
+    })?;
 
-    let saved = set.get(&id).cloned();
+    let saved = store.profiles().get(&id).cloned();
     report_added(ctx, &set, saved.as_ref());
     Ok(Exit::Ok)
 }

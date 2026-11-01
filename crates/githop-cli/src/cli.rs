@@ -29,7 +29,7 @@ pub struct Cli {
 /// Flags accepted by every command.
 #[derive(Debug, Clone, Default, Args)]
 pub struct GlobalArgs {
-    /// Print JSON only (list, status, scan, doctor, test)
+    /// JSON output (list, status, scan, doctor, fix, …)
     #[arg(long, global = true)]
     pub json: bool,
 
@@ -48,7 +48,7 @@ pub struct GlobalArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Set up GitHop: back up your git config, create your first profile
+    /// Set up GitHop: back up git config, create a profile, install hooks
     Init(InitArgs),
 
     /// Add a profile
@@ -99,6 +99,10 @@ pub enum Command {
     /// Check the identity of a clone, commit or push (used by hooks)
     Check(CheckArgs),
 
+    /// Install, remove or check GitHop's git hooks
+    #[command(subcommand)]
+    Hooks(HooksCommand),
+
     /// Fix unpushed commits that used the wrong identity
     Fix(FixArgs),
 }
@@ -126,6 +130,9 @@ pub struct InitArgs {
     /// Don't ask for confirmation
     #[arg(short, long)]
     pub yes: bool,
+    /// Skip the hooks (commits and pushes aren't checked)
+    #[arg(long)]
+    pub no_hooks: bool,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -257,6 +264,41 @@ pub struct WipeArgs {
     /// Also delete SSH keys GitHop created (~/.ssh/githop_*)
     #[arg(long)]
     pub delete_keys: bool,
+    /// Keep the pins in repos GitHop pinned
+    #[arg(long)]
+    pub keep_pins: bool,
+    /// Keep GitHop's data folder (profiles, backups)
+    #[arg(long)]
+    pub keep_data: bool,
+    /// Run from the uninstaller: never ask, keep SSH keys
+    #[arg(long, conflicts_with = "delete_keys")]
+    pub from_uninstaller: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HooksCommand {
+    /// Install or repair the hooks (sets global core.hooksPath)
+    Install(HooksInstallArgs),
+    /// Remove the hooks and restore your previous core.hooksPath
+    Uninstall,
+    /// Show whether the hooks are installed and healthy
+    Status,
+    /// Print a line to call GitHop from a repo's own hook (husky etc.)
+    Snippet(HooksSnippetArgs),
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct HooksInstallArgs {
+    /// Don't ask for confirmation
+    #[arg(short, long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct HooksSnippetArgs {
+    /// Hook stage the line is for
+    #[arg(value_enum)]
+    pub stage: Stage,
 }
 
 /// Hook stage for `githop check`.

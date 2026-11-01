@@ -150,6 +150,18 @@ fn report_core(ui: &Ui, err: &anyhow::Error, core: &CoreError) -> Exit {
             ui.error_hint("Update GitHop to read this file.");
             Exit::Internal
         }
+        CoreError::Conflict { .. } => {
+            // Another GitHop window/command changed the file first; nothing saved.
+            ui.error(&sentence(&core.to_string()));
+            ui.error_hint("Run the same command again.");
+            Exit::Internal
+        }
+        CoreError::FixRefused(reason) => {
+            // Fix refused on purpose (pushed commits, dirty tree…): nothing changed.
+            ui.error(&sentence(reason));
+            ui.error_hint("Nothing was changed. Run: githop fix --help");
+            Exit::Blocked
+        }
         _ => {
             ui.error(&format!(
                 "GitHop hit a problem: {}",
@@ -191,6 +203,19 @@ mod tests {
             Exit::Internal
         );
         assert_eq!(report(&ui, &anyhow::anyhow!("boom")), Exit::Internal);
+        assert_eq!(
+            report(
+                &ui,
+                &anyhow::Error::new(CoreError::Conflict {
+                    path: "profiles.toml".into()
+                })
+            ),
+            Exit::Internal
+        );
+        assert_eq!(
+            report(&ui, &anyhow::Error::new(CoreError::FixRefused("x".into()))),
+            Exit::Blocked
+        );
         let ctx = anyhow::Error::new(CoreError::NotARepo).context("while pinning");
         assert_eq!(report(&ui, &ctx), Exit::Usage);
     }

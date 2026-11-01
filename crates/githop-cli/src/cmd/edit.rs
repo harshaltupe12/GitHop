@@ -93,7 +93,14 @@ pub fn run(ctx: &Ctx, args: EditArgs) -> Result<Exit> {
         ui.ok(&format!("No changes to {}.", after.label));
         return Ok(Exit::Ok);
     }
-    store.save(&set, &settings)?;
+    let replacement = after.clone();
+    store.update(|p, _| {
+        if let Some(slot) = p.get_mut(&replacement.id) {
+            *slot = replacement;
+        }
+        p.normalize();
+        Ok(())
+    })?;
     ui.ok(&format!("Profile updated: {}", profile_display(&after)));
 
     let identity_changed = after.name != before.name

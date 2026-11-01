@@ -46,8 +46,13 @@ pub fn run(ctx: &Ctx, args: KeygenArgs) -> Result<Exit> {
         if let Some(p) = set.get_mut(&profile.id) {
             p.ssh_key = key.clone();
         }
-        let settings = store.settings().clone();
-        store.save(&set, &settings)?;
+        let (pid, new_key) = (profile.id.clone(), key.clone());
+        store.update(|p, _| {
+            if let Some(x) = p.get_mut(&pid) {
+                x.ssh_key = new_key;
+            }
+            Ok(())
+        })?;
     }
 
     ui.ok(&format!("Key created: {}", key_display(&key)));

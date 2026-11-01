@@ -9,7 +9,7 @@ use support::TestEnv;
 
 const SUBCOMMANDS: &[&str] = &[
     "init", "add", "edit", "remove", "list", "use", "status", "pin", "unpin", "scan", "keygen",
-    "test", "doctor", "wipe", "check", "fix",
+    "test", "doctor", "wipe", "check", "hooks", "fix",
 ];
 
 /// Words Design §9.2 says to avoid (matched as whole words, case-insensitive).
@@ -217,26 +217,49 @@ fn scan_include_default_requires_apply() {
 }
 
 #[test]
-fn check_stub_never_blocks() {
+fn check_outside_a_repo_fails_open() {
+    // Not a repo: GitHop can't judge, so it warns and exits 3 (hooks go on).
+    let env = TestEnv::new();
+    env.githop()
+        .args(["check", "--stage", "commit"])
+        .assert()
+        .code(3)
+        .stdout("")
+        .stderr(contains(
+            "! GitHop couldn't check this commit (it went through).",
+        ))
+        .stderr(contains("Run: githop doctor"));
+}
+
+#[test]
+fn check_is_silent_and_passes_when_disabled() {
     let env = TestEnv::new();
     for stage in ["clone", "commit", "push"] {
         env.githop()
-            .args(["check", "--stage", stage])
+            .args(["check", "--stage", stage, "--", "origin", "x"])
+            .env("GITHOP_DISABLE", "1")
+            .write_stdin("")
             .assert()
             .code(0)
-            .stderr(contains("not implemented yet"));
+            .stdout("")
+            .stderr("");
     }
-    env.githop()
-        .args([
-            "check",
-            "--stage",
-            "push",
-            "--",
-            "origin",
-            "git@github.com:a/b.git",
-        ])
-        .assert()
-        .code(0);
+}
+
+#[test]
+fn check_json_prints_the_result() {
+    let env = TestEnv::new();
+    let out = env
+        .githop()
+        .args(["--json", "check", "--stage", "push"])
+        .env("GITHOP_DISABLE", "1")
+        .write_stdin("")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["stage"], "push");
+    assert_eq!(v["outcome"]["kind"], "disabled");
 }
 
 #[test]

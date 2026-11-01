@@ -85,17 +85,24 @@ pub fn run(ctx: &Ctx, args: RemoveArgs) -> Result<Exit> {
     };
 
     set.profiles.retain(|p| p.id != profile.id);
-    match &new_default {
-        Some(nd) => {
-            switch_default(ctx, &mut store, set.clone(), nd)?;
-        }
-        None => {
-            if is_default {
-                set.default = None;
+    let removed_id = profile.id.clone();
+    let clear_default = is_default && new_default.is_none();
+    let next_default = new_default.clone();
+    store.update(move |p, _| {
+        p.profiles.retain(|x| x.id != removed_id);
+        if clear_default {
+            p.default = None;
+        } else if let Some(nd) = &next_default {
+            // Keep the file valid until switch_default sets it for real.
+            if p.default.as_deref() == Some(removed_id.as_str()) {
+                p.default = Some(nd.clone());
             }
-            let settings = store.settings().clone();
-            store.save(&set, &settings)?;
         }
+        Ok(())
+    })?;
+    if let Some(nd) = &new_default {
+        let fresh = store.profiles().clone();
+        switch_default(ctx, &mut store, fresh, nd)?;
     }
 
     ui.ok(&format!("Profile removed: {}", profile.label));
