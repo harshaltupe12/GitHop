@@ -4,6 +4,7 @@
 //! profiles, storage, repo → profile resolution and safe git config reads/writes.
 //! Synchronous, no UI, no network.
 
+pub mod aliases;
 pub mod backup;
 pub mod check;
 pub mod doctor;
@@ -25,6 +26,7 @@ pub mod scan;
 pub mod settings;
 pub mod ssh;
 pub mod store;
+pub mod text;
 pub mod wipe;
 
 pub use error::{CoreError, Result};

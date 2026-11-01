@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use githop_core::text::plural;
 use githop_core::{pin as core_pin, ProfileColor};
 
 use super::{key_display, profile_display, profile_or_usage, repos_pinned_to, split_list, Ctx};
@@ -102,6 +103,11 @@ pub fn run(ctx: &Ctx, args: EditArgs) -> Result<Exit> {
         Ok(())
     })?;
     ui.ok(&format!("Profile updated: {}", profile_display(&after)));
+    ctx.refresh_aliases(store.paths());
+    if after.owners != before.owners || after.folders != before.folders {
+        // D7: pins that the changed rules now disagree with.
+        report_pin_disagreements(ctx, &store, &settings.pinned_repos);
+    }
 
     let identity_changed = after.name != before.name
         || !after.email.eq_ignore_ascii_case(&before.email)
@@ -121,19 +127,21 @@ pub fn run(ctx: &Ctx, args: EditArgs) -> Result<Exit> {
         return Ok(Exit::Ok);
     }
     let n = repos.len();
+    let repos_text = plural(n, "repo", "repos");
     let repin = args.repin
         || (ui.interactive
             && ui.confirm(
                 &format!(
-                    "Re-pin {n} repo(s) pinned to {} with the new details?",
+                    "Re-pin {repos_text} pinned to {} with the new details?",
                     after.label
                 ),
                 true,
             )?);
     if !repin {
         ui.warn(&format!(
-            "{n} repo(s) pinned to {} still use the old details.",
-            after.label
+            "{repos_text} pinned to {} still {} the old details.",
+            after.label,
+            if n == 1 { "uses" } else { "use" }
         ));
         ui.hint(&format!("Update them: githop edit {} --repin", after.id));
         return Ok(Exit::Ok);
@@ -148,6 +156,39 @@ pub fn run(ctx: &Ctx, args: EditArgs) -> Result<Exit> {
             )),
         }
     }
-    ui.ok(&format!("Re-pinned {done} repo(s) to {}.", after.label));
+    ui.ok(&format!(
+        "Re-pinned {} to {}.",
+        plural(done, "repo", "repos"),
+        after.label
+    ));
     Ok(Exit::Ok)
+}
+
+/// Warn about each pinned repo whose owner or folder rule now names another
+/// profile (regression D7). One config read per pinned repo.
+pub fn report_pin_disagreements(ctx: &Ctx, store: &githop_core::Store, pinned: &[String]) {
+    let Ok(git) = ctx.git() else { return };
+    let aliases = githop_core::aliases::current(store.paths(), git, store.settings());
+    for root in pinned {
+        let path = std::path::Path::new(root);
+        if !path.exists() {
+            continue;
+        }
+        let Ok(repo) = githop_core::Repo::discover(git, path) else {
+            continue;
+        };
+        let Ok(snap) = repo.config_snapshot() else {
+            continue;
+        };
+        let res = githop_core::resolve(&snap, repo.root(), store.profiles(), &aliases);
+        for w in &res.warnings {
+            if matches!(w, githop_core::ResolutionWarning::PinOwnerDisagree { .. }) {
+                ctx.ui.warn(&format!(
+                    "{}: {}",
+                    githop_core::paths::to_slash(repo.root()),
+                    super::describe_warning(w, store.profiles())
+                ));
+            }
+        }
+    }
 }

@@ -381,7 +381,9 @@ fn pushed_offenders_are_listed_but_not_touched() {
     let (code, out, err) = fx.run(&["fix", "--yes"]);
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(
-        out.contains("! 1 commit already pushed uses another profile's email. GitHop never changes pushed commits."),
+        out.contains(
+            "! 1 commit already pushed or tagged uses another profile's email. GitHop never"
+        ),
         "{out}"
     );
     assert!(out.contains(short(&pushed)));

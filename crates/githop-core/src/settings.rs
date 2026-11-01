@@ -41,8 +41,14 @@ pub struct Settings {
     pub hook_hashes: BTreeMap<String, String>,
     /// Repos GitHop pinned (normalised root paths), for re-pin / wipe.
     pub pinned_repos: Vec<String>,
-    /// SSH host aliases known to resolve to `github.com` (cached by doctor/scan).
+    /// SSH host aliases known to resolve to `github.com`. Filled by `init`,
+    /// `add`, `edit`, `use`, `hooks install`, `scan` and `doctor` (with
+    /// `ssh -G`), and re-read statically by hooks and `status` whenever
+    /// `~/.ssh/config` changed since (see [`crate::aliases`]).
     pub github_host_aliases: Vec<String>,
+    /// Size and modification time of `~/.ssh/config` when
+    /// `github_host_aliases` was last filled (`""` = never; `"none"` = no file).
+    pub ssh_config_stamp: String,
     /// Repos already shown the "no owner match" hint (normalised root paths).
     pub hinted_repos: Vec<String>,
     /// Global git keys GitHop has changed (e.g. `user.email`), restored on wipe.
@@ -50,6 +56,9 @@ pub struct Settings {
     /// Also install the rarely used, frequently fired pass-through stubs
     /// (`hooks::OPTIONAL_HOOKS`). Off by default for commit speed.
     pub all_hook_stubs: bool,
+    /// SHA-256 of GitHop's `hooks.gitconfig` include file as last written
+    /// (include mode only; `""` = none), for tamper detection by doctor.
+    pub hooks_include_hash: String,
 }
 
 impl Default for Settings {
@@ -65,9 +74,11 @@ impl Default for Settings {
             hook_hashes: BTreeMap::new(),
             pinned_repos: Vec::new(),
             github_host_aliases: Vec::new(),
+            ssh_config_stamp: String::new(),
             hinted_repos: Vec::new(),
             managed_global_keys: Vec::new(),
             all_hook_stubs: false,
+            hooks_include_hash: String::new(),
         }
     }
 }

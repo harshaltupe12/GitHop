@@ -4,7 +4,9 @@ use anyhow::Result;
 use githop_core::gitconfig::ConfigScope;
 use githop_core::hooks;
 use githop_core::paths::to_slash;
-use githop_core::{pin as core_pin, resolve, EffectiveIdentity, Identity, Profile, Repo};
+use githop_core::{
+    pin as core_pin, resolve, EffectiveIdentity, Identity, Profile, Repo, ResolutionSource,
+};
 use serde_json::json;
 
 use super::{
@@ -32,12 +34,9 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
     let set = store.profiles();
     let snapshot = repo.config_snapshot()?;
     let identity = repo.effective_identity()?;
-    let res = resolve(
-        &snapshot,
-        repo.root(),
-        set,
-        &store.settings().github_host_aliases,
-    );
+    // D1: SSH host aliases from ~/.ssh/config, re-read when it changed.
+    let aliases = githop_core::aliases::current(store.paths(), git, store.settings());
+    let res = resolve(&snapshot, repo.root(), set, &aliases);
     let profile = res.profile_id.as_deref().and_then(|id| set.get(id));
     let ssh_command = snapshot.get("core.sshCommand").map(str::to_string);
     let repo_key = ssh_command
@@ -127,7 +126,18 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
                 "This repo belongs to {}, but commits would use {wrong}.",
                 p.label
             ));
-            ui.hint(&format!("Run: githop pin {}", p.id));
+            // D8: when pinned, name what overrides the pin instead of a no-op pin.
+            match res
+                .pinned
+                .as_ref()
+                .and_then(|_| githop_core::check::commit::identity_override(&snapshot, &p.email))
+            {
+                Some(o) => {
+                    ui.hint(&o.why());
+                    ui.hint(&o.action());
+                }
+                None => ui.hint(&format!("Run: githop pin {}", p.id)),
+            }
         }
         (Some(p), None) => {
             ui.warn("Git has no identity for this repo yet, so commits would fail.");
@@ -149,9 +159,19 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
             p.label
         ));
         ui.hint(&format!("Run: githop pin {}", p.id));
-    } else if let (Some(p), None) = (profile, &res.pinned) {
-        if id_matches == Some(true) {
-            ui.hint(&format!("Not pinned yet. Pin it now: githop pin {}", p.id));
+    }
+    if let (Some(p), None) = (profile, &res.pinned) {
+        let default_only = res.source == Some(ResolutionSource::Default);
+        if id_matches == Some(true) && (key_matches != Some(false) || default_only) {
+            if res.source == Some(ResolutionSource::Default) {
+                // D21: a default-only pin is what ADR 0003 #6 avoids.
+                ui.hint(
+                    "Only the default profile matches. Add an owner or folder rule, \
+                     or pin it if that's right: githop pin <profile>",
+                );
+            } else {
+                ui.hint(&format!("Not pinned yet. Pin it now: githop pin {}", p.id));
+            }
         }
     }
     for w in &res.warnings {

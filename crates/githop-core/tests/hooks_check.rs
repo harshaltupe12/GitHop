@@ -35,6 +35,8 @@ struct HookEnv {
     env: TestEnv,
     hooks_dir: PathBuf,
     log: PathBuf,
+    /// The `settings.toml` the scripts read `enforce` from.
+    settings: PathBuf,
 }
 
 fn slash(p: &Path) -> String {
@@ -70,8 +72,11 @@ impl HookEnv {
         let exe = exe_override.map(Path::to_path_buf).unwrap_or(stub);
         let hooks_dir = env.root().join("githop-hooks");
         std::fs::create_dir_all(&hooks_dir).unwrap();
+        let settings = env.root().join("settings.toml");
+        let mode = if strict { "block-strict" } else { "block" };
+        std::fs::write(&settings, format!("version = 1\nenforce = \"{mode}\"\n")).unwrap();
         let opts = hooks::RenderOptions {
-            strict,
+            settings_file: slash(&settings),
             ..hooks::RenderOptions::new(&slash(&exe), prev)
         };
         for (name, body) in hooks::render_names_with(&hooks::all_hook_names(), &opts).unwrap() {
@@ -84,6 +89,7 @@ impl HookEnv {
             env,
             hooks_dir,
             log,
+            settings,
         }
     }
 
@@ -206,7 +212,9 @@ fn missing_githop_fails_open_with_warning() {
     let repo = h.env.init_repo("r");
     let out = h.commit(&repo, "a.txt", &[]);
     assert!(out.status.success(), "{}", stderr(&out));
-    assert!(stderr(&out).contains("GitHop is not installed correctly (it went through)"));
+    // Design §9.3 fail-open wording (regression D22).
+    assert!(stderr(&out)
+        .contains("! GitHop couldn't check this commit (it went through). Run: githop doctor"));
 }
 
 #[test]
@@ -606,11 +614,15 @@ fn block_strict_blocks_when_githop_is_missing_or_crashes() {
 
     let h = HookEnv::new_with("", None, true);
     let (repo, remote) = repo_with_remote(&h);
-    for rc in ["101", "2", "3"] {
+    for rc in ["101", "2"] {
         let out = h.commit(&repo, &format!("x{rc}.txt"), &[("STUB_RC", rc)]);
         assert!(!out.status.success(), "rc {rc} must block");
         assert!(stderr(&out).contains("couldn't check this commit, so it was blocked"));
     }
+    // Exit 3 is GitHop's own explained failure. githop itself exits 1 for
+    // that under block-strict, so a 3 always fails open.
+    let out = h.commit(&repo, "x3.txt", &[("STUB_RC", "3")]);
+    assert!(out.status.success(), "{}", stderr(&out));
     let out = h.git(
         &["push", "-q", "origin", "main"],
         &repo,
@@ -1339,10 +1351,10 @@ fn doctor_flags_an_include_read_after_githop_and_reinstall_fixes_it() {
     assert!(!out.status.success(), "GitHop runs again in the work repo");
 }
 
-/// Review #9: the enforce mode is baked into the hooks; changing it makes
-/// them stale until `refresh_if_installed` re-renders them.
+/// Regression D5: the enforce mode is read at run time, so changing it
+/// doesn't make the hooks stale; `refresh_if_installed` keeps working.
 #[test]
-fn refresh_rerenders_hooks_when_enforce_changes() {
+fn enforce_change_leaves_hooks_current() {
     let env = TestEnv::new();
     let git = env.git_handle();
     let paths = env.paths();
@@ -1357,19 +1369,13 @@ fn refresh_rerenders_hooks_when_enforce_changes() {
 
     settings.enforce = githop_core::EnforceMode::BlockStrict;
     let h = hooks::verify_hooks(&paths, &git, &settings);
-    for name in [
-        "pre-commit",
-        "pre-push",
-        "pre-merge-commit",
-        "prepare-commit-msg",
-    ] {
-        assert!(h.stale.contains(&name.to_string()), "{name}: {h:?}");
-    }
+    assert!(h.stale.is_empty() && h.tampered.is_empty(), "{h:?}");
     assert!(hooks::refresh_if_installed(&paths, &git, &mut settings).unwrap());
     let h = hooks::verify_hooks(&paths, &git, &settings);
     assert!(h.stale.is_empty() && h.tampered.is_empty(), "{h:?}");
     let pre_commit = std::fs::read_to_string(paths.hooks_dir().join("pre-commit")).unwrap();
-    assert!(pre_commit.contains("STRICT=1\n"));
+    assert!(pre_commit.contains(&format!("SETTINGS=\"{}\"\n", slash(&paths.settings_file()))));
+    assert!(!pre_commit.contains("STRICT="));
     assert_eq!(
         std::fs::read(env.global_config()).unwrap(),
         config_before,
@@ -1416,4 +1422,128 @@ fn clone_with_only_the_default_profile_is_not_pinned() {
     );
     let s = githop_core::Store::open_at(env.paths()).unwrap();
     assert!(s.settings().pinned_repos.is_empty());
+}
+
+/// Regression D5: block-strict is read from settings.toml at run time. A
+/// mode changed by hand applies at once, in both directions, without
+/// re-rendering the hooks.
+#[test]
+fn block_strict_is_read_at_run_time() {
+    let missing = PathBuf::from("C:/definitely/not/here/githop.exe");
+    let h = HookEnv::new_with("", Some(&missing), true);
+    let repo = h.env.init_repo("r");
+    let out = h.commit(&repo, "a.txt", &[]);
+    assert!(!out.status.success(), "strict + missing exe blocks");
+    // The user switches back by hand.
+    std::fs::write(&h.settings, "version = 1\nenforce = \"block\"\n").unwrap();
+    let out = h.commit(&repo, "b.txt", &[]);
+    assert!(
+        out.status.success(),
+        "block mode fails open: {}",
+        stderr(&out)
+    );
+    assert!(!stderr(&out).contains("blocked"), "{}", stderr(&out));
+    // ...and to strict again, CRLF and indentation as an editor may leave it.
+    std::fs::write(
+        &h.settings,
+        "version = 1\r\n  enforce = 'block-strict'\r\n[hook_hashes]\r\n",
+    )
+    .unwrap();
+    let out = h.commit(&repo, "c.txt", &[]);
+    assert!(!out.status.success(), "strict again");
+    // A key in a [table] doesn't count.
+    std::fs::write(
+        &h.settings,
+        "version = 1\n[other]\nenforce = \"block-strict\"\n",
+    )
+    .unwrap();
+    let out = h.commit(&repo, "d.txt", &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+/// Regression D13: the scripts' own lines honour GITHOP_ASCII.
+#[test]
+fn hook_script_messages_honour_ascii_mode() {
+    let missing = PathBuf::from("C:/definitely/not/here/githop.exe");
+    let h = HookEnv::new_with("", Some(&missing), true);
+    let repo = h.env.init_repo("r");
+    let out = h.commit(&repo, "a.txt", &[("GITHOP_ASCII", "1")]);
+    let err = stderr(&out);
+    assert!(
+        err.contains("[blocked] GitHop isn't installed correctly"),
+        "{err}"
+    );
+    assert!(!err.contains('✗'), "{err}");
+    std::fs::write(&h.settings, "version = 1\n").unwrap();
+    let out = h.commit(&repo, "b.txt", &[("GITHOP_ASCII", "1")]);
+    assert!(
+        stderr(&out).contains("[warn] GitHop couldn't check this commit"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// Regression D4: with GITHOP_DISABLE=1 the pre-push hook still hands the
+/// ref lines to githop (which only records them), and prints nothing.
+#[test]
+fn disabled_push_still_calls_githop_to_record() {
+    let h = HookEnv::new(None, None);
+    let (repo, _remote) = repo_with_remote(&h);
+    h.clear();
+    let out = h.git(
+        &["push", "-q", "origin", "main"],
+        &repo,
+        &[("GITHOP_DISABLE", "1"), ("STUB_RC", "1")],
+    );
+    assert!(
+        out.status.success(),
+        "disabled push goes through: {}",
+        stderr(&out)
+    );
+    let calls = h.calls();
+    assert!(calls.contains("githop check --stage push --"), "{calls}");
+    assert!(calls.contains("githop-stdin refs/heads/main"), "{calls}");
+    // Commit hooks still skip githop entirely.
+    h.clear();
+    let out = h.commit(&repo, "z.txt", &[("GITHOP_DISABLE", "1"), ("STUB_RC", "1")]);
+    assert!(out.status.success());
+    assert!(!h.calls().contains("githop check"));
+}
+
+/// Security regression #3: a revert or cherry-pick made while a blocked
+/// merge left MERGE_HEAD behind reaches prepare-commit-msg with source
+/// "merge"; it is checked. `git merge` itself (GIT_REFLOG_ACTION=merge…) was
+/// already checked in pre-merge-commit and isn't checked twice.
+#[test]
+fn prepare_commit_msg_checks_merge_source_from_the_sequencer() {
+    let h = HookEnv::new(None, None);
+    let repo = h.env.init_repo("r");
+    let sh = hooks::find_sh(&h.env.git_handle()).expect("sh");
+    let script = slash(&h.hooks_dir.join("prepare-commit-msg"));
+    let run = |reflog: Option<&str>| {
+        h.clear();
+        let mut c = Command::new(&sh);
+        c.args([script.as_str(), ".git/COMMIT_EDITMSG", "merge"])
+            .current_dir(&repo);
+        h.env.apply(&mut c);
+        c.env("STUB_LOG", slash(&h.log)).env("STUB_RC", "1");
+        match reflog {
+            Some(r) => c.env("GIT_REFLOG_ACTION", r),
+            None => c.env_remove("GIT_REFLOG_ACTION"),
+        };
+        let out = c.output().unwrap();
+        (out.status.code(), githop_commit_checks(&h.calls()))
+    };
+    assert_eq!(
+        run(None),
+        (Some(1), 1),
+        "sequencer commit checked and blocked"
+    );
+    assert_eq!(run(Some("revert")), (Some(1), 1));
+    assert_eq!(
+        run(Some("merge feat")).1,
+        0,
+        "git merge: checked in pre-merge-commit"
+    );
+    assert_eq!(run(Some("pull")).1, 0);
 }

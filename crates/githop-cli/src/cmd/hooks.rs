@@ -7,9 +7,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use githop_core::doctor::{self, CheckStatus};
-use githop_core::hooks::{self, HooksPathChange, InstallReport};
+use githop_core::hooks::{self, HookHealth, HooksPathChange, InstallReport};
 use githop_core::paths::to_slash;
-use githop_core::{backup, Store};
+use githop_core::{aliases, backup, check, Paths, Store};
 
 use super::Ctx;
 use crate::cli::{HooksCommand, HooksInstallArgs, HooksSnippetArgs, Stage};
@@ -47,9 +47,9 @@ pub enum Ask {
 }
 
 /// Lines explaining what installing hooks does (Design §9.1: say it's safe).
-fn explain(ctx: &Ctx, store: &Store) {
+fn explain(ctx: &Ctx, paths: &Paths) {
     let ui = &ctx.ui;
-    let dir = hooks::hooks_dir_value(store.paths());
+    let dir = hooks::hooks_dir_value(paths);
     ui.line("GitHop checks each commit and push with git hooks:");
     ui.line(&format!("  • global core.hooksPath will point to {dir}"));
     ui.line("  • your repos' own hooks and any hooks you had before keep running");
@@ -57,20 +57,29 @@ fn explain(ctx: &Ctx, store: &Store) {
     ui.line("  • undo any time: githop hooks uninstall");
 }
 
+/// What [`install`] did, and how the hooks were before (for the wording).
+pub struct Installed {
+    pub report: InstallReport,
+    pub before: HookHealth,
+}
+
 /// Install or re-install the hooks with the running exe; saves settings.
-/// Returns `None` when the user said no.
-pub fn install(ctx: &Ctx, store: &mut Store, ask: Ask) -> Result<Option<InstallReport>> {
+/// Only `settings.toml` is read and written, so this works while
+/// `profiles.toml` is broken (regression D5). Also refreshes the SSH host
+/// alias cache (regression D1). Returns `None` when the user said no.
+pub fn install(ctx: &Ctx, paths: &Paths, ask: Ask) -> Result<Option<Installed>> {
     let ui = &ctx.ui;
     let git = ctx.git()?;
     if ask != Ask::Quiet {
-        explain(ctx, store);
+        explain(ctx, paths);
     }
     if ask == Ask::Confirm && ui.interactive && !ui.confirm("Install the hooks?", true)? {
         ui.line("The hooks weren't installed. Install them later: githop hooks install");
         return Ok(None);
     }
-    let paths = store.paths().clone();
+    let paths = paths.clone();
     paths.ensure_dirs()?;
+    let before = hooks::verify_hooks(&paths, git, &check::load_settings_lenient(&paths));
     let first_backup = backup::original_gitconfig(&paths).is_none();
     let saved = backup::backup_global_gitconfig(&paths, git)?;
     if first_backup {
@@ -81,18 +90,38 @@ pub fn install(ctx: &Ctx, store: &mut Store, ask: Ask) -> Result<Option<InstallR
         to_slash(&saved)
     ));
     let exe = current_exe()?;
-    let report = store.update_settings(|s| hooks::install_hooks(&paths, git, s, &exe))?;
-    Ok(Some(report))
+    let (report, _) =
+        Store::update_settings_at(&paths, |s| hooks::install_hooks(&paths, git, s, &exe))?;
+    aliases::refresh_best_effort(&paths, git);
+    Ok(Some(Installed { report, before }))
+}
+
+/// The headline for an install (regression D11): installed, repaired,
+/// updated or already up to date, from how the hooks were before.
+pub fn install_headline(before: &HookHealth) -> String {
+    let mut fixed: Vec<String> = before.missing.clone();
+    fixed.extend(before.tampered.iter().cloned());
+    if !before.installed || !before.points_to_us || !before.overridden_by.is_empty() {
+        "Hooks installed. GitHop now checks every commit and push.".to_string()
+    } else if !fixed.is_empty() {
+        fixed.sort();
+        fixed.dedup();
+        format!(
+            "Hooks repaired: {}. GitHop checks every commit and push.",
+            fixed.join(", ")
+        )
+    } else if !before.stale.is_empty() || before.exe_missing {
+        "Hooks updated. GitHop checks every commit and push.".to_string()
+    } else {
+        "Hooks are up to date. GitHop checks every commit and push.".to_string()
+    }
 }
 
 /// Print what [`install`] did.
-pub fn print_install(ctx: &Ctx, report: &InstallReport) {
+pub fn print_install(ctx: &Ctx, installed: &Installed) {
     let ui = &ctx.ui;
-    if report.reinstall {
-        ui.ok("Hooks are up to date. GitHop checks every commit and push.");
-    } else {
-        ui.ok("Hooks installed. GitHop now checks every commit and push.");
-    }
+    let report = &installed.report;
+    ui.ok(&install_headline(&installed.before));
     if let Some(prev) = &report.previous_hooks_path {
         ui.hint(&format!("Your previous hooks in {prev} still run."));
     }
@@ -112,8 +141,10 @@ pub fn print_install(ctx: &Ctx, report: &InstallReport) {
 
 fn run_install(ctx: &Ctx, args: HooksInstallArgs) -> Result<Exit> {
     ctx.reject_json("hooks install")?;
-    let mut store = ctx.store()?;
-    if args.if_installed && !store.settings().hooks_installed {
+    // Settings only: works even when profiles.toml can't be read (D5).
+    let paths = Paths::resolve()?;
+    let installed = Store::load_settings_at(&paths)?.hooks_installed;
+    if args.if_installed && !installed {
         // Installer re-run on a PC where the hooks are off: change nothing.
         ctx.ui
             .line("The hooks aren't installed, so there's nothing to update.");
@@ -121,18 +152,18 @@ fn run_install(ctx: &Ctx, args: HooksInstallArgs) -> Result<Exit> {
     }
     if args.all_stubs || args.common_stubs {
         let all = args.all_stubs;
-        store.update_settings(|s| {
+        Store::update_settings_at(&paths, |s| {
             s.all_hook_stubs = all;
             Ok(())
         })?;
     }
-    let ask = if args.yes || args.if_installed || store.settings().hooks_installed {
+    let ask = if args.yes || args.if_installed || installed {
         Ask::Quiet
     } else {
         Ask::Explain
     };
-    if let Some(report) = install(ctx, &mut store, ask)? {
-        print_install(ctx, &report);
+    if let Some(done) = install(ctx, &paths, ask)? {
+        print_install(ctx, &done);
     }
     Ok(Exit::Ok)
 }
@@ -193,7 +224,7 @@ fn run_status(ctx: &Ctx) -> Result<Exit> {
         }
         if c.status != CheckStatus::Ok {
             if let Some(fix) = &c.fix {
-                ui.hint(&format!("  Fix: {fix}"));
+                ui.fix_hint(&format!("  Fix: {fix}"));
             }
         }
     }
@@ -214,7 +245,7 @@ fn run_snippet(ctx: &Ctx, args: HooksSnippetArgs) -> Result<Exit> {
         Stage::Push => "push",
     };
     let line = hooks::snippet(stage, &exe)?;
-    // Only the line on stdout, so it can be piped or copied as is.
+    // Only the snippet on stdout, so it can be piped or copied as is.
     println!("{line}");
     if !ctx.ui.quiet {
         let hook = match args.stage {
@@ -222,10 +253,20 @@ fn run_snippet(ctx: &Ctx, args: HooksSnippetArgs) -> Result<Exit> {
             Stage::Commit => "pre-commit",
             Stage::Push => "pre-push",
         };
+        let text = if args.stage == Stage::Push {
+            // D6: the push snippet reads stdin once and hands it back.
+            format!(
+                "Add it near the top of the repo's {hook} hook (e.g. .husky/{hook}). \
+                 It hands the ref lines back, so the rest of the hook (git lfs pre-push…) \
+                 still gets them."
+            )
+        } else {
+            format!("Add it near the top of the repo's {hook} hook (e.g. .husky/{hook}).")
+        };
         eprintln!(
             "{}",
             crate::ui::paint_dim(
-                &format!("Add it near the top of the repo's {hook} hook (e.g. .husky/{hook})."),
+                &githop_core::text::wrap(&text, crate::ui::MAX_WIDTH, ""),
                 ctx.ui.color_err
             )
         );

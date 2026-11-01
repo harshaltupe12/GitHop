@@ -132,7 +132,7 @@ pub enum ExportError {
     UnsafeKeyName(String),
 
     /// The profiles in the bundle (or the merged result) don't validate.
-    #[error("the profiles in the export aren't valid ({} issue(s))", .0.len())]
+    #[error("the profiles in the export aren't valid ({})", crate::text::plural(.0.len(), "issue", "issues"))]
     InvalidProfiles(Vec<ValidationIssue>),
 
     /// Profiles that clash with existing ones but got no resolution.
@@ -733,6 +733,10 @@ pub fn export_with_work_factor(
     drop(file);
     let encrypted = encrypt_bytes(plain.as_bytes(), password, log_n)?;
     atomic_write(out, &encrypted)?;
+    // The file may hold private keys without a passphrase (encrypted, but
+    // still): only the user may read it, like a key file (security 9.5).
+    // Best effort: the export itself succeeded.
+    let _ = crate::ssh::restrict_key_acl(out);
     Ok(summary)
 }
 

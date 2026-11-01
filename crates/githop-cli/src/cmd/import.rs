@@ -128,6 +128,8 @@ pub fn run(ctx: &Ctx, args: ImportArgs) -> Result<Exit> {
         return Ok(Exit::Ok);
     }
 
+    let before = store.profiles().clone();
+    let settings_before = store.settings().clone();
     let report =
         export::apply_bundle(store.paths(), git, &bundle, &resolutions).map_err(cli_error)?;
     drop(bundle);
@@ -140,6 +142,20 @@ pub fn run(ctx: &Ctx, args: ImportArgs) -> Result<Exit> {
     ));
     for (from, to) in &report.renamed {
         ui.line(&format!("  {from} is now {to}"));
+        // D23: a renamed profile whose key is identical keeps using that key.
+        if let Some(p) = set.get(to) {
+            let own = format!("githop_{to}");
+            let name = p
+                .ssh_key
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if !name.is_empty() && name != own {
+                ui.hint(&format!(
+                    "  {to} uses your existing key {name} (same key), so no {own} was written."
+                ));
+            }
+        }
     }
     if !report.replaced.is_empty() {
         ui.line(&format!("  Replaced: {}", report.replaced.join(", ")));
@@ -183,6 +199,36 @@ pub fn run(ctx: &Ctx, args: ImportArgs) -> Result<Exit> {
         ui.hint(&format!(
             "Copy the key there, or create a new one: githop keygen {id}"
         ));
+    }
+    // D19: replaced profiles whose details changed, like `githop edit`.
+    for id in &report.replaced {
+        let (Some(old), Some(new)) = (before.get(id), set.get(id)) else {
+            continue;
+        };
+        let changed = old.name != new.name
+            || !old.email.eq_ignore_ascii_case(&new.email)
+            || old.ssh_key != new.ssh_key;
+        if !changed {
+            continue;
+        }
+        if before.default.as_deref() == Some(id.as_str()) {
+            ui.warn("Your global git identity still has the old details.");
+            ui.hint(&format!("Update it: githop use {id}"));
+        }
+        let n = super::repos_pinned_to(git, &settings_before.pinned_repos, id).len();
+        if n > 0 {
+            ui.warn(&format!(
+                "{} pinned to {} still {} the old details.",
+                githop_core::text::plural(n, "repo", "repos"),
+                new.label,
+                if n == 1 { "uses" } else { "use" }
+            ));
+            ui.hint(&format!("Update them: githop edit {id} --repin"));
+        }
+    }
+    if !settings_before.hooks_installed {
+        // A new PC: nothing checks commits yet.
+        ui.hint("Turn on the commit and push checks: githop init (or githop hooks install)");
     }
     if report.default_changed {
         if let Some(d) = set.default.as_deref() {

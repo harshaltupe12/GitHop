@@ -320,6 +320,7 @@ impl ProfileSet {
                 );
             }
             check_ssh_key(&mut out, p);
+            check_shape(&mut out, p);
             check_owners(&mut out, p, earlier);
             check_folders(&mut out, p, earlier);
         }
@@ -494,6 +495,109 @@ fn check_ssh_key(out: &mut Issues, p: &Profile) {
             ),
         );
     }
+}
+
+/// Longest label or commit name (characters).
+pub const MAX_NAME_LEN: usize = 128;
+/// Longest email (RFC 5321 path limit).
+pub const MAX_EMAIL_LEN: usize = 254;
+/// Longest key or folder path.
+pub const MAX_PATH_LEN: usize = 4096;
+/// Most owners or folders per profile.
+pub const MAX_LIST_LEN: usize = 100;
+
+/// Shape rules shared by the CLI, import, the app and hand-edited files
+/// (security regression #4, parity with the app's `profile_shape`): no
+/// control characters in any text field or path (they could carry terminal
+/// escapes, or leave a pinned repo blocked for good), length caps, and no
+/// `"` or `..` in the key path.
+fn check_shape(out: &mut Issues, p: &Profile) {
+    if p.label.chars().any(char::is_control) {
+        out.error(
+            p,
+            "label",
+            "The label can't contain line breaks, tabs or other control characters.".to_string(),
+        );
+    } else if p.label.chars().count() > MAX_NAME_LEN {
+        out.error(
+            p,
+            "label",
+            format!("The label is too long (up to {MAX_NAME_LEN} characters)."),
+        );
+    }
+    if p.name.chars().count() > MAX_NAME_LEN {
+        out.error(
+            p,
+            "name",
+            format!("The name is too long (up to {MAX_NAME_LEN} characters)."),
+        );
+    }
+    if p.email.chars().any(char::is_control) {
+        out.error(
+            p,
+            "email",
+            "The email can't contain line breaks or other control characters.".to_string(),
+        );
+    } else if p.email.trim().len() > MAX_EMAIL_LEN {
+        out.error(
+            p,
+            "email",
+            format!("The email is too long (up to {MAX_EMAIL_LEN} characters)."),
+        );
+    }
+    let key = p.ssh_key.to_string_lossy();
+    if key.chars().any(|c| c.is_control() || c == '"') {
+        out.error(
+            p,
+            "ssh_key",
+            "The key path can't contain quotes, line breaks or other control characters."
+                .to_string(),
+        );
+    } else if key.len() > MAX_PATH_LEN {
+        out.error(p, "ssh_key", "The key path is too long.".to_string());
+    } else if key.split(['/', '\\']).any(|part| part.trim() == "..") {
+        out.error(
+            p,
+            "ssh_key",
+            "Key paths with \"..\" aren't allowed.".to_string(),
+        );
+    }
+    if p.owners.len() > MAX_LIST_LEN {
+        out.error(
+            p,
+            "owners",
+            format!("That's too many owners (up to {MAX_LIST_LEN})."),
+        );
+    } else if p
+        .owners
+        .iter()
+        .any(|o| o.chars().count() > MAX_NAME_LEN || o.chars().any(char::is_control))
+    {
+        out.error(p, "owners", "An owner name isn't valid.".to_string());
+    }
+    if p.folders.len() > MAX_LIST_LEN {
+        out.error(
+            p,
+            "folders",
+            format!("That's too many folders (up to {MAX_LIST_LEN})."),
+        );
+    } else if p
+        .folders
+        .iter()
+        .any(|f| f.len() > MAX_PATH_LEN || f.chars().any(char::is_control))
+    {
+        out.error(p, "folders", "A folder path isn't valid.".to_string());
+    }
+}
+
+/// `Err` with the first error message when this one profile has errors in
+/// its own fields (not clashes with others): for `pin`, `use` and Fix,
+/// which must not act on a hand-edited profile that doesn't validate.
+pub fn profile_errors(set: &ProfileSet, id: &str) -> Option<String> {
+    set.issues()
+        .into_iter()
+        .find(|i| i.severity == Severity::Error && i.profile_id.as_deref() == Some(id))
+        .map(|i| i.message)
 }
 
 fn check_owners(out: &mut Issues, p: &Profile, earlier: &[Profile]) {

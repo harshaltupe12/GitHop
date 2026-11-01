@@ -18,7 +18,7 @@ use githop_core::EnforceMode;
 use super::Ctx;
 use crate::cli::{CheckArgs, Stage};
 use crate::exit::Exit;
-use crate::ui::{paint_dim, status_line, Status, Ui};
+use crate::ui::{paint_dim, safe, status_line, Status, Ui};
 
 /// Upper bound on pre-push stdin: one ~100-byte line per ref, so ~600k refs.
 /// Past it the check fails (fail open, or blocked under block-strict) instead
@@ -107,11 +107,11 @@ pub fn render_lines(messages: &[Message], color: bool, ascii: bool) -> Vec<Strin
             Level::Ok => status_line(Status::Ok, &m.text, color, ascii),
             Level::Blocked => status_line(Status::Blocked, &m.text, color, ascii),
             Level::Warning => status_line(Status::Warn, &m.text, color, ascii),
-            Level::Info => m.text.clone(),
+            Level::Info => safe(&m.text, ascii),
         };
         out.push(line);
         if let Some(hint) = &m.hint {
-            out.push(paint_dim(hint, color));
+            out.push(paint_dim(&safe(hint, ascii), color));
         }
     }
     out
@@ -156,6 +156,19 @@ mod tests {
             render_lines(&[Message::warning("w")], false, false),
             vec!["! w"]
         );
+        // Regression D13: ASCII mode has no em dash or ellipsis either.
+        assert_eq!(
+            render_lines(
+                &[Message::blocked("GitHop: push blocked — 1 commit…").hint("x — y")],
+                false,
+                true
+            ),
+            vec!["[blocked] GitHop: push blocked - 1 commit...", "x - y"]
+        );
+        // Security regression #2: a commit subject can't drive the terminal.
+        let evil = Message::info("  1111111  fix\x1b]0;T\x07\x1b[2J  a@b");
+        let lines = render_lines(&[evil], true, false);
+        assert!(!lines[0].contains('\x1b') && !lines[0].contains('\x07'));
     }
 
     /// Review 2026-11-01 #10: over the cap is an error, never a silent cut.

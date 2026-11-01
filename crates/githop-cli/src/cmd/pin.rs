@@ -13,6 +13,7 @@ pub fn run_pin(ctx: &Ctx, args: PinArgs) -> Result<Exit> {
     let repo = Repo::discover(git, &cwd()?)?;
     let mut store = ctx.store()?;
     let profile = profile_or_usage(store.profiles(), &args.id)?.clone();
+    refuse_invalid(store.profiles(), &profile)?;
 
     core_pin::pin_repo(&repo, &profile)?;
 
@@ -24,9 +25,34 @@ pub fn run_pin(ctx: &Ctx, args: PinArgs) -> Result<Exit> {
         })?;
     }
     ctx.ui.ok(&format!("Pinned to {}", profile.label));
-    ctx.ui
-        .hint(&format!("Commits in this repo now use {}.", profile.email));
+    // D8: only claim the email when nothing wider overrides the pin.
+    let snapshot = repo.config_snapshot()?;
+    match githop_core::check::commit::identity_override(&snapshot, &profile.email) {
+        Some(o) => {
+            ctx.ui.warn(&format!(
+                "Commits here still won't use {}: {}",
+                profile.email,
+                o.why()
+            ));
+            ctx.ui.fix_hint(&o.action());
+        }
+        None => ctx
+            .ui
+            .hint(&format!("Commits in this repo now use {}.", profile.email)),
+    }
     Ok(Exit::Ok)
+}
+
+/// Refuse to act on a profile whose own fields don't validate (a hand-edited
+/// `profiles.toml`, security regression #4).
+pub fn refuse_invalid(set: &githop_core::ProfileSet, profile: &githop_core::Profile) -> Result<()> {
+    match githop_core::profile::profile_errors(set, &profile.id) {
+        Some(msg) => Err(crate::exit::usage_hint(
+            format!("Profile {} isn't valid: {msg}", profile.id),
+            "Run: githop doctor",
+        )),
+        None => Ok(()),
+    }
 }
 
 pub fn run_unpin(ctx: &Ctx) -> Result<Exit> {

@@ -423,8 +423,10 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
             STEP_UNPIN,
             true,
             format!(
-                "{} pinned repo(s) keep their pins. Remove one with: githop unpin",
-                pinned.len()
+                "{} {} their pins and GitHop's Fix backups (refs/githop/…). \
+                 Remove a pin with: githop unpin",
+                crate::text::plural(pinned.len(), "pinned repo", "pinned repos"),
+                if pinned.len() == 1 { "keeps" } else { "keep" }
             ),
         );
     } else {
@@ -436,7 +438,12 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
             if !path.exists() {
                 continue;
             }
-            match Repo::discover(git, path).and_then(|r| pin::unpin_repo(&r)) {
+            match Repo::discover(git, path).and_then(|r| {
+                let unpinned = pin::unpin_repo(&r)?;
+                // Regression D20: GitHop's own data in the repo goes too.
+                remove_repo_data(git, &r);
+                Ok(unpinned)
+            }) {
                 Ok(true) => done += 1,
                 Ok(false) => {}
                 Err(e) => {
@@ -447,16 +454,18 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
         }
         settings.pinned_repos = left;
         persist(&mut store, &settings);
+        let unpinned = format!(
+            "Unpinned {} and removed GitHop's Fix backups (refs/githop/…) and push records \
+             there. Repos GitHop didn't pin keep theirs.",
+            crate::text::plural(done, "repo", "repos")
+        );
         if failures.is_empty() {
-            report.push(STEP_UNPIN, true, format!("Unpinned {done} repo(s)."));
+            report.push(STEP_UNPIN, true, unpinned);
         } else {
             report.push(
                 STEP_UNPIN,
                 false,
-                format!(
-                    "Unpinned {done} repo(s). Couldn't unpin: {}",
-                    failures.join("; ")
-                ),
+                format!("{unpinned} Couldn't unpin: {}", failures.join("; ")),
             );
         }
     }
@@ -526,23 +535,98 @@ const DATA_FILES: &[&str] = &[
     "hooks.gitconfig",
 ];
 
-/// Delete only what GitHop owns in the data dir — its files, its `hooks/`,
-/// `backups/` and `logs/` folders and leftover temp files from atomic writes —
-/// then the data dir itself if that leaves it empty. Anything else (e.g. user
-/// files when `GITHOP_HOME` points at a shared folder) is kept.
-/// `Ok(false)` = there was nothing to delete.
+/// GitHop's data in one repo: `refs/githop/*` (Fix backups and results) and
+/// `<common dir>/githop/pushed`. Best effort, two spawns.
+fn remove_repo_data(git: &Git, repo: &Repo) {
+    if let Ok(refs) = git.run_text(
+        repo.root(),
+        &["for-each-ref", "--format=%(refname)", "refs/githop/"],
+    ) {
+        let script: String = refs
+            .lines()
+            .map(str::trim)
+            .filter(|r| r.starts_with("refs/githop/"))
+            .map(|r| format!("delete {r}\n"))
+            .collect();
+        if !script.is_empty() {
+            let _ = git.run_with_stdin(
+                repo.root(),
+                &["update-ref", "--stdin"],
+                Some(script.as_bytes()),
+            );
+        }
+    }
+    let dir = repo.common_dir().join("githop");
+    let _ = std::fs::remove_file(dir.join("pushed"));
+    let _ = std::fs::remove_dir(&dir);
+}
+
+/// Files GitHop writes in `hooks/`: hook scripts and temp files.
+fn is_githop_hook_file(name: &str) -> bool {
+    hooks::all_hook_names().contains(&name) || name.starts_with(".githop-hook-")
+}
+
+/// Files GitHop writes in `backups/`.
+fn is_githop_backup_file(name: &str) -> bool {
+    let base = name.strip_suffix(".absent").unwrap_or(name);
+    base.starts_with("gitconfig.")
+        || base.starts_with("prerestore.gitconfig.")
+        || crate::store::is_profile_backup_name(base)
+        || is_githop_temp_name(name)
+}
+
+/// Files GitHop writes in `logs/`.
+fn is_githop_log_file(name: &str) -> bool {
+    crate::log::parse_file_date(name).is_some()
+}
+
+/// Delete the files `owned` picks in `dir` (not links to folders, not
+/// sub-folders), then `dir` itself when that leaves it empty (security
+/// regression #8: a user's own files there are kept).
+fn remove_owned_files(dir: &Path, owned: fn(&str) -> bool) -> std::io::Result<bool> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let mut removed = false;
+    for e in entries.flatten() {
+        let is_file = std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.file_type().is_file());
+        if !is_file || !e.file_name().to_str().is_some_and(owned) {
+            continue;
+        }
+        let p = e.path();
+        removed |= retry(|| match std::fs::remove_file(&p) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            r => r.map(|()| true),
+        })?;
+    }
+    // A junction or symlink in place of the folder: remove the link only.
+    let is_link = std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink());
+    if is_link {
+        if std::fs::remove_dir(dir).is_ok() || std::fs::remove_file(dir).is_ok() {
+            removed = true;
+        }
+    } else if std::fs::remove_dir(dir).is_ok() {
+        removed = true;
+    }
+    Ok(removed)
+}
+
+/// Delete only what GitHop owns in the data dir — its files, the files it
+/// writes in `hooks/`, `backups/` and `logs/` (then those folders when empty)
+/// and leftover temp files from atomic writes — then the data dir itself if
+/// that leaves it empty. Anything else (e.g. user files when `GITHOP_HOME`
+/// points at a shared folder) is kept. `Ok(false)` = there was nothing to delete.
 fn remove_githop_data(paths: &Paths) -> std::io::Result<bool> {
     let root = paths.root();
     if !root.exists() {
         return Ok(false);
     }
     let mut removed = false;
-    for dir in [paths.hooks_dir(), paths.backups_dir(), paths.logs_dir()] {
-        removed |= retry(|| match std::fs::remove_dir_all(&dir) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            r => r.map(|()| true),
-        })?;
-    }
+    removed |= remove_owned_files(&paths.hooks_dir(), is_githop_hook_file)?;
+    removed |= remove_owned_files(&paths.backups_dir(), is_githop_backup_file)?;
+    removed |= remove_owned_files(&paths.logs_dir(), is_githop_log_file)?;
     let mut names: Vec<std::ffi::OsString> = DATA_FILES.iter().map(Into::into).collect();
     if let Ok(entries) = std::fs::read_dir(root) {
         names.extend(
@@ -620,7 +704,10 @@ fn delete_githop_keys(git: &Git, profile_keys: &[PathBuf]) -> (bool, String) {
         })
         .map(|k| to_slash(k))
         .collect();
-    let mut detail = format!("Deleted {deleted} SSH key file(s) GitHop created.");
+    let mut detail = format!(
+        "Deleted {} GitHop created.",
+        crate::text::plural(deleted, "SSH key file", "SSH key files")
+    );
     if !kept.is_empty() {
         detail.push_str(&format!(
             " Kept {} (GitHop didn't create them).",
@@ -637,8 +724,13 @@ fn delete_githop_keys(git: &Git, profile_keys: &[PathBuf]) -> (bool, String) {
     }
 }
 
-/// `githop_<id>` or `githop_<id>.pub` — the names `githop keygen` creates.
+/// `githop_<id>` or `githop_<id>.pub` — the names `githop keygen` creates —
+/// and the `….replaced-<time>` copies import `replace` moved aside.
 fn is_githop_key_name(name: &str) -> bool {
+    let name = match name.find(".replaced-") {
+        Some(i) => &name[..i],
+        None => name,
+    };
     name.strip_prefix("githop_").is_some_and(|rest| {
         let id = rest.strip_suffix(".pub").unwrap_or(rest);
         !id.is_empty()
@@ -741,6 +833,19 @@ mod tests {
         std::fs::write(paths.hooks_dir().join("pre-commit"), "x").unwrap();
         std::fs::write(paths.root().join("my-notes.txt"), "keep me").unwrap();
         std::fs::create_dir(paths.root().join("my-folder")).unwrap();
+        // Security regression #8: user files inside GitHop's folders stay.
+        std::fs::write(paths.hooks_dir().join("my-own-hook.sh"), "x").unwrap();
+        std::fs::write(paths.backups_dir().join("my-db-backup.sql"), "x").unwrap();
+        std::fs::create_dir_all(paths.logs_dir()).unwrap();
+        std::fs::write(paths.logs_dir().join("app.log"), "x").unwrap();
+        std::fs::write(paths.logs_dir().join("githop-2026-10-31.log"), "x").unwrap();
+        std::fs::write(
+            paths
+                .backups_dir()
+                .join("profiles.20261031T142233.123Z.toml"),
+            "x",
+        )
+        .unwrap();
 
         assert!(remove_githop_data(&paths).unwrap());
         let left: Vec<String> = std::fs::read_dir(paths.root())
@@ -750,7 +855,20 @@ mod tests {
             .collect();
         let mut left = left;
         left.sort();
-        assert_eq!(left, ["my-folder", "my-notes.txt"]);
+        assert_eq!(
+            left,
+            ["backups", "hooks", "logs", "my-folder", "my-notes.txt"]
+        );
+        let only = |d: &Path| -> Vec<String> {
+            std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(only(&paths.hooks_dir()), ["my-own-hook.sh"]);
+        assert_eq!(only(&paths.backups_dir()), ["my-db-backup.sql"]);
+        assert_eq!(only(&paths.logs_dir()), ["app.log"]);
 
         // A dir holding only GitHop's files is removed entirely.
         let own = Paths::at(tmp.path().join("own"));
@@ -770,6 +888,14 @@ mod tests {
         assert!(!is_githop_key_name("githop_Office"));
         assert!(!is_githop_key_name("id_ed25519"));
         assert!(!is_githop_key_name("githop_x.bak"));
+        // Security regression 9.6: keys import moved aside go too.
+        assert!(is_githop_key_name(
+            "githop_office.replaced-20261101T101500Z"
+        ));
+        assert!(is_githop_key_name(
+            "githop_office.pub.replaced-20261101T101500Z"
+        ));
+        assert!(!is_githop_key_name("id_rsa.replaced-1"));
         assert!(!is_githop_key_name("known_hosts"));
     }
 

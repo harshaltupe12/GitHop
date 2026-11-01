@@ -12,8 +12,8 @@ scripts and tests. Types written as `Resolution`, `Identity`, … are the core
 types listed in [`app/IPC.md`](../app/IPC.md), serialised the same way.
 
 Commands without a JSON form (`init`, `add`, `edit`, `remove`, `use`, `pin`,
-`unpin`, `keygen`, `hooks install|uninstall|snippet`) refuse `--json`
-with exit `2`.
+`unpin`, `keygen`, `export`, `import`, `hooks install|uninstall|snippet`)
+refuse `--json` with exit `2`.
 
 ---
 
@@ -76,7 +76,16 @@ Run inside a repo (outside one → exit `2`).
 ```
 
 `scan` also refreshes `settings.github_host_aliases` (SSH host aliases whose
-`HostName` is `github.com`, confirmed with `ssh -G`).
+`HostName` is `github.com`, confirmed with `ssh -G`), as do `init`, `add`,
+`edit`, `use`, `hooks install` and `doctor`. Hooks and `status` re-read
+`~/.ssh/config` without `ssh -G` when it changed since
+(`settings.ssh_config_stamp`).
+
+`ResolutionWarning` kinds: `owner-folder-disagree`, `stale-pin`,
+`unknown-remote-format`, `non-github-host`, `local-hooks-path`, and
+`pin-owner-disagree` — `{ kind; pinned_profile; rule_profile; rule: "owner" |
+"folder"; owner?: string }`: the pin decides, but the owner or folder rule
+names another profile.
 
 ## githop test &lt;id&gt;
 
@@ -107,7 +116,7 @@ type DoctorCheck = {
   id: string;                      // see below; several checks may share an id
   status: "ok" | "warning" | "problem";   // "ok" with a fix = a note
   title: string;                   // what was checked: "Git", "Hooks", "SSH", …
-  detail: string;                  // one sentence
+  detail: string;                  // one sentence (a parse error shows its first line)
   fix?: string;                    // one next step; left out when none
 };
 ```
@@ -116,7 +125,10 @@ Check ids: `git-found`, `git-version`, `ssh-found`, `ssh-keygen-found`,
 `store`, `profiles`, `profile-issue`, `default`, `key-file`, `key-pub`,
 `key-acl` (Unix only), `original`, `hooks-installed`, `hooks-path`
 (also: an `[include]` read after GitHop's value overrides it),
-`hooks-files`, `hooks-stale` (also: rendered for another enforce mode),
+`hooks-files` (also: GitHop's `hooks.gitconfig` include file was changed),
+`hooks-stale` (written by an older GitHop), `hooks-unexpected` (files in the
+hooks folder GitHop didn't write), `pin-owner` (current repo's pin disagrees
+with its owner or folder rule),
 `hooks-exe`, `hooks-previous`, `hooks-sh`, `hooks-included` (note: GitHop chains
 to a hooksPath set by an `[include]`), `hooks-optional` (a pinned repo has a
 `reference-transaction`/`post-index-change` hook that isn't passed through),
@@ -129,6 +141,9 @@ to a hooksPath set by an `[include]`), `hooks-optional` (a pinned repo has a
 Hooks don't use `--json`; it's for scripts and tests. Messages are still
 printed on stderr. Exit code: `0` pass · `1` blocked · `3` GitHop error
 (fail-open) — under `enforce = "block-strict"` a GitHop error is `1`.
+With `GITHOP_DISABLE=1` the outcome is `disabled`; for `push` the ref lines on
+stdin are still recorded in `.git/githop/pushed`. The checks read history
+with replace refs and `info/grafts` turned off.
 
 ```ts
 // core `githop_core::check::CheckResult`
@@ -189,6 +204,7 @@ Exit `1` when any hook check is a `problem`.
     missing: string[];             // hook files that should exist
     tampered: string[];            // edited by hand
     stale: string[];               // from an older GitHop
+    unexpected: string[];          // files in the hooks folder GitHop didn't write
     githop_exe: string;            // exe embedded in the hooks
     exe_missing: boolean;
     previous_hooks_path: string;   // chained to; "" = none

@@ -57,7 +57,8 @@ pub fn run(ctx: &Ctx, args: WipeArgs) -> Result<Exit> {
             ));
         }
         if delete_keys {
-            ui.line("  • delete SSH keys GitHop created (~/.ssh/githop_*)");
+            ui.line("  • delete SSH keys GitHop created (~/.ssh/githop_*, and copies");
+            ui.line("    import moved aside as githop_*.replaced-*)");
         } else {
             ui.line("  • keep your SSH keys");
         }
@@ -68,7 +69,10 @@ pub fn run(ctx: &Ctx, args: WipeArgs) -> Result<Exit> {
         }
         if unpin && pinned > 0 {
             unpin = ui.confirm(
-                &format!("Also unpin the {pinned} repo(s) GitHop pinned?"),
+                &format!(
+                    "Also unpin the {} GitHop pinned?",
+                    githop_core::text::plural(pinned, "repo", "repos")
+                ),
                 true,
             )?;
         }
@@ -106,7 +110,8 @@ fn print_report(ctx: &Ctx, report: &WipeReport, opts: &WipeOptions) {
         if opts.keep_data {
             ui.ok("GitHop wiped. Your GitHop data was kept.");
         } else {
-            ui.ok("GitHop wiped. All GitHop data was deleted.");
+            // D20: say exactly what went (see the unpin step for repo data).
+            ui.ok("GitHop wiped. GitHop's data folder files were deleted.");
         }
         if !opts.delete_keys {
             ui.hint("Your SSH keys were kept.");

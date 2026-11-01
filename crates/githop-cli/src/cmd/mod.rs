@@ -66,6 +66,14 @@ impl Ctx {
     }
 
     /// Commands without a JSON form refuse `--json` instead of mixing output.
+    /// D1: refresh the SSH host alias cache (best effort, after a command
+    /// that changed profiles).
+    pub fn refresh_aliases(&self, paths: &githop_core::Paths) {
+        if let Ok(git) = self.git() {
+            githop_core::aliases::refresh_best_effort(paths, git);
+        }
+    }
+
     pub fn reject_json(&self, command: &str) -> Result<()> {
         if self.ui.json {
             return Err(usage_hint(
@@ -264,6 +272,23 @@ pub fn describe_warning(w: &ResolutionWarning, set: &ProfileSet) -> String {
             "This repo sets its own core.hooksPath ({path}), so GitHop's hooks don't run here. \
              Get the line to add to that hook: githop hooks snippet commit"
         ),
+        ResolutionWarning::PinOwnerDisagree {
+            pinned_profile,
+            rule_profile,
+            rule,
+            owner,
+        } => {
+            let why = match (rule, owner) {
+                (ResolutionSource::Owner, Some(o)) => format!("owner {o} belongs to"),
+                (ResolutionSource::Folder, _) => "its folder belongs to".to_string(),
+                _ => "its owner rule says".to_string(),
+            };
+            format!(
+                "Pinned to {}, but {why} {}. The pin wins. Run: githop pin {rule_profile}",
+                label_for(set, pinned_profile),
+                label_for(set, rule_profile)
+            )
+        }
     }
 }
 
@@ -303,6 +328,7 @@ pub fn switch_default(
 ) -> Result<SwitchOutcome> {
     let git = ctx.git()?;
     let profile = profile_or_usage(&profiles, id)?.clone();
+    pin::refuse_invalid(&profiles, &profile)?;
     let paths = store.paths().clone();
     paths.ensure_dirs()?;
     let first_backup = backup::original_gitconfig(&paths).is_none();
@@ -311,6 +337,7 @@ pub fn switch_default(
         "Global git config backed up to {}",
         to_slash(&saved)
     ));
+    githop_core::aliases::refresh_best_effort(&paths, git);
 
     let missing = MANAGED_GLOBAL_KEYS.iter().any(|key| {
         !store

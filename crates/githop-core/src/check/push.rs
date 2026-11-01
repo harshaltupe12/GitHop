@@ -30,6 +30,7 @@ use crate::pin;
 use crate::profile::{Profile, ProfileSet};
 use crate::resolver;
 use crate::settings::EnforceMode;
+use crate::text::one_line;
 
 use super::identity_rules::IdentityRules;
 use super::{CheckContext, CheckResult, Message, Outcome, Stage};
@@ -244,11 +245,13 @@ pub fn mismatch_messages(
         Message::blocked(format!("GitHop: push blocked — {what}"))
     }];
     for o in offenders.iter().take(MAX_LISTED) {
+        // Subjects and emails come from commits anyone can write: never let
+        // them carry terminal escape sequences (security regression #2).
         out.push(Message::info(format!(
             "  {}  {}  {}",
-            o.sha.get(..7).unwrap_or(&o.sha),
-            truncate(&o.subject, 40),
-            o.wrong_email()
+            one_line(o.sha.get(..7).unwrap_or(&o.sha)),
+            truncate(&one_line(&o.subject), 40),
+            one_line(o.wrong_email())
         )));
     }
     if n > MAX_LISTED {
@@ -256,7 +259,8 @@ pub fn mismatch_messages(
     }
     if let Some(last) = out.last_mut() {
         last.hint = Some(if mode == EnforceMode::Warn {
-            "To re-stamp them: githop fix".to_string()
+            // Regression D9: they're on the remote now, so Fix won't touch them.
+            "They're on the remote now. GitHop never changes pushed commits.".to_string()
         } else {
             "Run: githop fix".to_string()
         });
@@ -393,7 +397,7 @@ pub fn tag_messages(
 ) -> Vec<Message> {
     let n = tags.len();
     let subject = match tags {
-        [t] => format!("tag {}", t.name),
+        [t] => format!("tag {}", one_line(&t.name)),
         _ => format!("{n} tags"),
     };
     let what = match single_other_profile(set, tags.iter().map(|t| t.tagger_email.as_str())) {
@@ -416,14 +420,18 @@ pub fn tag_messages(
         Message::blocked(format!("GitHop: push blocked — {what}"))
     }];
     for t in tags.iter().take(MAX_LISTED) {
-        out.push(Message::info(format!("  {}  {}", t.name, t.tagger_email)));
+        out.push(Message::info(format!(
+            "  {}  {}",
+            one_line(&t.name),
+            one_line(&t.tagger_email)
+        )));
     }
     if n > MAX_LISTED {
         out.push(Message::info(format!("  …and {} more", n - MAX_LISTED)));
     }
     if let Some(last) = out.last_mut() {
         last.hint = Some(match tags {
-            [t] => format!("Run: git tag -f -a {0} {0}^{{}}", t.name),
+            [t] => format!("Run: git tag -f -a {0} {0}^{{}}", one_line(&t.name)),
             _ => "Re-create each tag: git tag -f -a <tag> <tag>^{}".to_string(),
         });
     }
@@ -562,6 +570,20 @@ pub fn ssh_key_warning(
     })
 }
 
+/// `GITHOP_DISABLE=1` push: nothing is checked, but what the push publishes is
+/// still recorded, so `fix` never rewrites it (regression D4, CLAUDE.md rule
+/// 7). No spawn when git's hook environment names the repo; best effort.
+pub(crate) fn record_only(ctx: &CheckContext, args: &[String], stdin: &str) {
+    let updates = parse_prepush_stdin(stdin);
+    if updates.is_empty() {
+        return;
+    }
+    if let Ok(repo) = super::hook_repo(ctx) {
+        let remote_arg = args.first().map(String::as_str).unwrap_or_default();
+        let _ = record_pushed(repo.common_dir(), remote_arg, &updates);
+    }
+}
+
 /// Orchestrator. `args` = `[remote name, remote url]`.
 pub(crate) fn run(
     ctx: &CheckContext,
@@ -579,7 +601,7 @@ pub(crate) fn run(
     let remote_arg = args.first().map(String::as_str).unwrap_or_default();
     let snapshot = ConfigSnapshot::read(&ctx.git, &root)?;
     let mut store = super::open_store(ctx)?;
-    let aliases = store.settings().github_host_aliases.clone();
+    let aliases = crate::aliases::current(&ctx.paths, &ctx.git, store.settings());
     let resolution = resolver::resolve(&snapshot, &root, store.profiles(), &aliases);
     let Some(owner) =
         super::resolved_profile(store.profiles(), resolution.profile_id.as_deref()).cloned()
@@ -990,6 +1012,11 @@ mod tests {
         let w = mismatch_messages(owner, &s, &o, EnforceMode::Warn);
         assert_eq!(w[0].level, Level::Warning);
         assert!(w.iter().all(|m| m.level != Level::Blocked));
+        // Regression D9: no Fix advice for commits already on the remote.
+        assert_eq!(
+            w.last().unwrap().hint.as_deref(),
+            Some("They're on the remote now. GitHop never changes pushed commits.")
+        );
     }
 
     #[test]

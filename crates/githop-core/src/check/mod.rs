@@ -302,8 +302,21 @@ pub fn run_check(stage: Stage, args: &[String], stdin: &str, ctx: &CheckContext)
     let lenient = load_settings_lenient(&ctx.paths);
     let enforce = lenient.enforce;
     if is_disabled(&ctx.git) {
+        if stage == Stage::Push {
+            // Regression D4: a push made with GITHOP_DISABLE=1 still publishes
+            // commits, so record them (no spawn) and Fix never rewrites them.
+            push::record_only(ctx, args, stdin);
+        }
         return CheckResult::new(stage, enforce, Outcome::Disabled);
     }
+    // Check the history git actually pushes: no replace refs, no grafts
+    // (security regression #1, #7). Env only, no extra spawn.
+    let real = CheckContext {
+        git: ctx.git.real_history(),
+        cwd: ctx.cwd.clone(),
+        paths: ctx.paths.clone(),
+    };
+    let ctx = &real;
     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match stage {
         Stage::Commit => commit::run(ctx, enforce),
         Stage::Push => push::run(ctx, args, stdin, enforce),

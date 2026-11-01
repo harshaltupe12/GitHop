@@ -49,7 +49,8 @@ block when `githop.exe` was missing or crashed.
    committer), not the picked commit's author.
 6. **The repo hook runs once** when the previous hooks path is the repo's own
    hooks folder: the scripts compare the two hook files with `-ef`.
-7. **`enforce` is baked into the scripts** (`STRICT=1` for `block-strict`).
+7. *(Superseded by ADR 0005 #1: the mode is now read at run time.)*
+   **`enforce` is baked into the scripts** (`STRICT=1` for `block-strict`).
    With it, a missing `githop.exe` or any exit code other than 0 blocks.
    `hooks::refresh_if_installed` re-renders the hook files (no git config
    write); the tray's settings update calls it when `enforce` changes. Doctor
