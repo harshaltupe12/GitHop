@@ -7,6 +7,7 @@
 pub mod backup;
 pub mod check;
 pub mod error;
+pub mod export;
 pub mod git;
 pub mod gitconfig;
 pub mod hooks;

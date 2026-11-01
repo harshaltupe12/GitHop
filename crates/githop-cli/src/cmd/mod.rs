@@ -4,7 +4,9 @@ pub mod add;
 pub mod check;
 pub mod doctor;
 pub mod edit;
+pub mod export;
 pub mod fix;
+pub mod import;
 pub mod init;
 pub mod keygen;
 pub mod list;
@@ -89,6 +91,8 @@ pub fn run(ctx: &Ctx, command: Command) -> Result<Exit> {
         Command::Keygen(a) => keygen::run(ctx, a),
         Command::Test(a) => test::run(ctx, a),
         Command::Doctor => doctor::run(ctx),
+        Command::Export(a) => export::run(ctx, a),
+        Command::Import(a) => import::run(ctx, a),
         Command::Wipe(a) => wipe::run(ctx, a),
         Command::Check(a) => check::run(ctx, a),
         Command::Fix => fix::run(ctx),
