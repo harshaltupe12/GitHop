@@ -22,6 +22,31 @@ pub const DEFAULT_MAX_DEPTH: usize = 4;
 /// Directory names never descended into.
 pub const SKIP_DIRS: &[&str] = &["node_modules", "target", ".git", "vendor", "dist", "build"];
 
+/// Windows system folders never descended into, wherever they are: they hold
+/// deleted files (`$Recycle.Bin` keeps whole deleted repos), app caches and OS
+/// data, never repos the user works in. Any name starting with `$` is skipped too.
+pub const SYSTEM_SKIP_DIRS: &[&str] = &["System Volume Information", "AppData"];
+
+/// Windows system folders skipped only directly under a drive root (`C:/Windows`),
+/// so a project folder that happens to be called "Windows" deeper down still scans.
+pub const DRIVE_ROOT_SKIP_DIRS: &[&str] = &[
+    "Windows",
+    "Program Files",
+    "Program Files (x86)",
+    "ProgramData",
+    "Recovery",
+];
+
+/// Should the walk skip a child folder called `name`? `at_drive_root` is true when
+/// its parent is a drive root such as `C:/`. Case-insensitive.
+pub fn skip_dir(name: &str, at_drive_root: bool) -> bool {
+    let eq = |s: &&str| s.eq_ignore_ascii_case(name);
+    name.starts_with('$')
+        || SKIP_DIRS.iter().any(eq)
+        || SYSTEM_SKIP_DIRS.iter().any(eq)
+        || (at_drive_root && DRIVE_ROOT_SKIP_DIRS.iter().any(eq))
+}
+
 /// Upper bound on scan worker threads.
 const MAX_THREADS: usize = 8;
 
@@ -37,7 +62,8 @@ pub struct ScannedRepo {
 }
 
 /// Walk `root` up to `max_depth` levels, returning dirs that contain a `.git` dir or
-/// `.git` file (worktrees/submodules). Does not descend into a found repo or [`SKIP_DIRS`].
+/// `.git` file (worktrees/submodules). Does not descend into a found repo or a folder
+/// [`skip_dir`] rejects ([`SKIP_DIRS`], Windows system folders, `$`-names).
 /// Sorted. Unreadable dirs are skipped silently.
 ///
 /// `root` itself is depth 0 (so `max_depth = 0` only checks `root`). Symlinks and
@@ -56,6 +82,8 @@ pub fn find_repos(root: &Path, max_depth: usize) -> Vec<PathBuf> {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
+        // `C:/` has no parent; `C:/Users` does.
+        let at_drive_root = dir.parent().is_none();
         for entry in entries.flatten() {
             // `file_type` does not follow links; junctions report as symlinks on Windows.
             let Ok(ft) = entry.file_type() else {
@@ -66,7 +94,7 @@ pub fn find_repos(root: &Path, max_depth: usize) -> Vec<PathBuf> {
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if SKIP_DIRS.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
+            if skip_dir(&name, at_drive_root) {
                 continue;
             }
             stack.push((entry.path(), depth + 1));
@@ -255,6 +283,57 @@ mod tests {
         mkdirs(r, "empty/deeper");
         let found = find_repos(r, DEFAULT_MAX_DEPTH);
         assert_eq!(rel(r, &found), vec!["a-repo", "b-repo", "Group/C-repo"]);
+    }
+
+    #[test]
+    fn skips_windows_system_folders() {
+        for name in [
+            "$Recycle.Bin",
+            "$RECYCLE.BIN",
+            "$WinREAgent",
+            "$R700044",
+            "System Volume Information",
+            "system volume information",
+            "AppData",
+            "appdata",
+            "node_modules",
+        ] {
+            assert!(skip_dir(name, false), "{name} anywhere");
+            assert!(skip_dir(name, true), "{name} at drive root");
+        }
+        for name in [
+            "Windows",
+            "windows",
+            "Program Files",
+            "PROGRAM FILES (X86)",
+            "ProgramData",
+            "Recovery",
+        ] {
+            assert!(skip_dir(name, true), "{name} at drive root");
+            assert!(
+                !skip_dir(name, false),
+                "{name} deeper down is a normal folder"
+            );
+        }
+        for name in ["Users", "Projects", "my$repo", "app-data", "Harshal"] {
+            assert!(!skip_dir(name, true), "{name}");
+            assert!(!skip_dir(name, false), "{name}");
+        }
+    }
+
+    #[test]
+    fn walk_skips_recycle_bin_and_appdata() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        mkdirs(r, "$Recycle.Bin/S-1-5-21/$R700044/.git");
+        mkdirs(r, "Users/me/AppData/Local/tool/.git");
+        mkdirs(r, "Users/me/code/app/.git");
+        // Not at a drive root, so these are ordinary folders.
+        mkdirs(r, "Users/me/Windows/winapp/.git");
+        assert_eq!(
+            rel(r, &find_repos(r, DEFAULT_MAX_DEPTH)),
+            vec!["Users/me/code/app", "Users/me/Windows/winapp"]
+        );
     }
 
     #[test]

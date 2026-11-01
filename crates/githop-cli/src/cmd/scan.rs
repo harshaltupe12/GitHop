@@ -1,5 +1,6 @@
 //! `githop scan <folder> [--apply] [--json]` — find repos and show which profile owns each.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -9,7 +10,10 @@ use githop_core::text::{plural, wrap};
 use githop_core::{pin as core_pin, ProfileSet, Repo, ResolutionSource};
 use serde_json::json;
 
-use super::{remember_repo, source_tag, warning_json, Ctx};
+use super::{
+    add_owner_command, labels_and, ownerless_profiles, remember_repo, source_tag, unmatched_owner,
+    warning_json, Ctx,
+};
 use crate::cli::ScanArgs;
 use crate::exit::{usage, Exit};
 
@@ -308,7 +312,91 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
             "",
         ));
     }
+    for line in owner_summary(&repos, &statuses, &set) {
+        match line {
+            SummaryLine::Warn(t) => ui.warn(&wrap(&t, crate::ui::MAX_WIDTH - 2, "  ")),
+            SummaryLine::Row(t) => ui.line(&t),
+            SummaryLine::Hint(t) => ui.fix_hint(&t),
+        }
+    }
     Ok(Exit::Ok)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SummaryLine {
+    Warn(String),
+    Row(String),
+    Hint(String),
+}
+
+/// Repos no rule matched, grouped by GitHub owner, when another profile has no
+/// owners yet — the usual reason an office repo falls back to a personal default.
+fn owner_summary(
+    repos: &[ScannedRepo],
+    statuses: &[RepoStatus],
+    set: &ProfileSet,
+) -> Vec<SummaryLine> {
+    let candidates = ownerless_profiles(set);
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    // Lower-case key (GitHub owners are case-insensitive), first spelling kept.
+    let mut groups: BTreeMap<String, (String, usize)> = BTreeMap::new();
+    for (r, s) in repos.iter().zip(statuses) {
+        if matches!(
+            s,
+            RepoStatus::Error | RepoStatus::Pinned | RepoStatus::PinnedNow
+        ) {
+            continue;
+        }
+        if let Some(owner) = unmatched_owner(&r.resolution) {
+            let e = groups
+                .entry(owner.to_lowercase())
+                .or_insert_with(|| (owner.to_lowercase(), 0));
+            e.1 += 1;
+        }
+    }
+    if groups.is_empty() {
+        return Vec::new();
+    }
+    let total: usize = groups.values().map(|(_, n)| n).sum();
+    let width = groups.values().map(|(o, _)| o.len()).max().unwrap_or(0);
+    let mut out = vec![SummaryLine::Warn(format!(
+        "{} matched no owner rule, so {} the default profile. By GitHub owner:",
+        plural(total, "repo", "repos"),
+        if total == 1 { "it uses" } else { "they use" }
+    ))];
+    for (owner, n) in groups.values() {
+        out.push(SummaryLine::Row(format!(
+            "    {owner:<width$}  {}",
+            plural(*n, "repo", "repos")
+        )));
+    }
+    let names = labels_and(&candidates);
+    let has = if candidates.len() == 1 { "has" } else { "have" };
+    let owners: Vec<&str> = groups.values().map(|(o, _)| o.as_str()).collect();
+    match candidates.as_slice() {
+        [c] => {
+            out.push(SummaryLine::Hint(format!(
+                "{names} {has} no owners yet. Add the ones that are {}'s:",
+                c.label
+            )));
+            out.push(SummaryLine::Hint(format!(
+                "  {}",
+                add_owner_command(&candidates, &owners)
+            )));
+        }
+        _ => {
+            out.push(SummaryLine::Hint(format!(
+                "{names} {has} no owners yet. Add each owner to its profile:"
+            )));
+            out.push(SummaryLine::Hint(format!(
+                "  {}",
+                add_owner_command(&candidates, &["<owner>"])
+            )));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -412,6 +500,118 @@ mod tests {
         let o = repo(Some(ResolutionSource::Owner), None, "me@company.com");
         assert!(pinnable(&o, RepoStatus::NotPinned, false));
         assert!(!pinnable(&o, RepoStatus::Pinned, false));
+    }
+
+    fn profile(id: &str, label: &str, owners: &[&str]) -> Profile {
+        Profile {
+            id: id.into(),
+            label: label.into(),
+            name: "Me".into(),
+            email: format!("{id}@example.com"),
+            color: ProfileColor::Blue,
+            ssh_key: format!("C:/k/{id}").into(),
+            owners: owners.iter().map(|o| o.to_string()).collect(),
+            folders: vec![],
+        }
+    }
+
+    /// The owner's real setup: Office has no owners, Personal is the default.
+    fn office_unrouted() -> ProfileSet {
+        ProfileSet {
+            version: 1,
+            default: Some("personal".into()),
+            profiles: vec![
+                profile("office", "Office", &[]),
+                profile("personal", "Personal", &["harshaltupe12"]),
+            ],
+        }
+    }
+
+    fn default_repo(owner: &str) -> ScannedRepo {
+        let mut r = repo(
+            Some(ResolutionSource::Default),
+            None,
+            "personal@example.com",
+        );
+        r.resolution.profile_id = Some("personal".into());
+        r.resolution.remote = Some(githop_core::RemoteInfo {
+            host: "github.com".into(),
+            owner: owner.into(),
+            repo: "api".into(),
+        });
+        r
+    }
+
+    fn text(lines: &[SummaryLine]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| match l {
+                SummaryLine::Warn(t) => format!("! {t}"),
+                SummaryLine::Row(t) | SummaryLine::Hint(t) => t.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn summary_groups_default_only_repos_by_owner() {
+        let set = office_unrouted();
+        let mut pinned = default_repo("miraki-labs");
+        pinned.resolution.source = Some(ResolutionSource::Pin);
+        let repos = vec![
+            default_repo("miraki-labs"),
+            default_repo("Miraki-Labs"),
+            default_repo("harshal-miraki"),
+            pinned,
+        ];
+        let statuses: Vec<RepoStatus> = repos.iter().map(|r| classify(r, &set)).collect();
+        assert_eq!(
+            text(&owner_summary(&repos, &statuses, &set)),
+            vec![
+                "! 3 repos matched no owner rule, so they use the default profile. \
+                 By GitHub owner:",
+                "    harshal-miraki  1 repo",
+                "    miraki-labs     2 repos",
+                "Office has no owners yet. Add the ones that are Office's:",
+                "  githop edit office --owner harshal-miraki --owner miraki-labs",
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_quiet_when_every_profile_has_owners() {
+        let mut routed = office_unrouted();
+        routed.profiles[0].owners = vec!["miraki-labs".into()];
+        let repos = vec![default_repo("someone-else")];
+        let statuses = vec![RepoStatus::NotPinned];
+        assert!(owner_summary(&repos, &statuses, &routed).is_empty());
+        // One profile: nothing to route to.
+        assert!(owner_summary(&repos, &statuses, &set()).is_empty());
+    }
+
+    #[test]
+    fn summary_with_several_ownerless_profiles_uses_placeholder() {
+        let mut set = office_unrouted();
+        set.profiles.push(profile("side", "Side", &[]));
+        let repos = vec![default_repo("acme")];
+        let statuses = vec![RepoStatus::NotPinned];
+        let out = text(&owner_summary(&repos, &statuses, &set));
+        assert_eq!(
+            out[2..],
+            [
+                "Office and Side have no owners yet. Add each owner to its profile:",
+                "  githop edit <profile> --owner <owner>  (office, side)",
+            ]
+        );
+    }
+
+    #[test]
+    fn non_github_hosts_are_left_out() {
+        let set = office_unrouted();
+        let mut r = default_repo("team");
+        r.resolution.warnings = vec![githop_core::ResolutionWarning::NonGithubHost {
+            host: "gitlab.com".into(),
+        }];
+        assert!(owner_summary(&[r], &[RepoStatus::NotPinned], &set).is_empty());
     }
 
     #[test]

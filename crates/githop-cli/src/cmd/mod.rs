@@ -236,6 +236,64 @@ pub fn describe_source(res: &Resolution) -> String {
     }
 }
 
+/// Non-default profiles with no owners yet. With two or more profiles an owner
+/// rule never picks them, so their repos quietly use the default profile (how an
+/// office repo got a personal commit: Office had no owners, Personal was default).
+pub fn ownerless_profiles(set: &ProfileSet) -> Vec<&Profile> {
+    if set.profiles.len() < 2 {
+        return Vec::new();
+    }
+    let default = set.default.as_deref().map(str::trim);
+    set.profiles
+        .iter()
+        .filter(|p| default != Some(p.id.trim()) && p.owners.iter().all(|o| o.trim().is_empty()))
+        .collect()
+}
+
+/// The GitHub owner of a repo no rule matched (default profile or none, not pinned).
+/// `None` for non-GitHub hosts, where owner rules don't apply.
+pub fn unmatched_owner(res: &Resolution) -> Option<&str> {
+    let no_rule = matches!(res.source, Some(ResolutionSource::Default) | None);
+    let non_github = res
+        .warnings
+        .iter()
+        .any(|w| matches!(w, ResolutionWarning::NonGithubHost { .. }));
+    if !no_rule || res.pinned.is_some() || non_github {
+        return None;
+    }
+    res.remote
+        .as_ref()
+        .map(|r| r.owner.as_str())
+        .filter(|o| !o.trim().is_empty())
+}
+
+/// `githop edit office --owner miraki-labs`, or `<profile>` plus the choices.
+/// `--owner` replaces a profile's owners, which is safe here: candidates have none.
+pub fn add_owner_command(candidates: &[&Profile], owners: &[&str]) -> String {
+    let flags = owners
+        .iter()
+        .map(|o| format!("--owner {o}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    match candidates {
+        [p] => format!("githop edit {} {flags}", p.id),
+        _ => {
+            let ids: Vec<&str> = candidates.iter().map(|p| p.id.as_str()).collect();
+            format!("githop edit <profile> {flags}  ({})", ids.join(", "))
+        }
+    }
+}
+
+/// "Office" / "Office and Freelance" / "Office, Freelance and Side".
+pub fn labels_and(profiles: &[&Profile]) -> String {
+    let labels: Vec<&str> = profiles.iter().map(|p| p.label.as_str()).collect();
+    match labels.as_slice() {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 /// Short source tag for tables.
 pub fn source_tag(res: &Resolution) -> &'static str {
     match res.source {

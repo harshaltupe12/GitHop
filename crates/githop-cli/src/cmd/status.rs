@@ -4,13 +4,16 @@ use anyhow::Result;
 use githop_core::gitconfig::ConfigScope;
 use githop_core::hooks;
 use githop_core::paths::to_slash;
+use githop_core::text::wrap;
 use githop_core::{
-    pin as core_pin, resolve, EffectiveIdentity, Identity, Profile, Repo, ResolutionSource,
+    pin as core_pin, resolve, EffectiveIdentity, Identity, Profile, ProfileSet, Repo, Resolution,
+    ResolutionSource,
 };
 use serde_json::json;
 
 use super::{
-    cwd, describe_source, describe_warning, key_display, profile_ids, same_path, warning_json, Ctx,
+    add_owner_command, cwd, describe_source, describe_warning, key_display, ownerless_profiles,
+    profile_ids, same_path, unmatched_owner, warning_json, Ctx,
 };
 use crate::exit::Exit;
 
@@ -25,6 +28,42 @@ fn ident_text(i: &Identity) -> String {
 
 fn identity_matches(id: &EffectiveIdentity, p: &Profile) -> bool {
     id.author.email_matches(&p.email) && id.committer.email_matches(&p.email)
+}
+
+/// Warning + command when this repo's GitHub owner matched no rule and another
+/// profile has no owners yet (Design §9.1: what happened, why, one next step).
+fn owner_hint_lines(
+    set: &ProfileSet,
+    res: &Resolution,
+    profile: Option<&Profile>,
+) -> Option<(String, String)> {
+    let owner = unmatched_owner(res)?;
+    let candidates = ownerless_profiles(set);
+    if candidates.is_empty() {
+        return None;
+    }
+    let warn = match profile {
+        Some(p) => format!(
+            "No profile owns {owner} on GitHub, so this repo uses your default profile ({}).",
+            p.label
+        ),
+        None => format!("No profile owns {owner} on GitHub, and there's no default profile."),
+    };
+    let cmd = add_owner_command(&candidates, &[owner]);
+    let hint = match candidates.as_slice() {
+        [c] => format!("If it's {} repo, run: {cmd}", article(&c.label)),
+        _ => format!("Add it to the profile it belongs to: {cmd}"),
+    };
+    Some((warn, hint))
+}
+
+/// "an Office" / "a Personal".
+fn article(label: &str) -> String {
+    let vowel = label
+        .chars()
+        .next()
+        .is_some_and(|c| "aeiouAEIOU".contains(c));
+    format!("{} {label}", if vowel { "an" } else { "a" })
 }
 
 pub fn run(ctx: &Ctx) -> Result<Exit> {
@@ -112,6 +151,15 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
             .unwrap_or("none (ssh picks a key itself)"),
     ));
 
+    // No rule matched this repo's GitHub owner while another profile has no owners:
+    // name the owner and the one command that routes it. Pinning to the default
+    // would make the mix-up permanent, so that hint is left out then.
+    let owner_hint = owner_hint_lines(set, &res, profile);
+    let pin_hint = |id: &str| {
+        if owner_hint.is_none() {
+            ui.hint(&format!("Run: githop pin {id}"));
+        }
+    };
     match (profile, &identity) {
         (Some(p), Some(i)) if identity_matches(i, p) => {
             ui.ok(&format!("Commits here use the {} identity.", p.label));
@@ -136,12 +184,12 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
                     ui.hint(&o.why());
                     ui.hint(&o.action());
                 }
-                None => ui.hint(&format!("Run: githop pin {}", p.id)),
+                None => pin_hint(&p.id),
             }
         }
         (Some(p), None) => {
             ui.warn("Git has no identity for this repo yet, so commits would fail.");
-            ui.hint(&format!("Run: githop pin {}", p.id));
+            pin_hint(&p.id);
         }
         (None, _) => {
             ui.warn("GitHop can't tell which profile owns this repo.");
@@ -153,17 +201,23 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
             }
         }
     }
+    if let Some((warn, hint)) = &owner_hint {
+        ui.warn(&wrap(warn, crate::ui::MAX_WIDTH - 2, "  "));
+        ui.fix_hint(hint);
+    }
     if let (Some(p), Some(false)) = (profile, key_matches) {
         ui.warn(&format!(
             "This repo doesn't use the {} SSH key, so a push may sign in as the wrong account.",
             p.label
         ));
-        ui.hint(&format!("Run: githop pin {}", p.id));
+        pin_hint(&p.id);
     }
     if let (Some(p), None) = (profile, &res.pinned) {
         let default_only = res.source == Some(ResolutionSource::Default);
         if id_matches == Some(true) && (key_matches != Some(false) || default_only) {
-            if res.source == Some(ResolutionSource::Default) {
+            if owner_hint.is_some() {
+                // Already explained above.
+            } else if res.source == Some(ResolutionSource::Default) {
                 // D21: a default-only pin is what ADR 0003 #6 avoids.
                 ui.hint(
                     "Only the default profile matches. Add an owner or folder rule, \
@@ -188,4 +242,116 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
         ui.hint("Run: githop doctor");
     }
     Ok(Exit::Ok)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use githop_core::{ProfileColor, RemoteInfo, ResolutionWarning};
+
+    fn profile(id: &str, label: &str, owners: &[&str]) -> Profile {
+        Profile {
+            id: id.into(),
+            label: label.into(),
+            name: "Me".into(),
+            email: format!("{id}@example.com"),
+            color: ProfileColor::Blue,
+            ssh_key: format!("C:/k/{id}").into(),
+            owners: owners.iter().map(|o| o.to_string()).collect(),
+            folders: vec![],
+        }
+    }
+
+    fn set(office_owners: &[&str]) -> ProfileSet {
+        ProfileSet {
+            version: 1,
+            default: Some("personal".into()),
+            profiles: vec![
+                profile("office", "Office", office_owners),
+                profile("personal", "Personal", &["harshaltupe12"]),
+            ],
+        }
+    }
+
+    fn default_only(owner: &str) -> Resolution {
+        Resolution {
+            profile_id: Some("personal".into()),
+            source: Some(ResolutionSource::Default),
+            remote_name: Some("origin".into()),
+            remote: Some(RemoteInfo {
+                host: "github.com".into(),
+                owner: owner.into(),
+                repo: "api".into(),
+            }),
+            pinned: None,
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn hint_names_the_owner_and_the_ownerless_profile() {
+        let s = set(&[]);
+        let res = default_only("miraki-labs");
+        let (warn, hint) = owner_hint_lines(&s, &res, s.get("personal")).unwrap();
+        assert_eq!(
+            warn,
+            "No profile owns miraki-labs on GitHub, so this repo uses your default \
+             profile (Personal)."
+        );
+        assert_eq!(
+            hint,
+            "If it's an Office repo, run: githop edit office --owner miraki-labs"
+        );
+    }
+
+    #[test]
+    fn no_hint_when_routed_pinned_or_not_github() {
+        // Office already has an owner: the default really is the fallback.
+        let routed = set(&["miraki-labs"]);
+        assert!(owner_hint_lines(&routed, &default_only("other"), None).is_none());
+
+        let s = set(&[]);
+        let mut pinned = default_only("miraki-labs");
+        pinned.source = Some(ResolutionSource::Pin);
+        pinned.pinned = Some("personal".into());
+        assert!(owner_hint_lines(&s, &pinned, None).is_none());
+
+        let mut by_owner = default_only("harshaltupe12");
+        by_owner.source = Some(ResolutionSource::Owner);
+        assert!(owner_hint_lines(&s, &by_owner, None).is_none());
+
+        let mut gitlab = default_only("team");
+        gitlab.warnings = vec![ResolutionWarning::NonGithubHost {
+            host: "gitlab.com".into(),
+        }];
+        assert!(owner_hint_lines(&s, &gitlab, None).is_none());
+
+        let mut no_remote = default_only("x");
+        no_remote.remote = None;
+        assert!(owner_hint_lines(&s, &no_remote, None).is_none());
+    }
+
+    #[test]
+    fn hint_with_no_default_profile() {
+        let mut s = set(&[]);
+        s.default = None;
+        let mut res = default_only("miraki-labs");
+        res.profile_id = None;
+        res.source = None;
+        let (warn, hint) = owner_hint_lines(&s, &res, None).unwrap();
+        assert_eq!(
+            warn,
+            "No profile owns miraki-labs on GitHub, and there's no default profile."
+        );
+        assert_eq!(
+            hint,
+            "If it's an Office repo, run: githop edit office --owner miraki-labs"
+        );
+    }
+
+    #[test]
+    fn article_reads_naturally() {
+        assert_eq!(article("Office"), "an Office");
+        assert_eq!(article("Personal"), "a Personal");
+    }
 }
