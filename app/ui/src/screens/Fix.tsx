@@ -237,7 +237,9 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
               busy: undoing,
             }}
           >
-            {S.fix.done(result.count)}
+            {result.res.fast_forward === false
+              ? S.fix.doneDiverged(result.count)
+              : S.fix.done(result.count)}
             <span className="mt-1 flex items-center gap-1 text-small">
               <Ico icon={Icons.shield} />
               <span className="font-mono text-mono-small">
@@ -273,10 +275,13 @@ export function FixScreen({ profiles }: { profiles: ProfileSet }) {
               </Banner>
             )}
             <Table label={S.fix.tableLabel} columns={columns} rows={all} rowKey={(c) => c.sha} />
-            {!plan.pushed_offenders.length && !plan.blocked_reason && plan.profile_id ? (
+            {plan.offenders.length > 0 && !plan.blocked_reason && plan.profile_id ? (
               <>
                 <Banner kind="info" icon={Icons.shield} live={false}>
                   {S.fix.reassure}
+                  {plan.foreign ? (
+                    <span className="mt-1 block text-small">{S.fix.foreign(plan.foreign)}</span>
+                  ) : null}
                 </Banner>
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button onClick={() => setRepo(null)} disabled={fixing}>

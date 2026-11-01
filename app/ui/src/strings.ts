@@ -236,6 +236,10 @@ export const S = {
     fixWith: (label: string) => `Fix with ${label} identity`,
     fixing: 'Fixing…',
     done: (n: number) => `${n} ${plural(n, 'commit', 'commits')} fixed. You can push now.`,
+    doneDiverged: (n: number) =>
+      `${n} ${plural(n, 'commit', 'commits')} fixed. Your branch now differs from the remote: run git pull --rebase before you push.`,
+    foreign: (n: number) =>
+      `${n} ${plural(n, 'commit', 'commits')} by someone else ${plural(n, 'keeps its', 'keep their')} author.`,
     toastDone: (n: number) => `${n} ${plural(n, 'commit', 'commits')} fixed.`,
     backup: (ref: string) => `Backup saved as ${ref}.`,
     undone: 'Fix undone. Your commits are back as they were.',

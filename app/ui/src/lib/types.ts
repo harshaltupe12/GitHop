@@ -149,8 +149,32 @@ export type FixPlan = {
   offenders: OffendingCommit[];
   pushed_offenders: OffendingCommit[];
   blocked_reason?: string | null;
+  blocker?:
+    | 'operation-in-progress'
+    | 'detached-head'
+    | 'unresolved'
+    | 'dirty-tree'
+    | 'too-many-commits'
+    | 'pushed-unknown'
+    | 'shallow'
+    | null;
+  unpushed?: number;
+  rewrite_count?: number;
+  signed?: number;
+  has_remote_refs?: boolean;
+  /** Unpushed commits by someone else: copied exactly, author kept. */
+  foreign?: number;
 };
-export type FixResult = { backup_ref: string; rewritten: number; undo_hint: string };
+export type FixResult = {
+  backup_ref: string;
+  rewritten: number;
+  undo_hint: string;
+  recreated?: number;
+  old_head?: string;
+  new_head?: string;
+  /** The new head fast-forwards from upstream / last push: a plain push works. */
+  fast_forward?: boolean;
+};
 
 export type WipeOptions = { unpin_repos: boolean; delete_keys: boolean; keep_data: boolean };
 export type WipeStep = { step: string; ok: boolean; detail: string };
