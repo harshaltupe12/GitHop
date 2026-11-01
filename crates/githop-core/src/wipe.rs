@@ -481,7 +481,7 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
         );
     } else {
         drop(store.take());
-        match remove_dir_retry(paths.root()) {
+        match remove_githop_data(paths) {
             Ok(true) => report.push(
                 STEP_DATA,
                 true,
@@ -516,21 +516,72 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
     Ok(report)
 }
 
-fn remove_dir_retry(dir: &Path) -> std::io::Result<bool> {
-    if !dir.exists() {
+/// Files GitHop writes directly in its data dir.
+const DATA_FILES: &[&str] = &[
+    "profiles.toml",
+    "settings.toml",
+    ".lock",
+    crate::check::LAST_BLOCK_FILE,
+];
+
+/// Delete only what GitHop owns in the data dir — its files, its `hooks/`,
+/// `backups/` and `logs/` folders and leftover temp files from atomic writes —
+/// then the data dir itself if that leaves it empty. Anything else (e.g. user
+/// files when `GITHOP_HOME` points at a shared folder) is kept.
+/// `Ok(false)` = there was nothing to delete.
+fn remove_githop_data(paths: &Paths) -> std::io::Result<bool> {
+    let root = paths.root();
+    if !root.exists() {
         return Ok(false);
     }
+    let mut removed = false;
+    for dir in [paths.hooks_dir(), paths.backups_dir(), paths.logs_dir()] {
+        removed |= retry(|| match std::fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            r => r.map(|()| true),
+        })?;
+    }
+    let mut names: Vec<std::ffi::OsString> = DATA_FILES.iter().map(Into::into).collect();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        names.extend(
+            entries
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .map(|e| e.file_name())
+                .filter(|n| n.to_str().is_some_and(is_githop_temp_name)),
+        );
+    }
+    for name in names {
+        let file = root.join(name);
+        removed |= retry(|| match std::fs::remove_file(&file) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            r => r.map(|()| true),
+        })?;
+    }
+    // Only an empty folder is removed; "not empty" means the user keeps their files.
+    if std::fs::remove_dir(root).is_ok() {
+        removed = true;
+    }
+    Ok(removed)
+}
+
+/// Temp files left by an interrupted atomic write (`tempfile` names start with
+/// `.tmp`; hook writes use `.githop-hook-`).
+fn is_githop_temp_name(name: &str) -> bool {
+    name.starts_with(".tmp") || name.starts_with(".githop-")
+}
+
+/// Windows: an antivirus or indexer may hold a file for a moment.
+fn retry(mut op: impl FnMut() -> std::io::Result<bool>) -> std::io::Result<bool> {
     let mut last = None;
     for attempt in 0..3 {
-        match std::fs::remove_dir_all(dir) {
-            Ok(()) => return Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        match op() {
+            Ok(v) => return Ok(v),
             Err(e) => last = Some(e),
         }
-        // Windows: an antivirus or indexer may hold a file for a moment.
         std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
     }
-    Err(last.unwrap_or_else(|| std::io::Error::other("couldn't delete the folder")))
+    Err(last.unwrap_or_else(|| std::io::Error::other("couldn't delete the file")))
 }
 
 /// Delete `githop_*` files (private keys and `.pub`) directly inside `~/.ssh`.
@@ -669,6 +720,44 @@ fn run_reg(args: &[&str]) -> std::io::Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_removal_keeps_files_githop_did_not_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::at(tmp.path().join("shared"));
+        paths.ensure_dirs().unwrap();
+        for f in [
+            "profiles.toml",
+            "settings.toml",
+            ".lock",
+            "last-block",
+            ".tmpAb12",
+        ] {
+            std::fs::write(paths.root().join(f), "x").unwrap();
+        }
+        std::fs::write(paths.backups_dir().join("gitconfig.original"), "x").unwrap();
+        std::fs::write(paths.hooks_dir().join("pre-commit"), "x").unwrap();
+        std::fs::write(paths.root().join("my-notes.txt"), "keep me").unwrap();
+        std::fs::create_dir(paths.root().join("my-folder")).unwrap();
+
+        assert!(remove_githop_data(&paths).unwrap());
+        let left: Vec<String> = std::fs::read_dir(paths.root())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        let mut left = left;
+        left.sort();
+        assert_eq!(left, ["my-folder", "my-notes.txt"]);
+
+        // A dir holding only GitHop's files is removed entirely.
+        let own = Paths::at(tmp.path().join("own"));
+        own.ensure_dirs().unwrap();
+        std::fs::write(own.profiles_file(), "x").unwrap();
+        assert!(remove_githop_data(&own).unwrap());
+        assert!(!own.root().exists());
+        assert!(!remove_githop_data(&own).unwrap());
+    }
 
     #[test]
     fn key_names() {
