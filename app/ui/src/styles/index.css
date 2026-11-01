@@ -1,0 +1,127 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.4286;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Design §11: visible 2 px aqua-strong ring, 2 px offset, never removed. */
+  :focus-visible {
+    outline: 2px solid var(--aqua-strong);
+    outline-offset: 2px;
+  }
+  /* Inputs: focus replaces the 1 px border with 2 px aqua-strong (Design §4.3, §7.10). */
+  .gh-input:focus-visible,
+  .gh-input:focus-within:has(input:focus-visible) {
+    outline: 2px solid var(--aqua-strong);
+    outline-offset: -1px;
+  }
+  .gh-input input:focus-visible {
+    outline: none;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  ::selection {
+    background: var(--aqua-tint);
+    color: var(--aqua-ink);
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: var(--aqua-strong);
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+/* Tray menu window (Design §7.14): frameless, the menu draws its own surface. */
+html.tray,
+html.tray body {
+  background: transparent;
+}
+
+@layer utilities {
+  .transition-ui {
+    transition-property: color, background-color, border-color, outline-color, opacity;
+    transition-timing-function: var(--ease);
+    transition-duration: var(--dur-fast);
+  }
+  .transition-colour-base {
+    transition-property: color, background-color, border-color;
+    transition-timing-function: var(--ease);
+    transition-duration: var(--dur-base);
+  }
+  .fade-in {
+    animation: gh-fade var(--dur-screen) var(--ease);
+  }
+  .menu-in {
+    animation: gh-fade var(--dur-base) var(--ease);
+  }
+  .spin {
+    animation: gh-spin 900ms linear infinite;
+  }
+}
+
+@keyframes gh-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes gh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Design §10: respect reduced motion → instant transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+  }
+}
+
+/* Design §11: Windows contrast themes — system colours, keep borders and focus visible. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+  .gh-pill,
+  .gh-banner,
+  .gh-chip,
+  .gh-toggle,
+  .gh-card,
+  .gh-tooltip,
+  .gh-toast,
+  .gh-menu,
+  .gh-dialog {
+    border: 1px solid CanvasText;
+  }
+  .gh-nav[aria-current='page'] {
+    outline: 2px solid Highlight;
+  }
+  /* Profile colour is identity — keep the swatch and its initial as drawn. */
+  .gh-avatar {
+    forced-color-adjust: none;
+  }
+  .gh-toggle[aria-checked='true'] {
+    background: Highlight;
+  }
+}
