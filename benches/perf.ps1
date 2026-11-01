@@ -33,6 +33,7 @@ param(
     [switch]$UpdateBaseline,
     [switch]$NoHyperfine,
     [string]$Out,
+    [switch]$Trace,
     [string]$Baseline = (Join-Path $PSScriptRoot '..\perf-baseline.json')
 )
 
@@ -211,9 +212,47 @@ try {
     $stdinFile = Join-Path $tmp 'push-stdin.txt'
     [IO.File]::WriteAllText($stdinFile, "refs/heads/main $head refs/heads/main $base`n")
 
+    if ($Trace) {
+        # One run per githop case with spawn timing on (GITHOP_DEBUG_TIMING=1).
+        $env:GITHOP_DEBUG_TIMING = '1'
+        $cases = @(
+            @('commit-pinned', $pinned, @('check', '--stage', 'commit'), $null, @{}),
+            @('commit-pinned-hook', $pinned, @('check', '--stage', 'commit'), $null, @{ GIT_AUTHOR_EMAIL = $office; GIT_AUTHOR_NAME = 'Harshal Office' }),
+            @('commit-unpinned', $unpinned, @('check', '--stage', 'commit'), $null, @{}),
+            @('push-100', $push, @('check', '--stage', 'push', '--', 'origin', 'git@github.com:office-org/push-100.git'), $stdinFile, @{})
+        )
+        foreach ($c in $cases) {
+            foreach ($k in $c[4].Keys) { [Environment]::SetEnvironmentVariable($k, $c[4][$k], 'Process') }
+            Push-Location $c[1]
+            $ErrorActionPreference = 'Continue'
+            if ($c[3]) { $o = Get-Content $c[3] | & $exe @($c[2]) 2>&1 } else { $o = & $exe @($c[2]) 2>&1 }
+            $ErrorActionPreference = 'Stop'
+            Pop-Location
+            foreach ($k in $c[4].Keys) { [Environment]::SetEnvironmentVariable($k, $null, 'Process') }
+            Write-Host "--- $($c[0]) (exit $LASTEXITCODE)"
+            $o | ForEach-Object { Write-Host "    $_" }
+        }
+        Remove-Item Env:GITHOP_DEBUG_TIMING
+        # Which hooks one `git commit` runs (each is one sh start).
+        $traceFile = Join-Path $tmp 'git-trace.txt'
+        $env:GIT_TRACE = $traceFile
+        Push-Location $pinned
+        $ErrorActionPreference = 'Continue'
+        & $gitExe commit -q --allow-empty -m trace 2>&1 | Out-Null
+        $t = [IO.File]::ReadAllText($traceFile)
+        $ErrorActionPreference = 'Stop'
+        Pop-Location
+        Remove-Item Env:GIT_TRACE
+        $hooksRun = ($t -split "`n") | Where-Object { $_ -match 'run_command' } | ForEach-Object { if ($_ -match 'hooks[/\\]+([a-z0-9-]+)') { $Matches[1] } }
+        if (-not $hooksRun) { Write-Host (($t -split "`n") | Select-Object -First 15 | Out-String) }
+        Write-Host "--- hooks run by one git commit: $($hooksRun.Count) ($($hooksRun -join ', '))"
+    }
     $tool = if ($hyperfine) { 'hyperfine' } else { '.NET process loop' }
     Write-Host "Measuring ($tool, $Runs runs, $Warmup warm-up)..."
     $results['version'] = Measure-Case 'version' $exe @('--version') $homeDir $null
+    $results['floor-git-config'] = Measure-Case 'floor-git-config' $gitExe @('config', '--list', '--show-origin', '--show-scope', '-z') $pinned $null
+    $sh = Join-Path (Split-Path (Split-Path $gitExe)) 'bin\sh.exe'
+    if (Test-Path $sh) { $results['floor-sh'] = Measure-Case 'floor-sh' $sh @('-c', 'exit') $pinned $null }
     $results['commit-pinned'] = Measure-Case 'commit-pinned' $exe @('check', '--stage', 'commit') $pinned $null
     $env:GIT_AUTHOR_NAME = 'Harshal Office'
     $env:GIT_AUTHOR_EMAIL = $office

@@ -1,0 +1,98 @@
+{
+    "note":  "p95 in ms from benches/perf.ps1; -Check fails on \u003e 20% regression. Machine-specific: refresh with -UpdateBaseline on the CI runner.",
+    "date":  "2026-11-01",
+    "machine":  "Microsoft Windows NT 10.0.26200.0, 14 logical CPUs",
+    "tool":  "hyperfine",
+    "runs":  60,
+    "budget_ms":  {
+                      "commit-pinned":  100,
+                      "commit-pinned-hook":  100,
+                      "commit-unpinned":  100,
+                      "push-100":  300
+                  },
+    "p95_ms":  {
+                   "version":  41,
+                   "floor-git-config":  180.4,
+                   "floor-sh":  344.4,
+                   "commit-pinned":  207,
+                   "commit-pinned-hook":  265.1,
+                   "commit-unpinned":  211.1,
+                   "push-100":  199.6,
+                   "git-commit-hooks":  665.9,
+                   "git-commit-nohooks":  146.8
+               },
+    "detail":  {
+                   "version":  {
+                                   "runs":  60,
+                                   "p50":  33.6,
+                                   "p95":  41,
+                                   "mean":  33.8,
+                                   "min":  26.4,
+                                   "max":  43.1
+                               },
+                   "floor-git-config":  {
+                                            "runs":  60,
+                                            "p50":  86,
+                                            "p95":  180.4,
+                                            "mean":  97.6,
+                                            "min":  68.6,
+                                            "max":  266.9
+                                        },
+                   "floor-sh":  {
+                                    "runs":  60,
+                                    "p50":  153,
+                                    "p95":  344.4,
+                                    "mean":  181.2,
+                                    "min":  61.4,
+                                    "max":  442.4
+                                },
+                   "commit-pinned":  {
+                                         "runs":  60,
+                                         "p50":  120.8,
+                                         "p95":  207,
+                                         "mean":  131.9,
+                                         "min":  95.2,
+                                         "max":  267.1
+                                     },
+                   "commit-pinned-hook":  {
+                                              "runs":  60,
+                                              "p50":  205,
+                                              "p95":  265.1,
+                                              "mean":  210.2,
+                                              "min":  149.1,
+                                              "max":  438.1
+                                          },
+                   "commit-unpinned":  {
+                                           "runs":  60,
+                                           "p50":  146.8,
+                                           "p95":  211.1,
+                                           "mean":  154.5,
+                                           "min":  126.7,
+                                           "max":  240.8
+                                       },
+                   "push-100":  {
+                                    "runs":  60,
+                                    "p50":  161.6,
+                                    "p95":  199.6,
+                                    "mean":  168.6,
+                                    "min":  140.6,
+                                    "max":  251.7
+                                },
+                   "git-commit-hooks":  {
+                                            "runs":  60,
+                                            "p50":  508.6,
+                                            "p95":  665.9,
+                                            "mean":  529.7,
+                                            "min":  418.1,
+                                            "max":  825.3
+                                        },
+                   "git-commit-nohooks":  {
+                                              "runs":  60,
+                                              "p50":  107.3,
+                                              "p95":  146.8,
+                                              "mean":  115.2,
+                                              "min":  91.6,
+                                              "max":  241.2
+                                          }
+               }
+}

@@ -126,6 +126,10 @@ cargo fmt --all
 cargo deny check                            # licences, advisories, banned network crates
 ```
 
+Hook performance (isolated temp env, uses `hyperfine` if installed):
+`powershell -ExecutionPolicy Bypass -File benches\perf.ps1 [-Check] [-Trace]`.
+`-Check` compares p95 with `perf-baseline.json`; `-Trace` shows each check's git spawns.
+
 ## Layout
 
 ```
