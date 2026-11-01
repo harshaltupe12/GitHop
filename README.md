@@ -165,4 +165,8 @@ crates/githop-cli/    githop.exe — CLI and git hook entry point
 app/src-tauri/        GitHopApp.exe — Tauri 2 tray app (Rust side, NSIS installer config)
 app/ui/               React + TypeScript + Tailwind screens
 docs/decisions/       architecture decision records
+brand/                logo, icons, lockups and usage rules (see brand/README.md)
 ```
+
+App and installer icons and the UI's brand SVGs are copied from `brand/` by
+`npm --prefix app run icon`; edit the kit, then re-run it.

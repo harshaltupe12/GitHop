@@ -9,7 +9,7 @@
     "build": "tauri build",
     "sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-sidecar.ps1",
     "build:installer": "npm run sidecar && tauri build --config src-tauri/tauri.release.conf.json",
-    "icon": "node scripts/make-app-icon.mjs && tauri icon src-tauri/icons/app-icon.png -o src-tauri/icons"
+    "icon": "node scripts/brand-assets.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.0"

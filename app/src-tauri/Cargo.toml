@@ -27,7 +27,8 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 # Local-only: no http/updater/websocket/upload/shell plugins (Phase 5 §3.1, CLAUDE.md rule 1).
-tauri = { version = "2", features = ["tray-icon"] }
+# image-png: decode the embedded brand logo PNGs for the tray's setup/error states.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"

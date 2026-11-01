@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Banner } from '../components/Banner';
+import { BrandTile } from '../components/Brand';
 import { Button } from '../components/Button';
 import { ErrorText } from '../components/ErrorText';
 import { Icons } from '../components/icons';
@@ -99,7 +100,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
       title = S.onboarding.welcome.title;
       content = (
         <div className="flex flex-col gap-4">
-          <p className="text-body text-ink">{S.onboarding.welcome.body}</p>
+          <p className="text-center text-body text-ink">{S.onboarding.welcome.body}</p>
           <Banner kind="privacy" live={false}>
             {S.onboarding.welcome.privacy}
           </Banner>
@@ -286,7 +287,13 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
             </li>
           ))}
         </ol>
-        <h1 id="ob-title" ref={headRef} tabIndex={-1} className="mb-4 text-display text-ink">
+        {step === 0 ? <BrandTile size={96} className="mx-auto mb-8 block" /> : null}
+        <h1
+          id="ob-title"
+          ref={headRef}
+          tabIndex={-1}
+          className={cx('mb-4 text-display text-ink', step === 0 && 'text-center')}
+        >
           {title}
         </h1>
         <div className="flex-1">{content}</div>

@@ -1,5 +1,9 @@
-//! Tray icon rasteriser (Design §6.2). No image crates: a circle, a 5×7 bitmap
-//! glyph and a status dot, anti-aliased by 4×4 supersampling into RGBA8.
+//! Tray icon rasteriser (Design §6.2): a circle, a 5×7 bitmap glyph and a
+//! status dot, anti-aliased by 4×4 supersampling into RGBA8. The "setup
+//! needed" and error states draw the brand logo instead of the circle
+//! (brand/README.md): the kit's 16/20/24/32 px light-tile PNGs (favicon
+//! geometry), embedded and decoded with Tauri's `image-png` feature, with the
+//! same status dot composited on top.
 
 use githop_core::ProfileColor;
 
@@ -39,6 +43,37 @@ pub struct IconSpec {
     pub initial: char,
     /// Small dot at the bottom-right (blocked / error), if any.
     pub dot: Option<Rgb>,
+    /// Draw the brand logo tile instead of the circle (setup needed / error).
+    /// `fill`, `filled` and `initial` are then only the fallback for a size
+    /// the kit has no PNG for.
+    pub logo: bool,
+}
+
+/// Brand light tile in favicon geometry, one PNG per tray size (brand/png/icon-light).
+pub const LOGO_PNGS: [(u32, &[u8]); 4] = [
+    (
+        16,
+        include_bytes!("../../../../brand/png/icon-light/githop-icon-light-16.png"),
+    ),
+    (
+        20,
+        include_bytes!("../../../../brand/png/icon-light/githop-icon-light-20.png"),
+    ),
+    (
+        24,
+        include_bytes!("../../../../brand/png/icon-light/githop-icon-light-24.png"),
+    ),
+    (
+        32,
+        include_bytes!("../../../../brand/png/icon-light/githop-icon-light-32.png"),
+    ),
+];
+
+/// The logo as straight-alpha RGBA8 at exactly `size` px, if the kit has that size.
+pub fn logo_rgba(size: u32) -> Option<Vec<u8>> {
+    let (_, bytes) = LOGO_PNGS.iter().find(|(s, _)| *s == size)?;
+    let img = tauri::image::Image::from_bytes(bytes).ok()?;
+    (img.width() == size && img.height() == size).then(|| img.rgba().to_vec())
 }
 
 /// Supersamples per axis.
@@ -46,6 +81,7 @@ const SS: u32 = 4;
 
 /// Render `spec` to a `size`×`size` RGBA8 buffer (straight alpha).
 pub fn render(spec: &IconSpec, size: u32) -> Vec<u8> {
+    let logo = if spec.logo { logo_rgba(size) } else { None };
     let s = size as f32;
     let c = s / 2.0;
     let r = s / 2.0 - 0.25;
@@ -81,16 +117,29 @@ pub fn render(spec: &IconSpec, size: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     for py in 0..size {
         for px in 0..size {
-            let mut acc = [0f32; 4]; // premultiplied
+            let mut acc = [0f32; 4]; // premultiplied; alpha counted in samples
+            let base = logo.as_deref().map(|l| {
+                let i = ((py * size + px) * 4) as usize;
+                ([l[i], l[i + 1], l[i + 2]], f32::from(l[i + 3]) / 255.0)
+            });
             for sy in 0..SS {
                 for sx in 0..SS {
                     let x = px as f32 + (sx as f32 + 0.5) / SS as f32;
                     let y = py as f32 + (sy as f32 + 0.5) / SS as f32;
-                    if let Some(rgb) = shade(x, y, &shape, spec, text_colour) {
-                        acc[0] += f32::from(rgb[0]);
-                        acc[1] += f32::from(rgb[1]);
-                        acc[2] += f32::from(rgb[2]);
-                        acc[3] += 1.0;
+                    let sample = match base {
+                        // Logo pixel, with the dot and its cut-out ring on top.
+                        Some(b) => match dot_sample(x, y, &shape, spec) {
+                            DotSample::Dot(rgb) => Some((rgb, 1.0)),
+                            DotSample::Gap => None,
+                            DotSample::Outside => Some(b),
+                        },
+                        None => shade(x, y, &shape, spec, text_colour).map(|rgb| (rgb, 1.0)),
+                    };
+                    if let Some((rgb, a)) = sample {
+                        acc[0] += f32::from(rgb[0]) * a;
+                        acc[1] += f32::from(rgb[1]) * a;
+                        acc[2] += f32::from(rgb[2]) * a;
+                        acc[3] += a;
                     }
                 }
             }
@@ -122,16 +171,34 @@ struct Shape {
     gap: f32,
 }
 
+/// Where a sample falls relative to the status dot.
+enum DotSample {
+    Dot(Rgb),
+    /// Transparent cut-out ring around the dot.
+    Gap,
+    Outside,
+}
+
+fn dot_sample(x: f32, y: f32, g: &Shape, spec: &IconSpec) -> DotSample {
+    let Some(dot) = spec.dot else {
+        return DotSample::Outside;
+    };
+    let d = ((x - g.dot_c).powi(2) + (y - g.dot_c).powi(2)).sqrt();
+    if d <= g.dot_r {
+        DotSample::Dot(dot)
+    } else if d <= g.dot_r + g.gap {
+        DotSample::Gap
+    } else {
+        DotSample::Outside
+    }
+}
+
 /// Colour of one sample, `None` = transparent. Top layer first.
 fn shade(x: f32, y: f32, g: &Shape, spec: &IconSpec, text: Rgb) -> Option<Rgb> {
-    if spec.dot.is_some() {
-        let d = ((x - g.dot_c).powi(2) + (y - g.dot_c).powi(2)).sqrt();
-        if d <= g.dot_r {
-            return spec.dot;
-        }
-        if d <= g.dot_r + g.gap {
-            return None;
-        }
+    match dot_sample(x, y, g, spec) {
+        DotSample::Dot(rgb) => return Some(rgb),
+        DotSample::Gap => return None,
+        DotSample::Outside => {}
     }
     let d = ((x - g.c).powi(2) + (y - g.c).powi(2)).sqrt();
     if d > g.r {
@@ -229,7 +296,71 @@ mod tests {
             filled: true,
             initial: 'P',
             dot,
+            logo: false,
         }
+    }
+
+    fn logo_spec(dot: Option<Rgb>) -> IconSpec {
+        IconSpec {
+            fill: TEXT_MUTED,
+            filled: false,
+            initial: 'G',
+            dot,
+            logo: true,
+        }
+    }
+
+    #[test]
+    fn every_embedded_logo_png_decodes_at_its_size() {
+        for (size, bytes) in LOGO_PNGS {
+            let img = tauri::image::Image::from_bytes(bytes).expect("logo PNG decodes");
+            assert_eq!((img.width(), img.height()), (size, size), "{size} px PNG");
+            assert_eq!(img.rgba().len(), (size * size * 4) as usize);
+            // Opaque white tile in the middle-left, transparent outside the rounded corner.
+            let rgba = logo_rgba(size).expect("logo for a tray size");
+            assert_eq!(px(&rgba, size, 0, 0)[3], 0, "{size} px corner transparent");
+            assert_eq!(
+                px(&rgba, size, 2, size / 2)[3],
+                255,
+                "{size} px tile opaque"
+            );
+        }
+        assert_eq!(logo_rgba(48), None);
+    }
+
+    #[test]
+    fn logo_states_draw_the_brand_tile() {
+        for size in [16, 20, 24, 32] {
+            let logo = logo_rgba(size).expect("logo");
+            let buf = render(&logo_spec(None), size);
+            assert_eq!(buf.len(), logo.len());
+            for (i, (got, want)) in buf.chunks(4).zip(logo.chunks(4)).enumerate() {
+                assert!(got[3].abs_diff(want[3]) <= 1, "{size} px alpha at {i}");
+                if want[3] == 255 {
+                    for c in 0..3 {
+                        assert!(got[c].abs_diff(want[c]) <= 1, "{size} px colour at {i}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn logo_error_state_keeps_the_sunshine_dot() {
+        let size = 32;
+        let buf = render(&logo_spec(Some(WARNING)), size);
+        assert_eq!(
+            px(&buf, size, 26, 26),
+            [WARNING[0], WARNING[1], WARNING[2], 255]
+        );
+        // Cut-out ring between the dot and the tile.
+        let r = (size as f32 * 0.21).max(2.5);
+        let c = size as f32 - r - 0.25;
+        let ring = (c - r - 0.5) as u32;
+        assert_eq!(px(&buf, size, ring, c as u32)[3], 0, "transparent gap ring");
+        // Rest of the logo untouched.
+        let logo = logo_rgba(size).expect("logo");
+        assert_eq!(px(&buf, size, 2, 16), px(&logo, size, 2, 16));
     }
 
     #[test]
@@ -270,6 +401,7 @@ mod tests {
             filled: false,
             initial: 'G',
             dot: None,
+            logo: false,
         };
         let buf = render(&s, size);
         // Between ring and glyph: transparent.
