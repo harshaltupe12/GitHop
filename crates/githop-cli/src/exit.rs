@@ -104,6 +104,63 @@ pub fn issue_lines(issues: &[ValidationIssue]) -> Vec<String> {
         .collect()
 }
 
+/// Next steps for `owners` errors (a profile needs a GitHub owner or folder once
+/// there are two or more profiles, or an owner is invalid or taken): one
+/// `githop edit` per saved profile, and for `adding` (a profile `githop add` is
+/// creating, not saved yet) the flags to pass instead.
+pub fn owner_fix_hints(issues: &[ValidationIssue], adding: Option<&str>) -> Vec<String> {
+    let mut ids: Vec<&str> = Vec::new();
+    for i in issues {
+        if i.severity == Severity::Error && i.field == "owners" {
+            if let Some(p) = i.profile_id.as_deref() {
+                if !ids.contains(&p) {
+                    ids.push(p);
+                }
+            }
+        }
+    }
+    let saved: Vec<&str> = ids.iter().copied().filter(|p| Some(*p) != adding).collect();
+    let mut out: Vec<String> = saved
+        .iter()
+        .map(|p| format!("Run: githop edit {p} --owner <org>"))
+        .collect();
+    let new_needs_one = adding.is_some_and(|a| ids.contains(&a));
+    match (saved.is_empty(), new_needs_one) {
+        (_, true) if out.is_empty() => {
+            out.push("Add --owner <org> or --folder <path> to this command.".to_string())
+        }
+        (_, true) => out
+            .push("Then run this command again with --owner <org> or --folder <path>.".to_string()),
+        (false, false) if adding.is_some() => out.push("Then run this command again.".to_string()),
+        _ => {}
+    }
+    out
+}
+
+/// A validation refusal from `githop add` as a usage error (exit 2) with the
+/// issue list and the owner/folder next steps.
+pub fn validation_refused(issues: &[ValidationIssue], adding: Option<&str>) -> anyhow::Error {
+    let hints = owner_fix_hints(issues, adding);
+    anyhow::Error::new(UsageError {
+        message: "The profile isn't valid. Nothing was saved.".to_string(),
+        details: issue_lines(issues)
+            .into_iter()
+            .map(|l| {
+                l.trim_start()
+                    .trim_start_matches('•')
+                    .trim_start()
+                    .to_string()
+            })
+            .collect(),
+        hint: (!hints.is_empty()).then(|| {
+            hints.join(
+                "
+",
+            )
+        }),
+    })
+}
+
 /// Print `err` for the user and pick the exit code.
 pub fn report(ui: &Ui, err: &anyhow::Error) -> Exit {
     if let Some(u) = err.downcast_ref::<UsageError>() {
@@ -112,7 +169,9 @@ pub fn report(ui: &Ui, err: &anyhow::Error) -> Exit {
             ui.error_line(&format!("  • {d}"));
         }
         if let Some(h) = &u.hint {
-            ui.error_hint(h);
+            for line in h.lines() {
+                ui.error_hint(line);
+            }
         }
         return Exit::Usage;
     }
@@ -133,6 +192,9 @@ fn report_core(ui: &Ui, err: &anyhow::Error, core: &CoreError) -> Exit {
             ui.error("The profile isn't valid. Nothing was saved.");
             for line in issue_lines(issues) {
                 ui.error_line(&line);
+            }
+            for hint in owner_fix_hints(issues, None) {
+                ui.error_hint(&hint);
             }
             Exit::Usage
         }

@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { connectionStore } from '../../lib/connection';
 import * as ipc from '../../lib/ipc';
 import { expectNoA11yViolations } from '../../test/a11y';
 import { office, personal, profileSet } from '../../test/fixtures';
@@ -147,9 +148,39 @@ describe('ProfileCard', () => {
     expect(h.onMakeDefault).toHaveBeenCalled();
   });
 
-  it('testing state', () => {
-    render(<ProfileCard profile={office} isDefault={false} testing {...handlers()} />);
-    expect(screen.getByRole('status')).toHaveTextContent('Testing connection…');
+  it('testing state: inline spinner + Testing…, menu item busy', async () => {
+    connectionStore.set({ office: { status: 'testing' } });
+    render(<ProfileCard profile={office} isDefault={false} {...handlers()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Testing…');
+    expect(screen.getByRole('article', { name: 'Office' })).toHaveAttribute('aria-busy', 'true');
+    await userEvent.click(screen.getByRole('button', { name: 'More actions for Office' }));
+    expect(screen.getByRole('menuitem', { name: 'Testing…' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+  });
+
+  it('owners warning: icon + text + Add owner', async () => {
+    const h = { ...handlers(), onAddOwner: vi.fn() };
+    const msg =
+      '"Office" has no GitHub owners or folders, so GitHop can\'t tell which repos are its.';
+    const { container } = render(
+      <ProfileCard
+        profile={{ ...office, owners: [], folders: [] }}
+        isDefault={false}
+        issues={[
+          { profile_id: 'office', field: 'owners', severity: 'warning', message: msg },
+          { profile_id: 'office', field: 'x', severity: 'info', message: 'Not shown' },
+        ]}
+        {...h}
+      />,
+    );
+    const list = screen.getByRole('list', { name: 'Office needs attention' });
+    expect(list).toHaveTextContent(msg);
+    expect(screen.queryByText('Not shown')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Add owner to Office' }));
+    expect(h.onAddOwner).toHaveBeenCalled();
+    await expectNoA11yViolations(container);
   });
 });
 

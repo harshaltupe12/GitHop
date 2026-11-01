@@ -70,7 +70,17 @@ export const S = {
     matches: 'Matches',
     husky: 'Husky hooks',
     wrongCommits: (n: number) => `${n} wrong ${plural(n, 'commit', 'commits')}`,
+    // Repo status wording (Design §8.3, §9.2), clearest first:
+    // - "Unassigned": no profile at all (no rule matched and there's no default).
+    // - "No owner match": only the default profile was picked because no owner or
+    //   folder rule matched, while other profiles exist. This is how an office repo
+    //   ends up with personal commits, so it says what's missing, not a vague
+    //   "Unassigned" (the repo does have a profile: the default).
+    // - "Not pinned": an owner or folder rule (or the only profile) picked it, but
+    //   the repo isn't pinned yet, so git still commits with the global identity.
     unassigned: 'Unassigned',
+    noOwnerMatch: 'No owner match',
+    notPinned: 'Not pinned',
     noRemote: 'No remote',
     pinned: 'Pinned',
     wrongEmail: 'Email doesn’t match',
@@ -116,11 +126,35 @@ export const S = {
     folders: 'Folders',
     key: 'SSH key',
     defaultSet: (label: string) => `Default profile: ${label}`,
+    /** Toast after a successful test. */
     connected: (user: string) => `Connected to GitHub as ${user}.`,
-    denied:
-      'GitHub didn’t accept this key. Add the public key in GitHub SSH settings, then test again.',
+    testing: 'Testing…',
+    warningsLabel: (label: string) => `${label} needs attention`,
+    addOwner: 'Add owner',
+    // Starts with the visible text (WCAG 2.5.3).
+    addOwnerLabel: (label: string) => `Add owner to ${label}`,
+  },
+
+  // Persistent "Test connection" result (profile card and the edit form's key panel).
+  connection: {
+    connected: (user: string) => `Connected to GitHub as ${user}`,
+    justNow: 'just now',
+    minutesAgo: (n: number) => `${n} min ago`,
+    at: (time: string) => `at ${time}`,
+    denied: 'GitHub didn’t accept this key',
+    deniedHelp: (owners: string[]) =>
+      owners.length
+        ? `Add it to the GitHub account that owns this profile’s repos (${owners.join(', ')}), then test again.`
+        : 'Add it to the GitHub account that owns this profile’s repos, then test again.',
     failed: (reason: string) => `Couldn’t test the connection: ${reason}`,
-    testing: 'Testing connection…',
+    // The key signs in as an account this profile doesn't list as an owner.
+    elsewhere: (user: string, owners: string[]) =>
+      `This key belongs to ${user}, but this profile owns ${owners.join(', ')}.`,
+    elsewhereHelp: (user: string) =>
+      `That’s fine if ${user} is a member of that organisation. If not, this is another account’s key.`,
+    copyKey: 'Copy public key',
+    openGithub: 'Open GitHub SSH settings',
+    retry: 'Try again',
   },
 
   form: {
@@ -147,6 +181,26 @@ export const S = {
     ownersLabel: 'GitHub owners',
     ownersPlaceholder: 'harshal-personal',
     ownersHelp: 'Users or orgs in repo URLs, for example office-org. Press Enter or comma to add.',
+    // Onboarding: Owns comes straight after Identity, with this question.
+    ownsPrompt:
+      'Which GitHub organisation or account owns this profile’s repos? For work, that’s your company’s org.',
+    ownersEmpty:
+      'No owner yet, so GitHop can’t tell which repos are this profile’s and they’d use your default profile. Add the organisation or account from your repo URLs.',
+    ownersSkip: 'Or click Next again to add one later.',
+    // Required fields: `*` after the label, explained once at the top of the form.
+    requiredLegend: 'Required',
+    // Owns is required as a group (owner or folder) once there are two or more profiles.
+    ownsRequired: 'Add at least one GitHub owner or folder.',
+    ownersPlaceholderWork: 'your-company-org',
+    otherNeedsOwner: (label: string) => `${label} needs a GitHub owner or folder too.`,
+    otherNeedsOwnerWhy:
+      'With more than one profile, GitHop can only save when each one has a rule. Add the organisation or account that owns its repos, like your company’s org.',
+    otherOwnerLabel: (label: string) => `GitHub owner for ${label}`,
+    otherOwnerEmpty: 'Enter a GitHub owner, for example your company’s org.',
+    addToOther: (label: string) => `Add to ${label}`,
+    otherOwnerAdded: (owner: string, label: string) => `${owner} added to ${label}.`,
+    editOther: (label: string) => `Edit ${label}`,
+    otherIssuesTitle: 'Another profile needs a fix before this one can be saved:',
     foldersLabel: 'Folders',
     foldersHelp: 'Optional. Repos inside these folders use this profile.',
     addFolder: 'Add folder…',
@@ -174,6 +228,7 @@ export const S = {
     keyCopied: 'Public key copied.',
     openGithub: 'Open GitHub SSH settings',
     testConnection: 'Test connection',
+    testing: 'Testing…',
     saveFirst: 'Save the profile first to test the connection.',
     noPublicKey: 'No public key found next to this key file.',
     dangerZone: 'Danger zone',
@@ -220,7 +275,36 @@ export const S = {
       pin: 'pinned',
       owner: 'by owner',
       folder: 'by folder',
-      default: 'default',
+      default: 'default (no rule matched)',
+    },
+    // Tooltip on "default (no rule matched)".
+    defaultTip: (label: string, owner: string | null) =>
+      owner
+        ? `No profile owns ${owner}, and no folder rule matched, so this repo uses your default profile (${label}). Add ${owner} to the profile it belongs to, or pin the repo.`
+        : `No owner or folder rule matched, so this repo uses your default profile (${label}). Pin it, or add an owner or folder rule to a profile.`,
+    defaultTipButton: (repo: string) => `Why ${repo} uses the default profile`,
+    owners: {
+      title: 'Choose a profile for these GitHub owners',
+      body: (n: number, label: string | null) =>
+        label
+          ? `${n} ${plural(n, 'repo matched', 'repos matched')} no owner rule, so ${plural(n, 'it uses', 'they use')} your default profile (${label}). Add each owner to the profile it belongs to.`
+          : `${n} ${plural(n, 'repo matched', 'repos matched')} no owner rule and ${plural(n, 'has', 'have')} no profile. Add each owner to the profile it belongs to.`,
+      listLabel: 'GitHub owners without a profile',
+      repoCount: (n: number) => `${n} ${plural(n, 'repo', 'repos')}`,
+      profileFor: (owner: string) => `Profile for ${owner}`,
+      choose: 'Choose a profile',
+      gone: 'That profile no longer exists. Choose another one.',
+      suggested: (label: string) => `${label} (suggested)`,
+      add: 'Add to profile',
+      // Starts with the visible text (WCAG 2.5.3).
+      addLabel: (owner: string) => `Add to profile: ${owner}`,
+      added: (owner: string, label: string) => `${owner} added to ${label}.`,
+      addedBody: (owner: string, label: string) =>
+        `${owner} now belongs to ${label}. Its repos use ${label} from now on.`,
+      updating: 'Updating repos…',
+      pinHint: 'Pin them so they keep this profile even if a remote changes.',
+      showMore: (n: number) => `Show ${n} more`,
+      showFewer: 'Show fewer',
     },
     pin: 'Pin',
     pinTo: (label: string) => `Pin to ${label}`,

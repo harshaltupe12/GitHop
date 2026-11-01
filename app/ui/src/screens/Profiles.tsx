@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/Button';
+import { useTestConnection } from '../components/ConnectionResult';
 import { ConfirmDialog } from '../components/Dialog';
 import { Field } from '../components/Field';
 import { Icons } from '../components/icons';
@@ -7,10 +8,11 @@ import { EmptyState, ScreenHeader } from '../components/Layout';
 import { ProfileCard } from '../components/ProfileCard';
 import { useToast } from '../components/Toast';
 import { applyProfiles } from '../lib/appState';
+import { forgetConnectionTest } from '../lib/connection';
 import { sortProfiles } from '../lib/format';
 import * as ipc from '../lib/ipc';
 import { useNav } from '../lib/nav';
-import type { IpcError, Profile, ProfileSet } from '../lib/types';
+import type { IpcError, Profile, ProfileSet, ValidationIssue } from '../lib/types';
 import { S } from '../strings';
 import { ProfileForm } from './ProfileForm';
 
@@ -18,20 +20,49 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
   const nav = useNav();
   const toast = useToast();
   const [editing, setEditing] = useState<string | 'new' | null>(null);
-  const [testing, setTesting] = useState<string | null>(null);
+  // "Add owner" opens Edit with the Owns field focused.
+  const [focusOwners, setFocusOwners] = useState(false);
   const [deleting, setDeleting] = useState<Profile | null>(null);
+  const [issues, setIssues] = useState<Record<string, ValidationIssue[]>>({});
+  const runTest = useTestConnection();
 
   // Ctrl+N and "edit" requests from elsewhere.
   useEffect(() => {
     const i = nav.intent;
     if (i?.kind === 'new-profile') {
       setEditing('new');
+      setFocusOwners(false);
       nav.clearIntent();
     } else if (i?.kind === 'edit-profile') {
       setEditing(i.id);
+      setFocusOwners(i.focus === 'owners');
       nav.clearIntent();
     }
   }, [nav]);
+
+  // The core's warnings for each saved profile (e.g. no owners: its repos would
+  // quietly use the default profile). Read-only validation, no write.
+  useEffect(() => {
+    let live = true;
+    void Promise.all(
+      profiles.profile.map((p) =>
+        ipc
+          .validateProfile(p, p.id)
+          .then((r) => [p.id, r] as const)
+          .catch(() => [p.id, [] as ValidationIssue[]] as const),
+      ),
+    ).then((entries) => {
+      if (live) setIssues(Object.fromEntries(entries));
+    });
+    return () => {
+      live = false;
+    };
+  }, [profiles]);
+
+  const edit = (id: string | 'new', owners = false) => {
+    setFocusOwners(owners);
+    setEditing(id);
+  };
 
   const list = sortProfiles(profiles);
   const original =
@@ -46,20 +77,6 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
     }
   };
 
-  const test = async (p: Profile) => {
-    setTesting(p.id);
-    try {
-      const r = await ipc.testConnection(p.id);
-      if (r.kind === 'connected') toast({ message: S.profiles.connected(r.user) });
-      else if (r.kind === 'denied') toast({ kind: 'warning', message: S.profiles.denied });
-      else toast({ kind: 'error', message: S.profiles.failed(r.reason) });
-    } catch (e) {
-      toast({ kind: 'error', message: S.profiles.failed((e as IpcError).message) });
-    } finally {
-      setTesting(null);
-    }
-  };
-
   if (editing === 'new' || original) {
     return (
       <>
@@ -67,8 +84,13 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
           key={editing}
           profiles={profiles}
           original={original}
+          focusField={focusOwners ? 'owners' : undefined}
+          onEditProfile={(id) => edit(id, true)}
           onCancel={() => setEditing(null)}
-          onSaved={(set) => {
+          onSaved={(set, saved) => {
+            // A new key or id makes the last test result meaningless.
+            if (original && (original.id !== saved.id || original.ssh_key !== saved.ssh_key))
+              forgetConnectionTest(original.id);
             applyProfiles(set);
             setEditing(null);
           }}
@@ -95,7 +117,7 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
           <Button
             variant="primary"
             icon={Icons.add}
-            onClick={() => setEditing('new')}
+            onClick={() => edit('new')}
             aria-keyshortcuts="Control+N"
           >
             {S.profiles.add}
@@ -108,7 +130,7 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
           title={S.profiles.emptyTitle}
           body={S.profiles.emptyBody}
           action={
-            <Button variant="primary" icon={Icons.add} onClick={() => setEditing('new')}>
+            <Button variant="primary" icon={Icons.add} onClick={() => edit('new')}>
               {S.profiles.add}
             </Button>
           }
@@ -120,10 +142,11 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
               <ProfileCard
                 profile={p}
                 isDefault={p.id === profiles.default}
-                testing={testing === p.id}
-                onEdit={() => setEditing(p.id)}
+                issues={issues[p.id]}
+                onEdit={() => edit(p.id)}
+                onAddOwner={() => edit(p.id, true)}
                 onMakeDefault={() => void makeDefault(p)}
-                onTest={() => void test(p)}
+                onTest={() => void runTest(p)}
                 onDelete={() => setDeleting(p)}
               />
             </li>
@@ -134,7 +157,10 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
         profile={deleting}
         profiles={profiles}
         onClose={() => setDeleting(null)}
-        onDeleted={() => setDeleting(null)}
+        onDeleted={() => {
+          if (deleting) forgetConnectionTest(deleting.id);
+          setDeleting(null);
+        }}
       />
     </div>
   );

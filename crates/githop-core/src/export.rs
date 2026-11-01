@@ -890,7 +890,8 @@ pub fn parse_bundle(plain: &[u8]) -> Result<Bundle> {
             .map(|p| to_profile(p, &placeholder))
             .collect(),
     };
-    set.validate().map_err(ExportError::InvalidProfiles)?;
+    set.validate_ignoring_routing()
+        .map_err(ExportError::InvalidProfiles)?;
 
     Ok(Bundle {
         created: file.created.clone(),
@@ -1360,7 +1361,7 @@ pub fn apply_bundle(
     let mut normalized = set.clone();
     normalized.normalize();
     normalized
-        .validate()
+        .validate_ignoring_routing()
         .map_err(ExportError::InvalidProfiles)?;
 
     // 7. Settings: only on a machine with no profiles yet.
@@ -1403,7 +1404,7 @@ pub fn apply_bundle(
     // Fresh read under the lock: the plan only applies to the profiles it was
     // made from; settings changed meanwhile by someone else are kept.
     let profiles_path = paths.profiles_file();
-    store.update(|profiles, settings: &mut Settings| {
+    store.update_ignoring_routing(|profiles, settings: &mut Settings| {
         if *profiles != existing {
             return Err(CoreError::Conflict {
                 path: profiles_path.clone(),

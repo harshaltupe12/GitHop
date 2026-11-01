@@ -171,6 +171,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
             <p>{g ? S.onboarding.first.guess(firstLabel) : S.onboarding.first.fresh}</p>
             <ProfileForm
               embedded
+              ownersProminent
               heading={firstLabel}
               profiles={state.profiles}
               seed={
@@ -194,6 +195,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
       content = adding ? (
         <ProfileForm
           embedded
+          ownersProminent
           autoFocusHeading
           heading={secondLabel}
           profiles={state.profiles}

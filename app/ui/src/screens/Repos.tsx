@@ -17,17 +17,21 @@ import { reposStore, replaceRepo } from '../lib/appState';
 import { baseName, normalizePath, profileById, sortProfiles, truncateMiddle } from '../lib/format';
 import * as ipc from '../lib/ipc';
 import { useNav } from '../lib/nav';
+import { unmatchedOwner } from '../lib/owners';
 import { KEYS, readJson, removeKey, writeJson } from '../lib/storage';
 import type { HookStage, IpcError, ProfileSet, RepoRow } from '../lib/types';
 import { S } from '../strings';
+import { OwnersPanel } from './OwnersPanel';
 
 type Action = 'fix' | 'husky' | 'pin' | null;
 export type RepoStatus = { kind: PillKind; text: string; action: Action };
 
 /**
- * Status priority: unreadable > wrong commits > husky > unassigned > email
- * mismatch > no remote > matches. "Wrong commits" counts only the unpushed ones
- * Fix can change (`unpushed_offenders`); pushed ones are explained on the Fix screen.
+ * Status priority: unreadable > wrong commits > husky > unassigned / no owner
+ * match / not pinned > pin differs > email mismatch > no remote > matches.
+ * "Wrong commits" counts only the unpushed ones Fix can change
+ * (`unpushed_offenders`); pushed ones are explained on the Fix screen.
+ * Wording: see the `pill` comment in strings.ts.
  */
 export function repoStatus(r: RepoRow, profiles: ProfileSet): RepoStatus {
   if (r.error) return { kind: 'warning', text: S.pill.unreadable, action: null };
@@ -36,9 +40,11 @@ export function repoStatus(r: RepoRow, profiles: ProfileSet): RepoStatus {
     return { kind: 'blocked', text: S.pill.wrongCommits(offenders), action: 'fix' };
   if (r.resolution.warnings.some((w) => w.kind === 'local-hooks-path'))
     return { kind: 'warning', text: S.pill.husky, action: 'husky' };
-  const pinned = r.resolution.source === 'pin';
-  if (!r.resolution.profile_id || !pinned)
-    return { kind: 'warning', text: S.pill.unassigned, action: 'pin' };
+  const src = r.resolution.source;
+  if (!r.resolution.profile_id) return { kind: 'warning', text: S.pill.unassigned, action: 'pin' };
+  if (src === 'default' && profiles.profile.length > 1)
+    return { kind: 'warning', text: S.pill.noOwnerMatch, action: 'pin' };
+  if (src !== 'pin') return { kind: 'warning', text: S.pill.notPinned, action: 'pin' };
   if (r.resolution.warnings.some((w) => w.kind === 'pin-owner-disagree'))
     return { kind: 'warning', text: S.pill.pinDisagrees, action: 'pin' };
   const p = profileById(profiles, r.resolution.profile_id);
@@ -48,6 +54,9 @@ export function repoStatus(r: RepoRow, profiles: ProfileSet): RepoStatus {
   if (!r.resolution.remote) return { kind: 'warning', text: S.pill.noRemote, action: null };
   return { kind: 'ok', text: S.pill.matches, action: null };
 }
+
+const ruleProfile = (r: RepoRow) =>
+  r.resolution.source === 'default' ? null : r.resolution.profile_id;
 
 function mergeRepos(old: RepoRow[], fresh: RepoRow[]): RepoRow[] {
   const key = (r: RepoRow) => normalizePath(r.root).toLowerCase();
@@ -155,8 +164,14 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
     }
   };
 
+  // Pin all only pins repos an owner or folder rule picked. Pinning a repo that
+  // only the default profile picked would make a wrong guess permanent (ADR 0003
+  // #6, like `githop scan --apply` without --include-default); pin those one by one.
   const resolvable = st.repos.filter(
-    (r) => !r.error && r.resolution.profile_id && r.resolution.source !== 'pin',
+    (r) =>
+      !r.error &&
+      r.resolution.profile_id &&
+      (r.resolution.source === 'owner' || r.resolution.source === 'folder'),
   );
 
   const pinAll = async () => {
@@ -205,6 +220,19 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
             <span>{p.label}</span>
             {src === 'pin' ? (
               <Pill kind="neutral">{S.pill.pinned}</Pill>
+            ) : src === 'default' ? (
+              <span className="flex items-center gap-1 text-small text-ink-muted">
+                {S.repos.by.default}
+                <Tooltip content={S.repos.defaultTip(p.label, unmatchedOwner(r))} describe>
+                  <button
+                    type="button"
+                    aria-label={S.repos.defaultTipButton(baseName(r.root))}
+                    className="inline-flex rounded-sm text-ink-muted"
+                  >
+                    <Ico icon={Icons.info} />
+                  </button>
+                </Tooltip>
+              </span>
             ) : src ? (
               <span className="text-small text-ink-muted">{S.repos.by[src]}</span>
             ) : null}
@@ -269,9 +297,10 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
                   {S.repos.pin}
                 </>
               }
+              // The rule's profile first; a default-only guess isn't put first.
               items={[
-                ...ordered.filter((p) => p.id === r.resolution.profile_id),
-                ...ordered.filter((p) => p.id !== r.resolution.profile_id),
+                ...ordered.filter((p) => p.id === ruleProfile(r)),
+                ...ordered.filter((p) => p.id !== ruleProfile(r)),
               ].map((p) => ({
                 key: p.id,
                 label: S.repos.pinTo(p.label),
@@ -344,6 +373,18 @@ export function ReposScreen({ profiles }: { profiles: ProfileSet }) {
         >
           <ErrorText error={error} />
         </Banner>
+      ) : null}
+
+      {st.repos.length > 0 ? (
+        <OwnersPanel
+          rows={st.repos}
+          profiles={profiles}
+          scanning={!!scanning}
+          onAdded={() => void scanFolders(reposStore.get().folders)}
+          pinCount={resolvable.length}
+          pinning={pinningAll}
+          onPinAll={() => void pinAll()}
+        />
       ) : null}
 
       {st.repos.length > 0 ? (

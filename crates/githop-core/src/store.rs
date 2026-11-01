@@ -95,6 +95,23 @@ impl Store {
         &mut self,
         f: impl FnOnce(&mut ProfileSet, &mut Settings) -> Result<T>,
     ) -> Result<T> {
+        self.update_inner(true, f)
+    }
+
+    /// [`Store::update`] without the owner/folder routing rule (import only, see
+    /// [`ProfileSet::validate_ignoring_routing`]).
+    pub(crate) fn update_ignoring_routing<T>(
+        &mut self,
+        f: impl FnOnce(&mut ProfileSet, &mut Settings) -> Result<T>,
+    ) -> Result<T> {
+        self.update_inner(false, f)
+    }
+
+    fn update_inner<T>(
+        &mut self,
+        routing: bool,
+        f: impl FnOnce(&mut ProfileSet, &mut Settings) -> Result<T>,
+    ) -> Result<T> {
         self.paths.ensure_dirs()?;
         let paths = self.paths.clone();
         let (value, profiles, settings, seen) =
@@ -119,7 +136,12 @@ impl Store {
                 let profiles_toml = if p != p0 {
                     p.normalize();
                     p.version = PROFILES_VERSION;
-                    p.validate().map_err(CoreError::Validation)?;
+                    if routing {
+                        p.validate()
+                    } else {
+                        p.validate_ignoring_routing()
+                    }
+                    .map_err(CoreError::Validation)?;
                     Some(to_toml(&p, &profiles_path)?)
                 } else {
                     None

@@ -7,7 +7,7 @@ use githop_core::{ssh, Profile, ProfileColor, ProfileSet, Severity};
 
 use super::{label_from_id, looks_personal, profile_display, slug, split_list, Ctx, NOREPLY_TIP};
 use crate::cli::AddArgs;
-use crate::exit::{missing_fields, usage, usage_hint, Exit};
+use crate::exit::{missing_fields, usage, usage_hint, validation_refused, Exit};
 
 pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
     ctx.reject_json("add")?;
@@ -150,11 +150,16 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
         owners,
         folders,
     };
-    store.update(|p, _| {
+    let added = store.update(|p, _| {
         p.profiles.push(profile);
         p.normalize();
         Ok(())
-    })?;
+    });
+    if let Err(githop_core::CoreError::Validation(issues)) = &added {
+        // Names every profile that needs an owner or folder, and how to fix each.
+        return Err(validation_refused(issues, Some(&id)));
+    }
+    added?;
 
     let saved = store.profiles().get(&id).cloned();
     report_added(ctx, &set, saved.as_ref());
