@@ -39,6 +39,8 @@ export function repoStatus(r: RepoRow, profiles: ProfileSet): RepoStatus {
   const pinned = r.resolution.source === 'pin';
   if (!r.resolution.profile_id || !pinned)
     return { kind: 'warning', text: S.pill.unassigned, action: 'pin' };
+  if (r.resolution.warnings.some((w) => w.kind === 'pin-owner-disagree'))
+    return { kind: 'warning', text: S.pill.pinDisagrees, action: 'pin' };
   const p = profileById(profiles, r.resolution.profile_id);
   const email = r.identity?.author.email;
   if (p && email && email.trim().toLowerCase() !== p.email.trim().toLowerCase())

@@ -70,7 +70,14 @@ export type ResolutionWarning =
   | { kind: 'stale-pin'; profile_id: string }
   | { kind: 'unknown-remote-format'; remote: string }
   | { kind: 'non-github-host'; host: string }
-  | { kind: 'local-hooks-path'; path: string };
+  | { kind: 'local-hooks-path'; path: string }
+  | {
+      kind: 'pin-owner-disagree';
+      pinned_profile: string;
+      rule_profile: string;
+      rule: 'owner' | 'folder';
+      owner?: string | null;
+    };
 
 export type Resolution = {
   profile_id?: string | null;
@@ -112,6 +119,8 @@ export type HookHealth = {
   missing: string[];
   tampered: string[];
   stale: string[];
+  /** Files in GitHop's hooks folder that GitHop didn't write (they'd run for every repo). */
+  unexpected?: string[];
   githop_exe: string;
   exe_missing: boolean;
   previous_hooks_path: string;
@@ -172,6 +181,7 @@ export type FixPlan = {
     | 'too-many-commits'
     | 'pushed-unknown'
     | 'shallow'
+    | 'invalid-profile'
     | null;
   unpushed?: number;
   rewrite_count?: number;

@@ -74,6 +74,7 @@ export const S = {
     noRemote: 'No remote',
     pinned: 'Pinned',
     wrongEmail: 'Email doesn’t match',
+    pinDisagrees: 'Pin differs from owner',
     unreadable: 'Couldn’t read',
   },
 
