@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fix-undo"
+description = "Enables the fix_undo command without any pre-configured scope."
+commands.allow = ["fix_undo"]
+
+[[permission]]
+identifier = "deny-fix-undo"
+description = "Denies the fix_undo command without any pre-configured scope."
+commands.deny = ["fix_undo"]

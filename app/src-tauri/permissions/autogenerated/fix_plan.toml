@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fix-plan"
+description = "Enables the fix_plan command without any pre-configured scope."
+commands.allow = ["fix_plan"]
+
+[[permission]]
+identifier = "deny-fix-plan"
+description = "Denies the fix_plan command without any pre-configured scope."
+commands.deny = ["fix_plan"]

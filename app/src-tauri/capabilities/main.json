@@ -1,0 +1,49 @@
+{
+  "identifier": "main",
+  "description": "Main GitHop window. App commands plus the few local-only plugin calls the UI needs. No fs, shell, http or process permissions.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-state",
+    "allow-list-profiles",
+    "allow-validate-profile",
+    "allow-save-profile",
+    "allow-delete-profile",
+    "allow-set-default",
+    "allow-suggest-key-path",
+    "allow-generate-key",
+    "allow-read-public-key",
+    "allow-test-connection",
+    "allow-scan",
+    "allow-pin",
+    "allow-unpin",
+    "allow-pin-all",
+    "allow-hooks-snippet",
+    "allow-fix-plan",
+    "allow-fix-apply",
+    "allow-fix-undo",
+    "allow-doctor",
+    "allow-update-settings",
+    "allow-install-hooks",
+    "allow-wipe",
+    "allow-export-profiles",
+    "allow-import-preview",
+    "allow-import-apply",
+    "allow-open-external",
+    "allow-app-info",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    "clipboard-manager:allow-write-text",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://github.com/settings/keys" },
+        { "url": "https://github.com/githop-placeholder/githop/releases" }
+      ]
+    }
+  ]
+}
