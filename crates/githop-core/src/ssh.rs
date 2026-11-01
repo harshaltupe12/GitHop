@@ -546,7 +546,9 @@ fn truncate(s: &str, max: usize) -> String {
 /// `BatchMode` is not forced, so ssh can ask for the key passphrase on the console
 /// (GitHop never sees it). ssh missing → `Ok(Failed)`.
 pub fn test_connection(key: &Path) -> Result<ConnectionTest> {
-    let exe = match locate_tool("ssh") {
+    // The same ssh a pinned repo uses (Windows OpenSSH when present), so the
+    // test sees the same agent and known_hosts as a real push.
+    let exe = match git_ssh_program().map_or_else(|| locate_tool("ssh"), Ok) {
         Ok(p) => p,
         Err(_) => {
             return Ok(ConnectionTest::Failed {
@@ -682,6 +684,488 @@ fn parse_sc_query(stdout: &str) -> AgentStatus {
         .lines()
         .find_map(from_words)
         .unwrap_or(AgentStatus::Unknown)
+}
+
+// ---------------------------------------------------------------------------
+// GitHub host keys (ADR 0006)
+
+/// GitHub's published SSH host keys, as `known_hosts` lines.
+///
+/// Source: GitHub Docs, "GitHub's SSH key fingerprints"
+/// <https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints>.
+/// The RSA key is the one GitHub rotated to on 2023-03-24. A unit test checks
+/// each line against [`GITHUB_FINGERPRINTS`] (SHA-256, as published).
+pub const GITHUB_KNOWN_HOSTS: [&str; 3] = [
+    "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl",
+    "github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=",
+    "github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=",
+];
+
+/// SHA-256 fingerprints GitHub publishes for [`GITHUB_KNOWN_HOSTS`] (same order).
+pub const GITHUB_FINGERPRINTS: [&str; 3] = [
+    "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU",
+    "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM",
+    "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s",
+];
+
+/// What [`ensure_github_known_hosts`] did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum KnownHostsOutcome {
+    /// `known_hosts` already trusts one of GitHub's current keys.
+    AlreadyTrusted,
+    /// GitHub's keys were added. `backup` = copy of the previous file, if there was one.
+    Added { backup: Option<PathBuf> },
+}
+
+/// `~/.ssh/known_hosts` under the home dir git/ssh would use.
+pub fn known_hosts_path(git: &Git) -> Option<PathBuf> {
+    ssh_dir(git).map(|d| d.join("known_hosts"))
+}
+
+/// The base64 key blob of each current GitHub key.
+fn github_blobs() -> impl Iterator<Item = &'static str> {
+    GITHUB_KNOWN_HOSTS
+        .iter()
+        .filter_map(|l| l.split_whitespace().nth(2))
+}
+
+/// Does a host pattern list (`github.com,140.82.112.3`, `[github.com]:22`,
+/// `gh*`) name `github.com`? Hashed (`|1|…`) and negated patterns don't count.
+fn hosts_field_names_github(field: &str) -> bool {
+    let mut positive = false;
+    for pat in field.split(',') {
+        let pat = pat.trim();
+        if pat.is_empty() || pat.starts_with('|') {
+            continue;
+        }
+        let (neg, pat) = match pat.strip_prefix('!') {
+            Some(p) => (true, p),
+            None => (false, pat),
+        };
+        let host = match pat.strip_prefix('[') {
+            Some(rest) => match rest.split_once("]:") {
+                Some((h, "22")) => h,
+                _ => continue,
+            },
+            None => pat,
+        };
+        if glob_match(&host.to_ascii_lowercase(), GITHUB_HOST) {
+            if neg {
+                return false;
+            }
+            positive = true;
+        }
+    }
+    positive
+}
+
+/// True when `known_hosts` text already trusts one of GitHub's **current**
+/// keys for `github.com` (a line with only GitHub's old, rotated RSA key
+/// doesn't count). `@revoked` lines never count. Pure.
+pub fn known_hosts_trusts_github(text: &str) -> bool {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    text.lines().any(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return false;
+        }
+        let mut words = line.split_whitespace();
+        let mut first = words.next().unwrap_or_default();
+        if first.starts_with('@') {
+            if first.eq_ignore_ascii_case("@revoked") {
+                return false;
+            }
+            first = words.next().unwrap_or_default();
+        }
+        let _key_type = words.next();
+        let blob = words.next().unwrap_or_default();
+        hosts_field_names_github(first) && github_blobs().any(|b| b == blob)
+    })
+}
+
+/// Add GitHub's published host keys to `~/.ssh/known_hosts` unless it already
+/// trusts one of them, so the first SSH connect (terminal, VS Code, the app)
+/// never stops at "Are you sure you want to continue connecting (yes/no)?".
+///
+/// Creates `~/.ssh` and the file when missing; keeps every existing line; copies
+/// the old file to GitHop's backups folder first and writes atomically (temp
+/// file + rename, CLAUDE.md rule 4). No network: the keys are compiled in.
+pub fn ensure_github_known_hosts(git: &Git, paths: &crate::Paths) -> Result<KnownHostsOutcome> {
+    let path = known_hosts_path(git).ok_or(CoreError::NoDataDir)?;
+    let existing = match std::fs::read(&path) {
+        Ok(b) => Some(b),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(CoreError::io(&path, e)),
+    };
+    let text = existing
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .unwrap_or_default();
+    if known_hosts_trusts_github(&text) {
+        return Ok(KnownHostsOutcome::AlreadyTrusted);
+    }
+    let backup = match &existing {
+        Some(bytes) => {
+            let dir = paths.backups_dir();
+            std::fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
+            let to = dir.join(format!("known_hosts.{}", crate::backup::timestamp()));
+            std::fs::write(&to, bytes).map_err(|e| CoreError::io(&to, e))?;
+            Some(to)
+        }
+        None => None,
+    };
+    let dir = path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or(CoreError::NoDataDir)?;
+    std::fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut out: Vec<u8> = existing.unwrap_or_default();
+    if !out.is_empty() && !out.ends_with(b"\n") {
+        out.extend_from_slice(newline.as_bytes());
+    }
+    out.extend_from_slice(format!("# GitHub host keys, added by GitHop{newline}").as_bytes());
+    for line in GITHUB_KNOWN_HOSTS {
+        out.extend_from_slice(line.as_bytes());
+        out.extend_from_slice(newline.as_bytes());
+    }
+    let mut tmp = tempfile::NamedTempFile::new_in(&dir).map_err(|e| CoreError::io(&dir, e))?;
+    io::Write::write_all(&mut tmp, &out).map_err(|e| CoreError::io(tmp.path(), e))?;
+    tmp.persist(&path)
+        .map_err(|e| CoreError::io(&path, e.error))?;
+    Ok(KnownHostsOutcome::Added { backup })
+}
+
+/// [`ensure_github_known_hosts`], ignoring errors: the caller's real work
+/// (pin, keygen, test) must never fail over it.
+pub fn ensure_github_known_hosts_best_effort(git: &Git, paths: &crate::Paths) {
+    let _ = ensure_github_known_hosts(git, paths);
+}
+
+// ---------------------------------------------------------------------------
+// Which ssh git runs, and the Windows ssh-agent (ADR 0006)
+
+/// `%SystemRoot%\System32\OpenSSH\<name>.exe` when it exists (Windows' own
+/// OpenSSH, the one that talks to the Windows `ssh-agent` service).
+pub fn windows_openssh_tool(name: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let root = std::env::var_os("SystemRoot")?;
+        let p = PathBuf::from(root)
+            .join("System32")
+            .join("OpenSSH")
+            .join(format!("{name}.exe"));
+        p.is_file().then_some(p)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        None
+    }
+}
+
+/// The ssh program GitHop writes into `core.sshCommand`: Windows' OpenSSH
+/// (`C:\Windows\System32\OpenSSH\ssh.exe`) when it exists, else `None` (plain
+/// `ssh`). Git for Windows bundles its own ssh, which can't use the Windows
+/// ssh-agent, so a passphrase would be asked on every push — and VS Code's
+/// Git, which has no terminal, can't ask at all.
+pub fn git_ssh_program() -> Option<PathBuf> {
+    windows_openssh_tool("ssh")
+}
+
+/// Is the passphrase of the Windows ssh-agent's key remembered, and can it be?
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PassphraseState {
+    /// The key file doesn't exist.
+    NoKey,
+    /// The key has no passphrase: nothing to remember.
+    NoPassphrase,
+    /// The Windows ssh-agent holds this key: no prompt on push.
+    Remembered,
+    /// The agent runs but doesn't hold the key: ssh asks on each push.
+    AsksEachTime,
+    /// The Windows ssh-agent service is stopped or disabled.
+    AgentOff,
+    /// Not Windows, or GitHop can't tell.
+    Unknown,
+}
+
+/// Result of [`remember_passphrase`] / [`turn_on_agent_and_remember`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RememberOutcome {
+    /// The agent now holds the key.
+    Remembered,
+    /// The key has no passphrase.
+    NoPassphrase,
+    /// The ssh-agent service isn't running (turn it on first).
+    AgentOff,
+    /// The Windows admin (UAC) prompt was declined.
+    Cancelled,
+    /// `ssh-add` didn't add the key (console closed, wrong passphrase).
+    NotAdded,
+}
+
+/// Everything the passphrase flow does to the system, so tests can stub it
+/// (they never start an elevated process or a real `ssh-add`).
+pub trait AgentHost {
+    /// State of the Windows `ssh-agent` service.
+    fn service(&self) -> AgentStatus;
+    /// SHA-256 fingerprints the agent holds (`ssh-add -l`); `None` = can't ask.
+    fn fingerprints(&self) -> Option<Vec<String>>;
+    /// `ssh-add <key>` in a visible console; the user types the passphrase
+    /// there. `Ok(true)` when ssh-add exited 0.
+    fn add_key_in_console(&self, key: &Path) -> Result<bool>;
+    /// Elevated (UAC): set the service to start automatically and start it.
+    /// `Ok(false)` when the prompt was declined.
+    fn turn_on_service(&self) -> Result<bool>;
+}
+
+/// `SHA256:<base64, no padding>` of a public key line (`type blob [comment]`). Pure.
+pub fn public_key_fingerprint(line: &str) -> Option<String> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let blob = line.split_whitespace().nth(1)?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(blob)
+        .ok()?;
+    let digest = sha2::Sha256::digest(&raw);
+    Some(format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(digest)
+    ))
+}
+
+/// Fingerprints from `ssh-add -l` output (`256 SHA256:… comment (ED25519)`). Pure.
+pub fn parse_ssh_add_list(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .filter_map(|l| {
+            l.split_whitespace()
+                .find(|w| w.starts_with("SHA256:"))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// Is this private key file protected by a passphrase? Reads only the header
+/// (OpenSSH format: the cipher name; PEM: `ENCRYPTED`). `None` for a format
+/// GitHop doesn't know. Pure; the passphrase itself is never involved.
+pub fn private_key_is_encrypted(text: &str) -> Option<bool> {
+    use base64::Engine as _;
+    const OPENSSH: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
+    if let Some(start) = text.find(OPENSSH) {
+        let body = &text[start + OPENSSH.len()..];
+        let end = body.find("-----END")?;
+        let b64: zeroize::Zeroizing<String> =
+            zeroize::Zeroizing::new(body[..end].chars().filter(|c| !c.is_whitespace()).collect());
+        let raw = zeroize::Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(b64.as_bytes())
+                .ok()?,
+        );
+        let rest = raw.strip_prefix(b"openssh-key-v1\0")?;
+        let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+        let cipher = rest.get(4..4 + len)?;
+        return Some(cipher != b"none");
+    }
+    if text.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----") {
+        return Some(true);
+    }
+    if text.contains("-----BEGIN PRIVATE KEY-----") {
+        return Some(false);
+    }
+    if text.contains(" PRIVATE KEY-----") {
+        return Some(text.contains("ENCRYPTED"));
+    }
+    None
+}
+
+/// Read the key file's header (the content is wiped from memory afterwards).
+fn key_encrypted(key: &Path) -> Option<bool> {
+    let bytes = zeroize::Zeroizing::new(std::fs::read(key).ok()?);
+    let text = zeroize::Zeroizing::new(String::from_utf8_lossy(&bytes).into_owned());
+    private_key_is_encrypted(&text)
+}
+
+/// Fingerprint of `<key>.pub`, if it exists.
+fn key_fingerprint(key: &Path) -> Option<String> {
+    read_public_key(key)
+        .ok()
+        .and_then(|p| public_key_fingerprint(&p))
+}
+
+/// Status line for the key panel.
+pub fn passphrase_state(host: &dyn AgentHost, key: &Path) -> PassphraseState {
+    if key.as_os_str().is_empty() || !key.is_file() {
+        return PassphraseState::NoKey;
+    }
+    if key_encrypted(key) == Some(false) {
+        return PassphraseState::NoPassphrase;
+    }
+    match host.service() {
+        AgentStatus::Running => {
+            let (Some(fp), Some(held)) = (key_fingerprint(key), host.fingerprints()) else {
+                return PassphraseState::Unknown;
+            };
+            if held.contains(&fp) {
+                PassphraseState::Remembered
+            } else {
+                PassphraseState::AsksEachTime
+            }
+        }
+        AgentStatus::Stopped => PassphraseState::AgentOff,
+        AgentStatus::Unknown => PassphraseState::Unknown,
+    }
+}
+
+/// "Remember my passphrase": with the agent running, run `ssh-add <key>` in a
+/// visible console (the passphrase is typed there, never through GitHop).
+pub fn remember_passphrase(host: &dyn AgentHost, key: &Path) -> Result<RememberOutcome> {
+    if !key.is_file() {
+        return Err(CoreError::io(
+            key,
+            io::Error::new(io::ErrorKind::NotFound, "the key file doesn't exist"),
+        ));
+    }
+    if key_encrypted(key) == Some(false) {
+        return Ok(RememberOutcome::NoPassphrase);
+    }
+    if host.service() != AgentStatus::Running {
+        return Ok(RememberOutcome::AgentOff);
+    }
+    let added = host.add_key_in_console(key)?;
+    let held = match (key_fingerprint(key), host.fingerprints()) {
+        (Some(fp), Some(list)) => list.contains(&fp),
+        _ => added,
+    };
+    Ok(if held {
+        RememberOutcome::Remembered
+    } else {
+        RememberOutcome::NotAdded
+    })
+}
+
+/// "Turn on": one UAC prompt sets the ssh-agent service to start automatically
+/// and starts it, then [`remember_passphrase`].
+pub fn turn_on_agent_and_remember(host: &dyn AgentHost, key: &Path) -> Result<RememberOutcome> {
+    if key.is_file() && key_encrypted(key) == Some(false) {
+        return Ok(RememberOutcome::NoPassphrase);
+    }
+    if host.service() != AgentStatus::Running {
+        if !host.turn_on_service()? {
+            return Ok(RememberOutcome::Cancelled);
+        }
+        // The service can take a moment to report RUNNING.
+        let mut running = false;
+        for _ in 0..20 {
+            if host.service() == AgentStatus::Running {
+                running = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        if !running {
+            return Ok(RememberOutcome::AgentOff);
+        }
+    }
+    remember_passphrase(host, key)
+}
+
+/// The real Windows ssh-agent (`sc`, Windows OpenSSH's `ssh-add`, UAC).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WindowsAgent;
+
+/// PowerShell run (not elevated) to start ONE elevated `cmd.exe` through
+/// `Start-Process -Verb RunAs` (ShellExecute "runas": the UAC prompt), which
+/// runs `sc.exe config ssh-agent start= auto` and `sc.exe start ssh-agent`. A
+/// compile-time constant: no user input is ever part of it. Exit 1223 = the
+/// prompt was declined.
+pub const ELEVATE_AGENT_SCRIPT: &str = "$ErrorActionPreference = 'Stop'; \
+try { \
+$p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\\cmd.exe') \
+-ArgumentList '/d', '/c', '%SystemRoot%\\System32\\sc.exe config ssh-agent start= auto & %SystemRoot%\\System32\\sc.exe start ssh-agent' \
+-Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode \
+} catch { exit 1223 }";
+
+/// Exit code of [`ELEVATE_AGENT_SCRIPT`] when the UAC prompt was declined.
+pub const ELEVATION_DECLINED: i32 = 1223;
+
+impl AgentHost for WindowsAgent {
+    fn service(&self) -> AgentStatus {
+        agent_status()
+    }
+
+    fn fingerprints(&self) -> Option<Vec<String>> {
+        let exe = windows_openssh_tool("ssh-add")?;
+        let mut cmd = Command::new(exe);
+        cmd.arg("-l")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        no_window(&mut cmd);
+        let out = cmd.output().ok()?;
+        match out.status.code() {
+            // 1 = "The agent has no identities."
+            Some(0) | Some(1) => Some(parse_ssh_add_list(&String::from_utf8_lossy(&out.stdout))),
+            _ => None,
+        }
+    }
+
+    fn add_key_in_console(&self, key: &Path) -> Result<bool> {
+        let exe = windows_openssh_tool("ssh-add").ok_or_else(|| {
+            CoreError::io(
+                "ssh-add",
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Windows OpenSSH (ssh-add) isn't installed",
+                ),
+            )
+        })?;
+        let mut cmd = Command::new(&exe);
+        cmd.arg("--").arg(key);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+            cmd.creation_flags(CREATE_NEW_CONSOLE);
+        }
+        let status = cmd.status().map_err(|e| CoreError::io(&exe, e))?;
+        Ok(status.success())
+    }
+
+    fn turn_on_service(&self) -> Result<bool> {
+        #[cfg(windows)]
+        {
+            let root = std::env::var_os("SystemRoot").ok_or(CoreError::NoDataDir)?;
+            let exe = PathBuf::from(root)
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe");
+            let mut cmd = Command::new(&exe);
+            cmd.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                ELEVATE_AGENT_SCRIPT,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+            no_window(&mut cmd);
+            let status = cmd.status().map_err(|e| CoreError::io(&exe, e))?;
+            Ok(status.code() != Some(ELEVATION_DECLINED))
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(false)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1037,6 +1521,345 @@ mod tests {
         let aces: Vec<&str> = text.lines().filter(|l| l.contains(":(")).collect();
         assert_eq!(aces.len(), 1, "{text}");
         assert!(aces[0].contains(&user) && aces[0].contains("(f)"), "{text}");
+    }
+
+    #[test]
+    fn embedded_github_keys_match_published_fingerprints() {
+        for (line, fp) in GITHUB_KNOWN_HOSTS.iter().zip(GITHUB_FINGERPRINTS) {
+            let mut w = line.split_whitespace();
+            assert_eq!(w.next(), Some("github.com"));
+            let key = w.collect::<Vec<_>>().join(" ");
+            assert_eq!(public_key_fingerprint(&key).as_deref(), Some(fp), "{line}");
+        }
+    }
+
+    #[test]
+    fn known_hosts_detection_table() {
+        let ed = GITHUB_KNOWN_HOSTS[0];
+        let ed_blob = ed.split_whitespace().nth(2).unwrap();
+        let old_rsa = "github.com ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAq2A7hRGmdnm9tUDbO9IDSwBK6TbQa+PXYPCPy6rbTrTtw7PHkccKrpp0yVhp5HdEIcKr6pLlVDBfOLX9QUsyCOV0wzfjIJNlGEYsdlLJizHhbn2mUjvSAHQqZETYP81eFzLQNnPHt4EVVUh7VfDESU84KezmD5QlWpXLmvU31/yMf+Se8xhHTvKSCZIFImWwoG6mbUoWf9nzpIoaSjB+weqqUUmpaaasXVal72J+UX2B+2RPW3RcT0eOzQgqlJL3RKrTJvdsjE3JEAvGq3lGHSZXy28G3skua2SmVi/w4yCE6gbODqnTWlg7+wC604ydGXA8VJiS5ap43JXiUFFAaQ==";
+        let cases: &[(&str, &str, bool)] = &[
+            ("empty", "", false),
+            ("plain ed25519", ed, true),
+            ("crlf + bom", &format!("\u{feff}{ed}\r\n"), true),
+            (
+                "ip list",
+                &format!("github.com,140.82.112.3 ssh-ed25519 {ed_blob}"),
+                true,
+            ),
+            (
+                "port 22 bracket",
+                &format!("[github.com]:22 ssh-ed25519 {ed_blob}"),
+                true,
+            ),
+            (
+                "port 443 bracket",
+                &format!("[github.com]:443 ssh-ed25519 {ed_blob}"),
+                false,
+            ),
+            (
+                "other host",
+                &format!("gitlab.com ssh-ed25519 {ed_blob}"),
+                false,
+            ),
+            (
+                "revoked",
+                &format!("@revoked github.com ssh-ed25519 {ed_blob}"),
+                false,
+            ),
+            (
+                "hashed",
+                &format!("|1|abc=|def= ssh-ed25519 {ed_blob}"),
+                false,
+            ),
+            ("old rotated rsa only", old_rsa, false),
+            ("comment", &format!("# {ed}"), false),
+            (
+                "negated",
+                &format!("*,!github.com ssh-ed25519 {ed_blob}"),
+                false,
+            ),
+            ("glob", &format!("*.com ssh-ed25519 {ed_blob}"), true),
+            ("garbage", "github.com", false),
+        ];
+        for (name, text, want) in cases {
+            assert_eq!(known_hosts_trusts_github(text), *want, "case {name}");
+        }
+    }
+
+    fn known_hosts_env() -> (tempfile::TempDir, Git, crate::Paths) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let git = Git::with_exe("git")
+            .env("HOME", &home)
+            .env("USERPROFILE", &home);
+        let paths = crate::Paths::at(dir.path().join("data"));
+        (dir, git, paths)
+    }
+
+    #[test]
+    fn ensure_known_hosts_creates_the_file() {
+        let (_dir, git, paths) = known_hosts_env();
+        let path = known_hosts_path(&git).unwrap();
+        assert!(!path.exists());
+        assert_eq!(
+            ensure_github_known_hosts(&git, &paths).unwrap(),
+            KnownHostsOutcome::Added { backup: None }
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(known_hosts_trusts_github(&text));
+        for line in GITHUB_KNOWN_HOSTS {
+            assert!(text.contains(line));
+        }
+        // Second call: nothing to do, file unchanged.
+        assert_eq!(
+            ensure_github_known_hosts(&git, &paths).unwrap(),
+            KnownHostsOutcome::AlreadyTrusted
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn ensure_known_hosts_keeps_existing_lines_and_backs_up() {
+        let (_dir, git, paths) = known_hosts_env();
+        let path = known_hosts_path(&git).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let before = "gitlab.com ssh-ed25519 AAAAexample\r\nbitbucket.org ssh-rsa AAAAother";
+        std::fs::write(&path, before).unwrap();
+        let out = ensure_github_known_hosts(&git, &paths).unwrap();
+        let KnownHostsOutcome::Added {
+            backup: Some(backup),
+        } = out
+        else {
+            panic!("{out:?}");
+        };
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), before);
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.starts_with(&format!("{before}\r\n")), "{after}");
+        assert!(after.contains(&format!("{}\r\n", GITHUB_KNOWN_HOSTS[0])));
+    }
+
+    #[test]
+    fn already_trusted_file_is_not_touched() {
+        let (_dir, git, paths) = known_hosts_env();
+        let path = known_hosts_path(&git).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!("{}\n", GITHUB_KNOWN_HOSTS[1])).unwrap();
+        assert_eq!(
+            ensure_github_known_hosts(&git, &paths).unwrap(),
+            KnownHostsOutcome::AlreadyTrusted
+        );
+        assert!(!paths.backups_dir().exists());
+    }
+
+    #[test]
+    fn private_key_encryption_detection() {
+        use base64::Engine as _;
+        let blob = |cipher: &str| {
+            let mut raw = b"openssh-key-v1\0".to_vec();
+            raw.extend_from_slice(&(cipher.len() as u32).to_be_bytes());
+            raw.extend_from_slice(cipher.as_bytes());
+            raw.extend_from_slice(&[0, 0, 0, 4, b'n', b'o', b'n', b'e']);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
+            format!(
+                "-----BEGIN OPENSSH PRIVATE KEY-----\n{}\n{}\n-----END OPENSSH PRIVATE KEY-----\n",
+                &b64[..20],
+                &b64[20..]
+            )
+        };
+        assert_eq!(private_key_is_encrypted(&blob("none")), Some(false));
+        assert_eq!(private_key_is_encrypted(&blob("aes256-ctr")), Some(true));
+        assert_eq!(
+            private_key_is_encrypted(
+                "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nxx\n-----END RSA PRIVATE KEY-----"
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            private_key_is_encrypted(
+                "-----BEGIN RSA PRIVATE KEY-----\nMIIx\n-----END RSA PRIVATE KEY-----"
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            private_key_is_encrypted("-----BEGIN ENCRYPTED PRIVATE KEY-----\nx"),
+            Some(true)
+        );
+        assert_eq!(private_key_is_encrypted("not a key"), None);
+        assert_eq!(
+            private_key_is_encrypted("-----BEGIN OPENSSH PRIVATE KEY-----\n!!!\n-----END"),
+            None
+        );
+    }
+
+    #[test]
+    fn ssh_add_list_parse() {
+        let out = "256 SHA256:abc/DEF+1 me@x (ED25519)\r\n3072 SHA256:zzz other (RSA)\n";
+        assert_eq!(
+            parse_ssh_add_list(out),
+            vec!["SHA256:abc/DEF+1".to_string(), "SHA256:zzz".to_string()]
+        );
+        assert!(parse_ssh_add_list("The agent has no identities.\n").is_empty());
+    }
+
+    /// Stub agent: never runs `sc`, `ssh-add` or an elevated process.
+    struct FakeAgent {
+        running: std::cell::Cell<bool>,
+        held: std::cell::RefCell<Vec<String>>,
+        add_ok: bool,
+        accept_uac: bool,
+        to_add: String,
+        added_calls: std::cell::Cell<u32>,
+        uac_calls: std::cell::Cell<u32>,
+    }
+
+    impl FakeAgent {
+        fn new(running: bool, to_add: &str) -> Self {
+            Self {
+                running: std::cell::Cell::new(running),
+                held: std::cell::RefCell::new(Vec::new()),
+                add_ok: true,
+                accept_uac: true,
+                to_add: to_add.to_string(),
+                added_calls: std::cell::Cell::new(0),
+                uac_calls: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl AgentHost for FakeAgent {
+        fn service(&self) -> AgentStatus {
+            if self.running.get() {
+                AgentStatus::Running
+            } else {
+                AgentStatus::Stopped
+            }
+        }
+        fn fingerprints(&self) -> Option<Vec<String>> {
+            self.running.get().then(|| self.held.borrow().clone())
+        }
+        fn add_key_in_console(&self, _key: &Path) -> Result<bool> {
+            self.added_calls.set(self.added_calls.get() + 1);
+            if self.add_ok {
+                self.held.borrow_mut().push(self.to_add.clone());
+            }
+            Ok(self.add_ok)
+        }
+        fn turn_on_service(&self) -> Result<bool> {
+            self.uac_calls.set(self.uac_calls.get() + 1);
+            if self.accept_uac {
+                self.running.set(true);
+            }
+            Ok(self.accept_uac)
+        }
+    }
+
+    /// An encrypted-looking OpenSSH key plus its `.pub`; returns (key, fingerprint).
+    fn encrypted_key(dir: &Path) -> (PathBuf, String) {
+        use base64::Engine as _;
+        let mut raw = b"openssh-key-v1\0".to_vec();
+        raw.extend_from_slice(&10u32.to_be_bytes());
+        raw.extend_from_slice(b"aes256-ctr");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
+        let key = dir.join("githop_test");
+        std::fs::write(
+            &key,
+            format!(
+                "-----BEGIN OPENSSH PRIVATE KEY-----\n{b64}\n-----END OPENSSH PRIVATE KEY-----\n"
+            ),
+        )
+        .unwrap();
+        let pub_line = GITHUB_KNOWN_HOSTS[0]
+            .split_once(' ')
+            .map(|(_, k)| k)
+            .unwrap();
+        std::fs::write(pub_path(&key), format!("{pub_line} test\n")).unwrap();
+        (key, GITHUB_FINGERPRINTS[0].to_string())
+    }
+
+    #[test]
+    fn passphrase_flow_with_agent_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, fp) = encrypted_key(dir.path());
+        let agent = FakeAgent::new(true, &fp);
+        assert_eq!(
+            passphrase_state(&agent, &key),
+            PassphraseState::AsksEachTime
+        );
+        assert_eq!(
+            remember_passphrase(&agent, &key).unwrap(),
+            RememberOutcome::Remembered
+        );
+        assert_eq!(passphrase_state(&agent, &key), PassphraseState::Remembered);
+        assert_eq!(agent.uac_calls.get(), 0);
+        assert_eq!(
+            passphrase_state(&agent, &dir.path().join("missing")),
+            PassphraseState::NoKey
+        );
+    }
+
+    #[test]
+    fn passphrase_flow_turns_the_agent_on_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, fp) = encrypted_key(dir.path());
+        let agent = FakeAgent::new(false, &fp);
+        assert_eq!(passphrase_state(&agent, &key), PassphraseState::AgentOff);
+        assert_eq!(
+            remember_passphrase(&agent, &key).unwrap(),
+            RememberOutcome::AgentOff
+        );
+        assert_eq!(agent.added_calls.get(), 0);
+        assert_eq!(
+            turn_on_agent_and_remember(&agent, &key).unwrap(),
+            RememberOutcome::Remembered
+        );
+        assert_eq!(agent.uac_calls.get(), 1);
+
+        let mut declined = FakeAgent::new(false, &fp);
+        declined.accept_uac = false;
+        assert_eq!(
+            turn_on_agent_and_remember(&declined, &key).unwrap(),
+            RememberOutcome::Cancelled
+        );
+        assert_eq!(declined.added_calls.get(), 0);
+
+        let mut wrong = FakeAgent::new(true, &fp);
+        wrong.add_ok = false;
+        assert_eq!(
+            remember_passphrase(&wrong, &key).unwrap(),
+            RememberOutcome::NotAdded
+        );
+    }
+
+    #[test]
+    fn key_without_passphrase_needs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("k");
+        std::fs::write(
+            &key,
+            "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        let agent = FakeAgent::new(false, "");
+        assert_eq!(
+            passphrase_state(&agent, &key),
+            PassphraseState::NoPassphrase
+        );
+        assert_eq!(
+            turn_on_agent_and_remember(&agent, &key).unwrap(),
+            RememberOutcome::NoPassphrase
+        );
+        assert_eq!(agent.uac_calls.get(), 0);
+    }
+
+    #[test]
+    fn elevation_script_is_constant_and_runs_sc_once_elevated() {
+        assert!(ELEVATE_AGENT_SCRIPT.contains("-Verb RunAs"));
+        assert!(ELEVATE_AGENT_SCRIPT.contains("sc.exe config ssh-agent start= auto"));
+        assert!(ELEVATE_AGENT_SCRIPT.contains("sc.exe start ssh-agent"));
+        assert_eq!(ELEVATE_AGENT_SCRIPT.matches("Start-Process").count(), 1);
+        assert!(!ELEVATE_AGENT_SCRIPT.contains('"'));
     }
 
     #[test]

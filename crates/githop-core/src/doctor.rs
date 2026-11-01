@@ -159,6 +159,7 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
             }
         }
         check_ssh_config(&mut r, git);
+        check_known_hosts(&mut r, git);
         if opts.refresh_aliases {
             check_aliases(&mut r, git, store.as_mut());
         }
@@ -185,6 +186,27 @@ fn check_pin_disagreement(
     };
     let aliases = crate::aliases::current(store.paths(), git, store.settings());
     let res = crate::resolver::resolve(snapshot, repo.root(), store.profiles(), &aliases);
+    // ADR 0006: a GitHub HTTPS remote doesn't use the profile's key.
+    if let Some(p) = res
+        .profile_id
+        .as_deref()
+        .and_then(|id| store.profiles().get(id))
+    {
+        let https = crate::remote_ssh::https_remotes(snapshot);
+        if !https.is_empty() {
+            r.add(
+                "repo-https",
+                CheckStatus::Warning,
+                "This repo",
+                format!(
+                    "{} ({})",
+                    crate::remote_ssh::https_problem(&p.label),
+                    crate::remote_ssh::names_and(&https)
+                ),
+                Some("Run: githop remote ssh"),
+            );
+        }
+    }
     for w in &res.warnings {
         if let crate::resolver::ResolutionWarning::PinOwnerDisagree {
             pinned_profile,
@@ -897,13 +919,33 @@ fn agent_check(r: &mut DoctorReport, status: AgentStatus) {
             CheckStatus::Ok,
             "SSH",
             "ssh-agent is stopped, so keys with a passphrase ask for it on every push.",
-            Some("In an admin PowerShell: Set-Service ssh-agent -StartupType Automatic; Start-Service ssh-agent"),
+            Some("In the app: edit the profile → Remember my passphrase → Turn on. Or in an admin PowerShell: Set-Service ssh-agent -StartupType Automatic; Start-Service ssh-agent"),
         ),
         AgentStatus::Unknown => {
             if cfg!(windows) {
                 r.ok("agent", "SSH", "Couldn't check the ssh-agent service.");
             }
         }
+    }
+}
+
+/// GitHub's host keys in `~/.ssh/known_hosts` (ADR 0006). Without them the
+/// first SSH connect asks yes/no, which VS Code's Git can't answer. Read only.
+fn check_known_hosts(r: &mut DoctorReport, git: &Git) {
+    let text = ssh::known_hosts_path(git)
+        .and_then(|p| std::fs::read(p).ok())
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    if ssh::known_hosts_trusts_github(&text) {
+        r.ok("known-hosts", "SSH", "GitHub's host keys are trusted");
+    } else {
+        r.add(
+            "known-hosts",
+            CheckStatus::Warning,
+            "SSH",
+            "~/.ssh/known_hosts doesn't have GitHub's current host keys, so the first SSH push asks \"Are you sure you want to continue connecting?\" (VS Code can't answer it).",
+            Some("Run: githop remote ssh in a repo, or githop test <profile> (both add GitHub's published keys)"),
+        );
     }
 }
 

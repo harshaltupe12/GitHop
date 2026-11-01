@@ -688,6 +688,14 @@ pub(crate) fn run(
     if let Some(w) = ssh_key_warning(&owner, cmd.as_deref(), from_env, remote_url) {
         result.messages.push(w);
     }
+    // ADR 0006: over HTTPS the profile's key isn't used at all (no spawn, warn only).
+    if let Some(w) = crate::remote_ssh::https_push_warning(
+        &owner.label,
+        remote_url,
+        store.settings().remote_https_policy,
+    ) {
+        result.messages.push(w);
+    }
     if result.exit_code() == 0 {
         // Best effort: a failed record must never block or fail the push.
         let _ = record_pushed(repo.common_dir(), remote_arg, &updates);

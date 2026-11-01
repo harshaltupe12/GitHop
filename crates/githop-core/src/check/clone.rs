@@ -116,6 +116,21 @@ pub(crate) fn run(
                             .messages
                             .push(Message::ok(format!("GitHop: pinned to {}", p.label)));
                         result.outcome = Outcome::Pinned { profile_id };
+                        // ADR 0006: GitHub HTTPS remote → policy; host keys so the
+                        // first SSH push never stops at a yes/no prompt.
+                        let policy = store.settings().remote_https_policy;
+                        match crate::remote_ssh::apply_policy_with(&repo, &snapshot, policy) {
+                            Ok(action) => result
+                                .messages
+                                .extend(crate::remote_ssh::pin_message(&action, &p.label)),
+                            Err(e) => result.messages.push(
+                                Message::warning(format!(
+                                    "GitHop couldn't switch this repo to SSH: {e}"
+                                ))
+                                .hint("Run: githop remote ssh"),
+                            ),
+                        }
+                        crate::ssh::ensure_github_known_hosts_best_effort(&ctx.git, &ctx.paths);
                     }
                     Err(e) => {
                         result.messages.push(
