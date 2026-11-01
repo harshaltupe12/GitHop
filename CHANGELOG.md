@@ -22,6 +22,18 @@ First release. Windows only, GitHub only, SSH keys only.
 - Clones are pinned automatically to their profile.
 - `githop scan` finds repos in a folder and pins them in one go.
 
+### HTTPS remotes, host keys and passphrases (ADR 0006)
+- GitHub HTTPS remotes can be switched to SSH (`githop remote ssh`, app "Switch
+  to SSH" / "Switch all to SSH"), with undo; a token in the old URL is never kept.
+- `remote_https_policy` (ask / auto / never) decides what pinning does with a
+  GitHub HTTPS remote; `status`, `doctor` and `pre-push` warn about one.
+- GitHub's published host keys are added to `~/.ssh/known_hosts` (backup first),
+  so the first SSH push never stops at a yes/no prompt.
+- `core.sshCommand` runs Windows OpenSSH when present, so a passphrase
+  remembered by the Windows ssh-agent works in the terminal and in VS Code;
+  the app's "Remember my passphrase" runs `ssh-add` in a console and can turn
+  the agent on (one UAC prompt).
+
 ### Safety layers
 - `pre-commit`: blocks a commit whose author or committer email doesn't match
   the repo's profile.

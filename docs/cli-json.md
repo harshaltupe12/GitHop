@@ -51,6 +51,7 @@ Run inside a repo (outside one → exit `2`).
   key_matches: boolean | null;
   hooks_override: string | null;   // effective core.hooksPath here when it isn't GitHop's
   warnings: (ResolutionWarning & { message: string })[];
+  https_remotes: { name: string; url: string; ssh_url: string }[];  // GitHub HTTPS remotes (ADR 0006); url has no password
 }
 ```
 
@@ -72,6 +73,8 @@ Run inside a repo (outside one → exit `2`).
   }[];
   applied: string[];               // roots pinned by --apply
   apply_errors: { root: string; error: string }[];
+  switched_to_ssh: string[];       // roots pinned now whose GitHub HTTPS remote was switched (policy auto)
+  still_https: string[];           // roots pinned now that still push over GitHub HTTPS (policy ask/never)
 }
 ```
 

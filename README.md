@@ -74,6 +74,17 @@ once, nothing to reinstall). `GITHOP_DISABLE=1` turns the checks off for one
 command, like `--no-verify` for GitHop only; pushes made that way are still
 recorded, so `githop fix` never rewrites them.
 
+**HTTPS remotes don't use the profile's key.** Over `https://github.com/…`,
+Windows signs in with the account it saved, so a pinned repo can still push as
+the wrong account. `githop remote ssh` (or **Switch to SSH** on the app's Repos
+screen) switches the remote to `git@github.com:owner/repo.git`; `githop remote
+undo` goes back. When GitHop pins a repo it asks, switches, or leaves it, per
+`githop remote policy ask|auto|never` (Settings → GitHub HTTPS remotes). GitHop
+also adds GitHub's published host keys to `~/.ssh/known_hosts`, so the first SSH
+push never stops at a yes/no question, and points `core.sshCommand` at Windows'
+own OpenSSH so a passphrase remembered by Windows' ssh-agent (app: edit profile
+→ **Remember my passphrase**) works in the terminal and in VS Code.
+
 Repos that set their own `core.hooksPath` (husky, lefthook, pre-commit) skip
 global hooks. `githop doctor` and `githop status` point them out; add the line
 from `githop hooks snippet commit` to the top of that repo's pre-commit hook, and
