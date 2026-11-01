@@ -87,6 +87,12 @@ pub enum Command {
     /// Check your setup and suggest fixes
     Doctor,
 
+    /// Save your profiles to a password-protected file for another PC
+    Export(crate::cmd::export::ExportArgs),
+
+    /// Add profiles from a file made by githop export
+    Import(crate::cmd::import::ImportArgs),
+
     /// Wipe GitHop: restore original git settings, delete GitHop data
     Wipe(WipeArgs),
 
