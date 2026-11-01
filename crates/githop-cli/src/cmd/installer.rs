@@ -106,7 +106,10 @@ pub fn run(ctx: &Ctx, command: InstallerCommand) -> Result<Exit> {
                     .as_ref()
                     .map(|v| v.name.clone())
                     .unwrap_or_else(|| PATH_VALUE.to_string()),
-                kind: current.as_ref().map(|v| v.kind).unwrap_or(RegKind::ExpandSz),
+                kind: current
+                    .as_ref()
+                    .map(|v| v.kind)
+                    .unwrap_or(RegKind::ExpandSz),
                 data,
             };
             write_verified(&key, &new, current.as_ref())?;
@@ -292,7 +295,9 @@ pub fn add_entry(current: Option<&str>, dir: &str) -> std::result::Result<Edit, 
     let new = if value.is_empty() {
         dir.to_string()
     } else if value.ends_with(';') {
-        format!("{value}{dir}")
+        // Keep the trailing `;` after our entry, so removing it gives the
+        // original back exactly.
+        format!("{value}{dir};")
     } else {
         format!("{value};{dir}")
     };
@@ -371,7 +376,8 @@ pub fn decode_reg_file(bytes: &[u8]) -> std::result::Result<String, PathError> {
         .chunks_exact(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
-    String::from_utf16(&units).map_err(|_| PathError::Unreadable("export isn't valid UTF-16".into()))
+    String::from_utf16(&units)
+        .map_err(|_| PathError::Unreadable("export isn't valid UTF-16".into()))
 }
 
 /// Find value `name` (case-insensitive) directly under `key` in a `.reg` text.
@@ -592,10 +598,7 @@ impl ScratchDir {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         for n in 0..16u32 {
-            let dir = base.join(format!(
-                "githop-path-{}-{nanos}-{n}",
-                std::process::id()
-            ));
+            let dir = base.join(format!("githop-path-{}-{nanos}-{n}", std::process::id()));
             match std::fs::create_dir(&dir) {
                 Ok(()) => return Ok(Self(dir)),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -741,7 +744,9 @@ mod tests {
         assert_eq!(set(add_entry(None, DIR).unwrap()), DIR);
         assert_eq!(set(add_entry(Some(""), DIR).unwrap()), DIR);
         let v = r"%USERPROFILE%\bin;;C:\Tools;";
-        assert_eq!(set(add_entry(Some(v), DIR).unwrap()), format!("{v}{DIR}"));
+        let added = set(add_entry(Some(v), DIR).unwrap());
+        assert_eq!(added, format!("{v}{DIR};"));
+        assert_eq!(set(remove_entry(Some(&added), DIR).unwrap()), v);
         let v = r"%USERPROFILE%\bin;C:\Tools";
         assert_eq!(set(add_entry(Some(v), DIR).unwrap()), format!("{v};{DIR}"));
         // Already there in any spelling → unchanged.
@@ -751,7 +756,11 @@ mod tests {
             format!("\"{DIR}\";B"),
             format!("{};B", DIR.replace('\\', "/")),
         ] {
-            assert_eq!(add_entry(Some(&there), DIR).unwrap(), Edit::Unchanged, "{there}");
+            assert_eq!(
+                add_entry(Some(&there), DIR).unwrap(),
+                Edit::Unchanged,
+                "{there}"
+            );
         }
     }
 
@@ -763,7 +772,10 @@ mod tests {
             r"%SystemRoot%\x;;C:\Tools;"
         );
         assert_eq!(remove_entry(Some(DIR), DIR).unwrap(), Edit::Delete);
-        assert_eq!(remove_entry(Some(&format!("{DIR};")), DIR).unwrap(), Edit::Delete);
+        assert_eq!(
+            remove_entry(Some(&format!("{DIR};")), DIR).unwrap(),
+            Edit::Delete
+        );
         assert_eq!(remove_entry(Some("A;B"), DIR).unwrap(), Edit::Unchanged);
         assert_eq!(remove_entry(None, DIR).unwrap(), Edit::Unchanged);
         // Quoted entries with ; inside stay whole.
@@ -823,7 +835,14 @@ mod tests {
         assert_eq!(clean_dir(r"  C:\Git Hop dir  ").unwrap(), r"C:\Git Hop dir");
         assert_eq!(clean_dir(r"C:\").unwrap(), r"C:\");
         assert!(clean_dir(r"\\server\share\GitHop").is_ok());
-        for bad in ["", "GitHop", r"C:GitHop", r"C:\a;b", "C:\\a\"", r"%LOCALAPPDATA%\GitHop"] {
+        for bad in [
+            "",
+            "GitHop",
+            r"C:GitHop",
+            r"C:\a;b",
+            "C:\\a\"",
+            r"%LOCALAPPDATA%\GitHop",
+        ] {
             assert!(clean_dir(bad).is_err(), "{bad}");
         }
     }
@@ -845,7 +864,10 @@ mod tests {
             let v = RegValue {
                 name: "PATH".into(),
                 kind,
-                data: format!("C:\\Jös\\é€;%USERPROFILE%\\bin;\"C:\\q;x\";{}", "a".repeat(300)),
+                data: format!(
+                    "C:\\Jös\\é€;%USERPROFILE%\\bin;\"C:\\q;x\";{}",
+                    "a".repeat(300)
+                ),
             };
             let text = render_reg_file(key, &v);
             let bytes = encode_reg_file(&text);
@@ -886,6 +908,11 @@ mod tests {
             parse_reg_value(multi, r"HKCU\Environment", "Path"),
             Err(PathError::UnsupportedType(t)) if t == "REG_MULTI_SZ"
         ));
-        assert!(parse_reg_value("[HKEY_CURRENT_USER\\Other]\r\n", r"HKCU\Environment", "Path").is_err());
+        assert!(parse_reg_value(
+            "[HKEY_CURRENT_USER\\Other]\r\n",
+            r"HKCU\Environment",
+            "Path"
+        )
+        .is_err());
     }
 }
