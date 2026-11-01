@@ -53,7 +53,7 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
       aria-busy={loading || undefined}
       aria-label={iconOnly ? label : undefined}
       className={cx(
-        'gh-btn transition-ui inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-body',
+        'gh-btn press inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-body',
         compact ? 'min-h-7' : 'min-h-8',
         iconOnly ? (compact ? 'w-7' : 'w-8') : 'px-3',
         VARIANT[variant],
@@ -62,6 +62,7 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
       )}
       {...rest}
     >
+      {/* The spinner takes the icon's 16 px slot (no width change) and fades in. */}
       {loading ? <Spinner /> : icon ? <Ico icon={icon} /> : null}
       {children}
     </button>

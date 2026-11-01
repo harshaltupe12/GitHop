@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cx } from '../lib/cx';
+import { useChangeCount } from '../lib/motion';
 import { Ico, Icons, type Icon } from './icons';
 
 export type PillKind = 'ok' | 'blocked' | 'warning' | 'neutral';
@@ -24,10 +25,14 @@ export function Pill({
   className?: string;
 }) {
   const k = KIND[kind];
+  // A status change (e.g. Unassigned → Pinned) cross-fades in; first render doesn't.
+  const changes = useChangeCount(kind);
   return (
     <span
+      key={changes}
       className={cx(
         'gh-pill inline-flex min-h-5 items-center gap-1 whitespace-nowrap rounded-full px-2 text-small',
+        changes > 0 && 'appear',
         k.cls,
         className,
       )}

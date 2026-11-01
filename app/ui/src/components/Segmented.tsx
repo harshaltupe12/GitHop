@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent } from 'react';
 import { cx } from '../lib/cx';
+import { SlidingIndicator, useSlidingIndicator } from '../lib/motion';
 
 /**
  * Design §7.11 — 1 px border-input container, 28 px segments, selected = aqua. Arrow keys switch.
@@ -47,16 +48,22 @@ export function Segmented<T extends string>({
     0,
     options.findIndex((o) => o.value === value),
   );
+  const root = useRef<HTMLDivElement>(null);
+  const thumb = useSlidingIndicator(root, '[aria-checked="true"]', value);
   return (
     <div
+      ref={root}
       role="radiogroup"
       aria-label={label}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       aria-busy={busy || undefined}
       aria-disabled={inert || undefined}
-      className="inline-flex rounded-md border border-line-input bg-surface p-0.5"
+      data-indicator={thumb.box ? 'ready' : undefined}
+      className="gh-seg relative inline-flex rounded-md border border-line-input bg-surface p-0.5"
     >
+      {/* Aqua thumb slides to the selected segment (MOTION.md). */}
+      <SlidingIndicator {...thumb} className="rounded-sm bg-aqua" />
       {options.map((o, i) => {
         const sel = i === selectedIndex && o.value === value;
         return (

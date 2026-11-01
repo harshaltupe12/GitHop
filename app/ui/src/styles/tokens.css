@@ -72,3 +72,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-sans);
   --nav-text: #4A4652;              /* §7.2 nav item default text */
   --scrim: rgba(31, 29, 36, 0.3);   /* dialog backdrop (text colour, as in --shadow-float) */
 }
+
+/*
+ * Motion tokens beyond Design §10 / §12.1 (see app/ui/MOTION.md). Same single
+ * easing (--ease); these name the amounts so components never carry raw values.
+ */
+:root {
+  --dur-exit: 120ms;        /* layers leave faster than they arrive (enter = --dur-base) */
+  --dur-spin: 800ms;        /* one spinner turn */
+  --press-scale: 0.98;      /* :active feedback on small controls — no spring, no overshoot */
+  --enter-scale: 0.97;      /* dialogs, menus, tooltips start here, never from 0 */
+  --enter-shift: 0.5rem;    /* toasts / tray / onboarding steps travel this far (rem: follows text size) */
+}

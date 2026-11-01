@@ -1,5 +1,6 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { cx } from '../lib/cx';
+import { useArrivals } from '../lib/motion';
 import { Chip } from './Chip';
 import type { ControlProps } from './Field';
 
@@ -24,6 +25,8 @@ export function ChipInput({
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const invalid = control['aria-invalid'];
+  // Chips the user adds pop in; chips already there (editing a profile) don't.
+  const added = useArrivals(value);
 
   const commit = (raw: string) => {
     const parts = raw
@@ -58,7 +61,7 @@ export function ChipInput({
     >
       <ul className="contents">
         {value.map((v) => (
-          <li key={v} className="max-w-full">
+          <li key={v} className={cx('max-w-full', added(v) && 'pop-in')}>
             <Chip
               onRemove={() => {
                 onChange(value.filter((x) => x !== v));

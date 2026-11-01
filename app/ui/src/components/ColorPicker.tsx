@@ -66,13 +66,13 @@ export function ColorPicker({
               else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') move(e, -1);
             }}
             className={cx(
-              'gh-avatar transition-ui inline-flex h-6 w-6 items-center justify-center rounded-full text-white',
+              'gh-avatar press inline-flex h-6 w-6 items-center justify-center rounded-full text-white',
               PROFILE_BG[c],
               selected && 'ring-2 ring-ink ring-offset-2 ring-offset-surface',
               used && 'cursor-not-allowed opacity-40',
             )}
           >
-            {selected ? <Ico icon={Icons.ok} /> : null}
+            {selected ? <Ico icon={Icons.ok} className="pop-in" /> : null}
           </button>
         );
         return used ? (

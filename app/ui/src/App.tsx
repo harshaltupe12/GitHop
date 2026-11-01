@@ -12,6 +12,7 @@ import { applyProfiles, hooksHealthy, STATE_KEY, useAppState } from './lib/appSt
 import { profileById } from './lib/format';
 import * as ipc from './lib/ipc';
 import { NavContext, useNav as useContextNav, type Intent, type Nav, type Screen } from './lib/nav';
+import { SlidingIndicator, useSlidingIndicator } from './lib/motion';
 import { invalidate } from './lib/query';
 import { KEYS, readJson } from './lib/storage';
 import type { AppState, IpcError } from './lib/types';
@@ -145,6 +146,8 @@ function Layout({
   const toast = useToast();
   const { screen, go } = useContextNav();
   const navRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const navRef = useRef<HTMLElement>(null);
+  const indicator = useSlidingIndicator(navRef, '[aria-current="page"]', screen);
   const [installing, setInstalling] = useState(false);
 
   const onNavKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
@@ -196,7 +199,14 @@ function Layout({
         <div className="p-3 pt-4">
           <BrandLockup height={32} />
         </div>
-        <nav aria-label={S.app.mainNav} className="flex-1">
+        <nav
+          ref={navRef}
+          aria-label={S.app.mainNav}
+          data-indicator={indicator.box ? 'ready' : undefined}
+          className="relative flex-1"
+        >
+          {/* Selected background glides between items (MOTION.md). */}
+          <SlidingIndicator {...indicator} className="rounded-md bg-aqua-tint" />
           <ul className="flex flex-col gap-0.5">
             {SCREENS.map((s, i) => (
               <li key={s.id}>
