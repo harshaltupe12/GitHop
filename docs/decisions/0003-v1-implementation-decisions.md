@@ -56,6 +56,10 @@ from Plan.md / Design.md. Each can be revisited.
     exports `GIT_AUTHOR_NAME/EMAIL/DATE` to its hooks; only a value that differs from
     config counts as a C9 override. Keeps the 1-spawn fast path under real hooks.
 12. **export/import uses `age` 0.11** (0.12 pulls a crate with an open advisory).
+13. **The tray app binary is `GitHopApp.exe`.** `GitHop.exe` and the CLI's
+    `githop.exe` are the same file name on case-insensitive NTFS (they overwrote each
+    other in `target/release` and would in the install dir). Start-menu name stays
+    "GitHop" (`productName`).
 
 ## Consequences
 
