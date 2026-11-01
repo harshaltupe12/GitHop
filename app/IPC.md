@@ -43,8 +43,16 @@ type FixPlan = {
   offenders: OffendingCommit[];        // unpushed, wrong identity — will be re-stamped
   pushed_offenders: OffendingCommit[]; // already on a remote — never touched
   blocked_reason?: string;             // e.g. dirty tree, rebase in progress, detached HEAD, unresolved
+  blocker?: "operation-in-progress" | "detached-head" | "unresolved" | "dirty-tree" | "too-many-commits";
+  unpushed: number;                    // commits on no remote-tracking ref
+  rewrite_count: number;               // offenders + their unpushed descendants (get new ids)
+  signed: number;                      // signed commits whose signature will be dropped
+  has_remote_refs: boolean;
 };
-type FixResult = { backup_ref: string; rewritten: number; undo_hint: string };
+type FixResult = {
+  backup_ref: string; rewritten: number; undo_hint: string;
+  recreated: number; old_head: string; new_head: string;
+};
 
 // core `wipe` (CLI agent)
 type WipeOptions = { unpin_repos: boolean; delete_keys: boolean; keep_data: boolean };

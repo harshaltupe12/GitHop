@@ -12,8 +12,9 @@
 //! Spawn budget (Plan §11): commit fast path = 1 (`git config --list`), slow
 //! path = 2 (+ `git var -l`); push = 2 (+ `git log`); clone = 1 (+ pin writes
 //! when it pins). A non-clone checkout and a delete-only push spawn nothing.
-//! The repo root is the hook's working directory when it contains `.git`
-//! (git runs hooks there); otherwise one extra `rev-parse` spawn finds it.
+//! The repo comes from git's hook environment without a spawn
+//! ([`Repo::from_hook_env`]: hook cwd = work tree top, `GIT_DIR` for linked
+//! worktrees); only an unrecognised layout costs one extra `rev-parse`.
 
 pub mod clone;
 pub mod commit;
@@ -333,13 +334,10 @@ pub fn run_check(stage: Stage, args: &[String], stdin: &str, ctx: &CheckContext)
 // ---------------------------------------------------------------------------
 // Shared helpers for the stage orchestrators.
 
-/// Repo root for a hook: `cwd` when it holds `.git` (dir or worktree file),
-/// else one `git rev-parse` spawn.
-pub(crate) fn repo_root(ctx: &CheckContext) -> Result<PathBuf> {
-    if ctx.cwd.join(".git").exists() {
-        return Ok(ctx.cwd.clone());
-    }
-    Ok(Repo::discover(&ctx.git, &ctx.cwd)?.root().to_path_buf())
+/// The repo a hook runs in, without spawning when git's hook environment
+/// identifies it (see [`Repo::from_hook_env`]); else one `git rev-parse`.
+pub(crate) fn hook_repo(ctx: &CheckContext) -> Result<Repo> {
+    Repo::from_hook_env(&ctx.git, &ctx.cwd)
 }
 
 /// Load profiles + settings (no spawn).
@@ -352,26 +350,20 @@ pub(crate) fn resolved_profile<'a>(set: &'a ProfileSet, id: Option<&str>) -> Opt
     id.and_then(|id| set.get(id))
 }
 
-/// Pin `root` to `profile` and remember it in `settings.pinned_repos`
-/// (saved best-effort). Spawns: discover + the pin writes.
-pub(crate) fn pin_and_record(
-    ctx: &CheckContext,
-    store: &mut Store,
-    root: &Path,
-    profile: &Profile,
-) -> Result<()> {
-    let repo = Repo::discover(&ctx.git, root)?;
-    crate::pin::pin_repo(&repo, profile)?;
+/// Pin `repo` to `profile` and remember it in `settings.pinned_repos`
+/// (recorded best-effort with [`Store::update_settings`], so a concurrent
+/// tray/CLI change is never overwritten). Spawns: only the pin itself — the
+/// repo is not discovered again.
+pub(crate) fn pin_and_record(store: &mut Store, repo: &Repo, profile: &Profile) -> Result<()> {
+    crate::pin::pin_repo(repo, profile)?;
     let key = paths::normalize_repo_root(repo.root());
-    let mut settings = store.settings().clone();
-    if !settings
-        .pinned_repos
-        .iter()
-        .any(|r| paths::folder_key(r) == paths::folder_key(&key))
-    {
-        settings.pinned_repos.push(key);
-        let _ = store.save_settings(&settings);
-    }
+    let fk = paths::folder_key(&key);
+    let _ = store.update_settings(|s| {
+        if !s.pinned_repos.iter().any(|r| paths::folder_key(r) == fk) {
+            s.pinned_repos.push(key);
+        }
+        Ok(())
+    });
     Ok(())
 }
 
@@ -388,9 +380,12 @@ pub(crate) fn first_hint(store: &mut Store, root: &Path) -> bool {
     {
         return false;
     }
-    let mut settings = store.settings().clone();
-    settings.hinted_repos.push(key);
-    let _ = store.save_settings(&settings);
+    let _ = store.update_settings(|s| {
+        if !s.hinted_repos.iter().any(|r| paths::folder_key(r) == fk) {
+            s.hinted_repos.push(key);
+        }
+        Ok(())
+    });
     true
 }
 

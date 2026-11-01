@@ -100,7 +100,7 @@ pub enum Command {
     Check(CheckArgs),
 
     /// Fix unpushed commits that used the wrong identity
-    Fix,
+    Fix(FixArgs),
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -275,6 +275,28 @@ pub struct CheckArgs {
     /// Arguments git passed to the hook
     #[arg(last = true)]
     pub hook_args: Vec<String>,
+}
+
+/// `githop fix`: only unpushed commits are changed, and a backup is saved first.
+#[derive(Debug, Clone, Default, Args)]
+#[command(
+    after_help = "Only unpushed commits are changed. A backup is saved first, so you can undo."
+)]
+pub struct FixArgs {
+    /// Don't ask before fixing or undoing
+    #[arg(short, long)]
+    pub yes: bool,
+    /// Show which commits would be fixed, change nothing
+    #[arg(long, conflicts_with = "undo")]
+    pub dry_run: bool,
+    /// Undo a fix: restore the newest (or given) backup
+    #[arg(
+        long,
+        value_name = "BACKUP_REF",
+        num_args = 0..=1,
+        default_missing_value = ""
+    )]
+    pub undo: Option<String>,
 }
 
 /// Accept only known profile colour names (case-insensitive).

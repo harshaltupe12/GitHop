@@ -95,7 +95,7 @@ pub fn run(ctx: &Ctx, command: Command) -> Result<Exit> {
         Command::Import(a) => import::run(ctx, a),
         Command::Wipe(a) => wipe::run(ctx, a),
         Command::Check(a) => check::run(ctx, a),
-        Command::Fix => fix::run(ctx),
+        Command::Fix(a) => fix::run(ctx, a),
     }
 }
 

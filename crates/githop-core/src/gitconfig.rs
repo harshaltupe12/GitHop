@@ -58,8 +58,10 @@ pub struct ConfigSnapshot {
     entries: Vec<ConfigEntry>,
 }
 
-/// Compare keys: section + variable case-insensitive, subsection case-sensitive.
-fn key_eq(a: &str, b: &str) -> bool {
+/// Compare config keys the way git does: section and variable
+/// case-insensitive, subsection (the middle part, e.g. a remote name)
+/// case-sensitive. `remote.Origin.URL` == `remote.Origin.url` != `remote.origin.url`.
+pub fn key_eq(a: &str, b: &str) -> bool {
     let (Some((a_sec, a_rest)), Some((b_sec, b_rest))) = (a.split_once('.'), b.split_once('.'))
     else {
         return a.eq_ignore_ascii_case(b);
@@ -130,6 +132,23 @@ impl ConfigSnapshot {
         Self::parse(&out)
     }
 
+    /// Only the repo's own `.git/config` (`--local`), one spawn. Entries have
+    /// scope `local`.
+    pub fn read_local(git: &Git, repo_root: &Path) -> Result<Self> {
+        let out = git.run(
+            repo_root,
+            &[
+                "config",
+                "--local",
+                "--list",
+                "--show-origin",
+                "--show-scope",
+                "-z",
+            ],
+        )?;
+        Self::parse(&out)
+    }
+
     pub fn entries(&self) -> &[ConfigEntry] {
         &self.entries
     }
@@ -183,9 +202,51 @@ impl ConfigSnapshot {
         names
     }
 
-    /// URL of remote `name` (no spawn).
+    /// Last value of `key` set at exactly `scope`, with its origin.
+    pub fn get_scoped_entry(&self, key: &str, scope: ConfigScope) -> Option<&ConfigEntry> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|e| e.scope == scope && key_eq(&e.key, key))
+    }
+
+    /// URL of remote `name` as written (no spawn). With several
+    /// `remote.<name>.url` values this is the **first** one — the URL git
+    /// fetches from (the others are extra push URLs).
     pub fn remote_url(&self, name: &str) -> Option<&str> {
-        self.get(&format!("remote.{name}.url"))
+        let key = format!("remote.{name}.url");
+        self.entries
+            .iter()
+            .find(|e| key_eq(&e.key, &key))
+            .map(|e| e.value.as_deref().unwrap_or("true"))
+    }
+
+    /// Apply `url.<base>.insteadOf` rewriting to `url` like git does for fetch
+    /// URLs: the longest matching `insteadOf` prefix is replaced by its `<base>`
+    /// (first defined wins a tie). Returns `None` when no rule matches. No spawn.
+    pub fn rewrite_url(&self, url: &str) -> Option<String> {
+        let mut best: Option<(usize, &str)> = None;
+        for e in &self.entries {
+            let Some((section, rest)) = e.key.split_once('.') else {
+                continue;
+            };
+            if !section.eq_ignore_ascii_case("url") {
+                continue;
+            }
+            let Some((base, var)) = rest.rsplit_once('.') else {
+                continue;
+            };
+            if !var.eq_ignore_ascii_case("insteadof") {
+                continue;
+            }
+            let Some(prefix) = e.value.as_deref().filter(|p| !p.is_empty()) else {
+                continue;
+            };
+            if url.starts_with(prefix) && best.is_none_or(|(len, _)| prefix.len() > len) {
+                best = Some((prefix.len(), base));
+            }
+        }
+        best.map(|(len, base)| format!("{base}{}", &url[len..]))
     }
 }
 
@@ -206,18 +267,92 @@ pub fn unset_local(git: &Git, repo_root: &Path, key: &str) -> Result<()> {
     unset(git, repo_root, "--local", key)
 }
 
-/// `git config --global <key> <value>`. Caller must back up first (`backup` module).
+/// Set a global value. Caller must back up first (`backup` module).
+///
+/// Writes with `git config --file <Git::global_config_path()>` rather than
+/// `--global`, so the file written is exactly the file `backup` copied (git's
+/// own `~/.gitconfig` / XDG choice is mirrored by `global_config_path`).
 pub fn set_global(git: &Git, key: &str, value: &str) -> Result<()> {
+    let file = git.global_config_path()?;
+    set_file(git, &file, key, value)
+}
+
+/// Add one more value to a (multi-valued) global key (`--add`). Caller backs up first.
+pub fn add_global(git: &Git, key: &str, value: &str) -> Result<()> {
+    let file = git.global_config_path()?;
+    let file_s = file.to_string_lossy();
     git.run(
         &global_cwd(git),
-        &["config", "--global", "--replace-all", key, value],
+        &["config", "--file", &file_s, "--add", key, value],
     )
     .map(drop)
 }
 
-/// `git config --global --unset-all <key>`; a missing key is not an error.
+/// Unset every value of a global key; a missing key is not an error.
+/// Same target file as [`set_global`].
 pub fn unset_global(git: &Git, key: &str) -> Result<()> {
-    unset(git, &global_cwd(git), "--global", key)
+    let file = git.global_config_path()?;
+    unset_file(git, &file, key)
+}
+
+/// `git config --file <file> --replace-all <key> <value>`.
+pub fn set_file(git: &Git, file: &Path, key: &str, value: &str) -> Result<()> {
+    let file_s = file.to_string_lossy();
+    git.run(
+        &global_cwd(git),
+        &["config", "--file", &file_s, "--replace-all", key, value],
+    )
+    .map(drop)
+}
+
+/// `git config --file <file> --unset-all <key>`; a missing key (or missing
+/// file) is not an error.
+pub fn unset_file(git: &Git, file: &Path, key: &str) -> Result<()> {
+    if std::fs::symlink_metadata(file).is_err() {
+        return Ok(());
+    }
+    let file_s = file.to_string_lossy();
+    let args = ["config", "--file", &file_s, "--unset-all", key];
+    let out = git.output(&global_cwd(git), &args, None)?;
+    if out.status.success() || out.status.code() == Some(EXIT_KEY_MISSING) {
+        Ok(())
+    } else {
+        Err(git_failed(&args, &out))
+    }
+}
+
+/// Read one value from a specific config file (`git config --file <file> --get
+/// <key>`), e.g. a backup. `None` when unset or when the file doesn't exist.
+/// With several values the last one wins. Includes are not followed.
+pub fn get_file(git: &Git, file: &Path, key: &str) -> Result<Option<String>> {
+    Ok(get_all_file(git, file, key)?.pop())
+}
+
+/// Every value of `key` in a specific config file, in file order (`--get-all
+/// -z`, so values containing newlines survive). Empty when unset or no file.
+pub fn get_all_file(git: &Git, file: &Path, key: &str) -> Result<Vec<String>> {
+    if !file.is_file() {
+        return Ok(Vec::new());
+    }
+    let file_s = file.to_string_lossy();
+    let args = ["config", "--file", &file_s, "-z", "--get-all", key];
+    let out = git.output(&global_cwd(git), &args, None)?;
+    if out.status.success() {
+        return Ok(split_nul_values(&out.stdout));
+    }
+    if out.status.code() == Some(1) {
+        return Ok(Vec::new());
+    }
+    Err(git_failed(&args, &out))
+}
+
+/// Split successful `-z` value output (`value\0value\0`) into strings. Only
+/// called on exit 0, so there is at least one value (a lone `\0` is one empty value).
+fn split_nul_values(raw: &[u8]) -> Vec<String> {
+    let raw = raw.strip_suffix(&[0]).unwrap_or(raw);
+    raw.split(|b| *b == 0)
+        .map(|v| String::from_utf8_lossy(v).into_owned())
+        .collect()
 }
 
 /// Read one global value (`git config --global --get <key>`); `None` when unset.
@@ -368,6 +503,80 @@ command\0command line:\0user.email\ncli@example.com\0";
             let raw: Vec<u8> = (0..64).map(|i| n.wrapping_mul(i).wrapping_add(i)).collect();
             let _ = ConfigSnapshot::parse(&raw);
         }
+    }
+
+    /// Review #7: git fetches from the first `remote.<name>.url`.
+    #[test]
+    fn remote_url_uses_first_value() {
+        let s = ConfigSnapshot::from_entries(vec![
+            e(
+                ConfigScope::Local,
+                "remote.origin.url",
+                "git@github.com:acme/x.git",
+            ),
+            e(
+                ConfigScope::Local,
+                "remote.origin.url",
+                "git@github.com:me/x.git",
+            ),
+        ]);
+        assert_eq!(s.remote_url("origin"), Some("git@github.com:acme/x.git"));
+        assert_eq!(s.get_all("remote.origin.url").len(), 2);
+    }
+
+    #[test]
+    fn rewrite_url_longest_insteadof_wins() {
+        let s = ConfigSnapshot::from_entries(vec![
+            e(ConfigScope::Global, "url.git@github.com:.insteadof", "gh:"),
+            e(
+                ConfigScope::Global,
+                "url.git@github-office:Acme/.insteadOf",
+                "gh:acme/",
+            ),
+            e(
+                ConfigScope::Global,
+                "url.https://mirror.example/.insteadOf",
+                "x",
+            ),
+            e(ConfigScope::Global, "url.unused.pushInsteadOf", "gh:"),
+            e(ConfigScope::Global, "url.empty.insteadOf", ""),
+        ]);
+        assert_eq!(
+            s.rewrite_url("gh:me/repo").as_deref(),
+            Some("git@github.com:me/repo")
+        );
+        assert_eq!(
+            s.rewrite_url("gh:acme/api").as_deref(),
+            Some("git@github-office:Acme/api")
+        );
+        assert_eq!(s.rewrite_url("https://github.com/a/b"), None);
+    }
+
+    #[test]
+    fn scoped_entry_and_key_eq() {
+        let s = ConfigSnapshot::from_entries(vec![
+            e(ConfigScope::Global, "user.email", "g@x"),
+            e(ConfigScope::Local, "user.email", "l@x"),
+        ]);
+        let g = s
+            .get_scoped_entry("User.Email", ConfigScope::Global)
+            .unwrap();
+        assert_eq!(g.value.as_deref(), Some("g@x"));
+        assert!(s
+            .get_scoped_entry("user.email", ConfigScope::Worktree)
+            .is_none());
+        assert!(key_eq("remote.Origin.URL", "REMOTE.Origin.url"));
+        assert!(!key_eq("remote.Origin.url", "remote.origin.url"));
+        assert!(key_eq(
+            "url.https://a.b/.insteadOf",
+            "url.https://a.b/.insteadof"
+        ));
+    }
+
+    #[test]
+    fn nul_values_split() {
+        assert_eq!(split_nul_values(b"a\0b\nc\0"), vec!["a", "b\nc"]);
+        assert_eq!(split_nul_values(b"\0"), vec![""]);
     }
 
     #[test]

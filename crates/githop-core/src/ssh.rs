@@ -340,22 +340,78 @@ pub fn keygen(key: &Path, comment: &str, no_passphrase: bool) -> Result<()> {
     restrict_key_acl(key)
 }
 
+/// The account to grant in `icacls`: the current user's SID as `*S-1-…` (from
+/// `whoami /user /fo csv /nh`, locale-independent and right for domain/Azure AD
+/// accounts), else `USERDOMAIN\USERNAME`, else `USERNAME`.
+#[cfg(windows)]
+fn current_user_principal() -> Option<String> {
+    let sid = locate_system_tool("whoami").ok().and_then(|exe| {
+        let mut cmd = Command::new(exe);
+        cmd.args(["/user", "/fo", "csv", "/nh"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        no_window(&mut cmd);
+        let out = cmd.output().ok()?;
+        out.status.success().then_some(())?;
+        parse_whoami_sid(&String::from_utf8_lossy(&out.stdout))
+    });
+    if let Some(sid) = sid {
+        return Some(format!("*{sid}"));
+    }
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    match (var("USERDOMAIN"), var("USERNAME")) {
+        (Some(d), Some(u)) => Some(format!("{d}\\{u}")),
+        (None, Some(u)) => Some(u),
+        _ => None,
+    }
+}
+
+/// The SID field of `whoami /user /fo csv /nh` output
+/// (`"domain\user","S-1-5-21-…"`).
+pub fn parse_whoami_sid(stdout: &str) -> Option<String> {
+    stdout
+        .split([',', '\n', '\r'])
+        .map(|f| f.trim().trim_matches('"'))
+        .find(|f| {
+            f.strip_prefix("S-1-").is_some_and(|rest| {
+                !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+            })
+        })
+        .map(str::to_string)
+}
+
+/// Locate a Windows system tool: `%SystemRoot%\System32` first (never a copy
+/// planted on PATH), then PATH.
+#[cfg(windows)]
+fn locate_system_tool(name: &str) -> Result<PathBuf> {
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        let p = PathBuf::from(root)
+            .join("System32")
+            .join(format!("{name}.exe"));
+        if p.is_file() {
+            return Ok(p);
+        }
+    }
+    locate_tool(name)
+}
+
 /// Restrict the private key to the current user (Windows: `icacls` with arg array —
-/// `/inheritance:r /grant:r <USERNAME>:F`; checks exit code only, output is locale-dependent.
-/// Unix: chmod 600).
+/// `/inheritance:r /grant:r *<SID>:F` (fallback `DOMAIN\user`); checks exit code
+/// only, output is locale-dependent. Unix: chmod 600).
 pub fn restrict_key_acl(key: &Path) -> Result<()> {
     #[cfg(windows)]
     {
-        let user = std::env::var("USERNAME")
-            .ok()
-            .filter(|u| !u.trim().is_empty())
-            .ok_or_else(|| {
-                CoreError::io(
-                    key,
-                    io::Error::new(io::ErrorKind::NotFound, "USERNAME is not set"),
-                )
-            })?;
-        let exe = locate_tool("icacls")?;
+        let user = current_user_principal().ok_or_else(|| {
+            CoreError::io(
+                key,
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "couldn't find the current Windows user",
+                ),
+            )
+        })?;
+        let exe = locate_system_tool("icacls")?;
         let mut cmd = Command::new(&exe);
         cmd.arg(key)
             .arg("/inheritance:r")
@@ -501,7 +557,7 @@ pub fn test_connection(key: &Path) -> Result<ConnectionTest> {
     let out = Command::new(&exe)
         .arg("-T")
         .arg("-i")
-        .arg(key)
+        .arg(ssh_identity_arg(key))
         .args([
             "-o",
             "IdentitiesOnly=yes",
@@ -522,6 +578,15 @@ pub fn test_connection(key: &Path) -> Result<ConnectionTest> {
         text.push_str(&String::from_utf8_lossy(&out.stdout));
     }
     Ok(parse_connection_output(&text, out.status.code()))
+}
+
+/// The `-i` argument for `key`: ssh expands `%` tokens in identity paths, so a
+/// literal `%` is passed as `%%` (non-UTF-8 paths are passed unchanged).
+fn ssh_identity_arg(key: &Path) -> OsString {
+    match key.to_str() {
+        Some(s) if s.contains('%') => OsString::from(crate::pin::escape_ssh_percent(s)),
+        _ => key.as_os_str().to_owned(),
+    }
 }
 
 /// `ssh -G <alias>` → the `hostname` value (lower-cased). Too slow for hooks; scan/doctor only.
@@ -561,7 +626,7 @@ fn parse_ssh_g_hostname(stdout: &str) -> Option<String> {
 pub fn agent_status() -> AgentStatus {
     #[cfg(windows)]
     {
-        let Ok(exe) = locate_tool("sc") else {
+        let Ok(exe) = locate_system_tool("sc") else {
             return AgentStatus::Unknown;
         };
         let mut cmd = Command::new(&exe);
@@ -922,6 +987,56 @@ mod tests {
         let pending = "        STATE              : 2  START_PENDING\n";
         assert_eq!(parse_sc_query(pending), AgentStatus::Unknown);
         assert_eq!(parse_sc_query("garbage"), AgentStatus::Unknown);
+    }
+
+    #[test]
+    fn whoami_sid_parse() {
+        assert_eq!(
+            parse_whoami_sid("\"desktop-x\\harshal\",\"S-1-5-21-390-301-410-1001\"\r\n").as_deref(),
+            Some("S-1-5-21-390-301-410-1001")
+        );
+        assert_eq!(
+            parse_whoami_sid("\"AzureAD\\Jane Doe\",\"S-1-12-1-111-222\"").as_deref(),
+            Some("S-1-12-1-111-222")
+        );
+        assert_eq!(parse_whoami_sid(""), None);
+        assert_eq!(parse_whoami_sid("\"S-1-\",\"x\""), None);
+        assert_eq!(parse_whoami_sid("\"S-1-5;evil\""), None);
+    }
+
+    #[test]
+    fn identity_arg_escapes_percent() {
+        assert_eq!(
+            ssh_identity_arg(Path::new("C:/k/100%/id")),
+            OsString::from("C:/k/100%%/id")
+        );
+        assert_eq!(
+            ssh_identity_arg(Path::new("C:/k/id")),
+            OsString::from("C:/k/id")
+        );
+    }
+
+    /// Runs the real `whoami` + `icacls` on a temp file (no network, no real keys).
+    #[cfg(windows)]
+    #[test]
+    fn restrict_key_acl_grants_only_the_current_user() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("githop test key");
+        std::fs::write(&key, b"not a real key").unwrap();
+        let principal = current_user_principal().unwrap();
+        assert!(principal.starts_with("*S-1-"), "{principal}");
+        restrict_key_acl(&key).unwrap();
+        // Still readable by us.
+        assert_eq!(std::fs::read(&key).unwrap(), b"not a real key");
+        let out = Command::new(locate_system_tool("icacls").unwrap())
+            .arg(&key)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+        let user = std::env::var("USERNAME").unwrap().to_lowercase();
+        let aces: Vec<&str> = text.lines().filter(|l| l.contains(":(")).collect();
+        assert_eq!(aces.len(), 1, "{text}");
+        assert!(aces[0].contains(&user) && aces[0].contains("(f)"), "{text}");
     }
 
     #[test]
