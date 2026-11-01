@@ -113,6 +113,12 @@ pub fn print_install(ctx: &Ctx, report: &InstallReport) {
 fn run_install(ctx: &Ctx, args: HooksInstallArgs) -> Result<Exit> {
     ctx.reject_json("hooks install")?;
     let mut store = ctx.store()?;
+    if args.if_installed && !store.settings().hooks_installed {
+        // Installer re-run on a PC where the hooks are off: change nothing.
+        ctx.ui
+            .line("The hooks aren't installed, so there's nothing to update.");
+        return Ok(Exit::Ok);
+    }
     if args.all_stubs || args.common_stubs {
         let all = args.all_stubs;
         store.update_settings(|s| {
@@ -120,7 +126,7 @@ fn run_install(ctx: &Ctx, args: HooksInstallArgs) -> Result<Exit> {
             Ok(())
         })?;
     }
-    let ask = if args.yes || store.settings().hooks_installed {
+    let ask = if args.yes || args.if_installed || store.settings().hooks_installed {
         Ask::Quiet
     } else {
         Ask::Explain

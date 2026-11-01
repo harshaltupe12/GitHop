@@ -105,6 +105,10 @@ pub enum Command {
 
     /// Fix unpushed commits that used the wrong identity
     Fix(FixArgs),
+
+    /// Helpers for the Windows installer (PATH)
+    #[command(subcommand, hide = true)]
+    Installer(crate::cmd::installer::InstallerCommand),
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -298,6 +302,9 @@ pub struct HooksInstallArgs {
     /// Skip those two rarely used hooks again (the default)
     #[arg(long)]
     pub common_stubs: bool,
+    /// Only re-install when the hooks are already installed (used by the installer)
+    #[arg(long, hide = true)]
+    pub if_installed: bool,
 }
 
 #[derive(Debug, Clone, Args)]
