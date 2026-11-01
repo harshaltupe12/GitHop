@@ -231,6 +231,91 @@ fn json_yes_returns_plan_and_result() {
     let backup = r["backup_ref"].as_str().unwrap();
     assert!(backup.starts_with("refs/githop/backup/main/"));
     assert_eq!(r["undo_hint"], format!("githop fix --undo {backup}"));
+    assert_eq!(r["fast_forward"], true);
+    assert_eq!(v["plan"]["foreign"], 0);
+}
+
+/// Review 2026-11-01 #3: a PR from someone else merged with the wrong identity.
+/// Only the merge is fixed; the colleague's commit keeps its id and author.
+#[test]
+fn someone_elses_commits_are_kept() {
+    let fx = Fx::with_remote();
+    fx.git(&["checkout", "-q", "-b", "pr-1"]);
+    let alice = fx.commit("Alice", "alice@contrib.example", "from alice");
+    fx.git(&["checkout", "-q", "main"]);
+    fx.git(&[
+        "-c",
+        "user.name=Me",
+        "-c",
+        &format!("user.email={PERSONAL}"),
+        "merge",
+        "--no-ff",
+        "-q",
+        "-m",
+        "merge pr",
+        "pr-1",
+    ]);
+    let (code, out, err) = fx.run(&["fix", "--yes"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        out.contains("! 1 unpushed commit uses the Personal email in this Office repo."),
+        "{out}"
+    );
+    assert!(
+        out.contains("1 commit by someone else keeps its author."),
+        "{out}"
+    );
+    assert!(
+        !out.contains(short(&alice)),
+        "Alice's commit isn't listed: {out}"
+    );
+    assert_eq!(fx.git(&["rev-parse", "HEAD^2"]), alice);
+    assert_eq!(
+        fx.git(&["show", "-s", "--format=%ae", "HEAD^2"]),
+        "alice@contrib.example"
+    );
+}
+
+/// Review 2026-11-01 #2: no "You can push now" when the remote moved on.
+#[test]
+fn diverged_branch_does_not_say_push_now() {
+    let fx = Fx::with_remote();
+    fx.git(&["branch", "-q", "--set-upstream-to=origin/main"]);
+    let remote = fx.env.remotes().join("api.git");
+    let other = fx.env.repos().join("other");
+    fx.env.git(
+        &[
+            "clone",
+            "-q",
+            &remote.to_string_lossy(),
+            &other.to_string_lossy(),
+        ],
+        fx.env.root(),
+    );
+    std::fs::write(other.join("theirs.txt"), "x").unwrap();
+    fx.env.git(&["add", "theirs.txt"], &other);
+    fx.env.git(
+        &[
+            "-c",
+            "user.name=C",
+            "-c",
+            "user.email=colleague@company.com",
+            "commit",
+            "-q",
+            "-m",
+            "theirs",
+        ],
+        &other,
+    );
+    fx.env.git(&["push", "-q", "origin", "main"], &other);
+    fx.git(&["fetch", "-q", "origin"]);
+    fx.wrong("oops");
+    let (code, out, err) = fx.run(&["fix", "--yes"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("✓ 1 commit fixed."), "{out}");
+    assert!(!out.contains("You can push now"), "{out}");
+    assert!(out.contains("a plain push will be rejected"), "{out}");
+    assert!(out.contains("git pull --rebase"), "{out}");
 }
 
 #[test]

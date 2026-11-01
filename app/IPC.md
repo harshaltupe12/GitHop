@@ -38,20 +38,33 @@ type DoctorCheck = { id: string; status: "ok" | "warning" | "problem"; title: st
 type DoctorReport = { checks: DoctorCheck[] };
 
 // core `fix` (Phase 4 agent)
+// "Wrong" email (offenders, pushed_offenders and the push check): one of the
+// USER's own identities (any profile's email, global user.email, the email in
+// gitconfig.original, $EMAIL, git's auto-detected <user>@<host> / "(none)") that
+// isn't the owning profile's. Someone else's commits are never offenders and are
+// never re-stamped (a wrong committer on a colleague's commit changes the
+// committer only).
+// "Pushed": reachable from a remote-tracking ref, any tag, a sha recorded by the
+// pre-push check (<common git dir>/githop/pushed), or the tip of another branch
+// whose upstream has no remote-tracking ref and no recorded push.
 type FixPlan = {
   repo: string; branch?: string; profile_id?: string; profile_email?: string;
-  offenders: OffendingCommit[];        // unpushed, wrong identity — will be re-stamped
-  pushed_offenders: OffendingCommit[]; // already on a remote — never touched
-  blocked_reason?: string;             // e.g. dirty tree, rebase in progress, detached HEAD, unresolved
-  blocker?: "operation-in-progress" | "detached-head" | "unresolved" | "dirty-tree" | "too-many-commits";
-  unpushed: number;                    // commits on no remote-tracking ref
+  offenders: OffendingCommit[];        // unpushed, uses another of the user's emails — will be re-stamped
+  pushed_offenders: OffendingCommit[]; // already pushed, uses another of the user's emails — never touched
+  blocked_reason?: string;             // e.g. dirty tree, rebase in progress, detached HEAD, unresolved, shallow
+  blocker?: "operation-in-progress" | "detached-head" | "unresolved" | "dirty-tree" | "too-many-commits"
+          | "pushed-unknown"           // the branch has an upstream GitHop can't see (no tracking ref, no recorded push)
+          | "shallow";                 // shallow clone and the branch has no remote-tracking upstream
+  unpushed: number;                    // commits that aren't pushed (see above)
   rewrite_count: number;               // offenders + their unpushed descendants (get new ids)
   signed: number;                      // signed commits whose signature will be dropped
-  has_remote_refs: boolean;
+  has_remote_refs: boolean;            // the repo has remote-tracking refs
+  foreign: number;                     // unpushed commits authored by someone else (kept as they are)
 };
 type FixResult = {
   backup_ref: string; rewritten: number; undo_hint: string;
   recreated: number; old_head: string; new_head: string;
+  fast_forward: boolean;               // new head fast-forwards from the branch's last known remote value(s); false → don't say "You can push now"
 };
 
 // core `wipe` (CLI agent)

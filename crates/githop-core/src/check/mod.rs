@@ -18,6 +18,7 @@
 
 pub mod clone;
 pub mod commit;
+pub mod identity_rules;
 pub mod push;
 
 use std::path::{Path, PathBuf};

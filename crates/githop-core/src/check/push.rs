@@ -5,10 +5,22 @@
 //!    remote shas (`^sha`), plus `--not --remotes=<remote>` when a ref is new.
 //!    If git rejects a remote sha it doesn't have (force push over unfetched
 //!    work), retry once with `--not --remotes=<remote>` instead.
-//! 3. Compare author **and** committer email (case-insensitive) with the owning
-//!    profile's email; committer `noreply@github.com` is allowed (web-flow).
+//! 3. Author **and** committer email are checked with [`IdentityRules`]: an
+//!    email is wrong only when it is one of the *user's* identities and not the
+//!    owning profile's (case-insensitive). Someone else's commits (a merged PR,
+//!    `git am`) never block; committer `noreply@github.com` is allowed (web-flow).
 //! 4. Cap at [`MAX_COMMITS`]; list up to [`MAX_LISTED`] offenders.
-//! 5. Warn (never block) when the SSH key in use isn't the profile's key.
+//! 5. Annotated tags among the pushed refs (`refs/tags/*` whose local sha is a
+//!    tag object): the tagger email is checked with the same rule. This costs a
+//!    third spawn (`for-each-ref`), **only** when the push includes a tag.
+//! 6. Warn (never block) when the SSH key in use isn't the profile's key.
+//! 7. When the push will go through (exit 0), append the pushed local shas to
+//!    [`PUSHED_FILE`] in the repo's common git dir (no spawn). `fix` treats
+//!    everything reachable from a recorded sha as pushed. Conservative: a push
+//!    that fails later still counts as pushed.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,14 +31,24 @@ use crate::profile::{Profile, ProfileSet};
 use crate::resolver;
 use crate::settings::EnforceMode;
 
+use super::identity_rules::IdentityRules;
 use super::{CheckContext, CheckResult, Message, Outcome, Stage};
+
+pub use super::identity_rules::{find_offenders, ALLOWED_COMMITTERS};
 
 /// Most commits one push check looks at.
 pub const MAX_COMMITS: usize = 5000;
 /// Most offending commits listed in the message (all are in [`CheckResult::offending`]).
 pub const MAX_LISTED: usize = 10;
-/// Committer emails that never count as a mismatch (GitHub web-flow merges pulled locally).
-pub const ALLOWED_COMMITTERS: [&str; 1] = ["noreply@github.com"];
+/// Pushed-sha record, relative to the repo's common git dir. One line per
+/// pushed ref: `<local sha>\t<remote ref>\t<remote name or URL>`.
+pub const PUSHED_FILE: &str = "githop/pushed";
+/// Lines kept in [`PUSHED_FILE`] (oldest dropped first).
+pub const PUSHED_KEEP: usize = 2000;
+/// [`PUSHED_FILE`] is only re-read for trimming once it is bigger than this.
+const PUSHED_TRIM_BYTES: u64 = 128 * 1024;
+/// Pushing more tags than this queries all local tags instead of each by name.
+const MAX_TAG_PATTERNS: usize = 64;
 /// `git log` format: hash, author email, committer email, subject; `-z` separates.
 pub const LOG_FORMAT: &str = "--format=%H%x00%ae%x00%ce%x00%s";
 
@@ -175,28 +197,6 @@ fn email_eq(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
 
-/// Commits whose author or committer email isn't `expected`. Pure.
-pub fn find_offenders(commits: &[LogCommit], expected: &str) -> Vec<OffendingCommit> {
-    commits
-        .iter()
-        .filter_map(|c| {
-            let author_mismatch = !email_eq(&c.author_email, expected);
-            let committer_mismatch = !email_eq(&c.committer_email, expected)
-                && !ALLOWED_COMMITTERS
-                    .iter()
-                    .any(|a| email_eq(a, &c.committer_email));
-            (author_mismatch || committer_mismatch).then(|| OffendingCommit {
-                sha: c.sha.clone(),
-                subject: c.subject.clone(),
-                author_email: c.author_email.clone(),
-                committer_email: c.committer_email.clone(),
-                author_mismatch,
-                committer_mismatch,
-            })
-        })
-        .collect()
-}
-
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -219,37 +219,12 @@ pub fn mismatch_messages(
     mode: EnforceMode,
 ) -> Vec<Message> {
     let n = offenders.len();
-    let mut other: Option<&Profile> = None;
-    let mut single_other = true;
-    for o in offenders {
-        let p = set
-            .profiles
-            .iter()
-            .find(|p| email_eq(&p.email, o.wrong_email()));
-        match (p, other) {
-            (Some(p), None) => other = Some(p),
-            (Some(p), Some(q)) if p.id == q.id => {}
-            _ => single_other = false,
-        }
-    }
-    /// "a" / "an" by the label's first letter ("an Office repo").
-    fn indefinite_article(label: &str) -> &'static str {
-        match label
-            .trim_start()
-            .chars()
-            .next()
-            .map(|c| c.to_ascii_lowercase())
-        {
-            Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
-            _ => "a",
-        }
-    }
     let commits = if n == 1 {
         "1 commit".to_string()
     } else {
         format!("{n} commits")
     };
-    let what = match other.filter(|_| single_other) {
+    let what = match single_other_profile(set, offenders.iter().map(|o| o.wrong_email())) {
         Some(p) => format!(
             "{commits} {} the {} email in {} {} repo.",
             if n == 1 { "uses" } else { "use" },
@@ -294,6 +269,261 @@ pub fn capped_message() -> Message {
     Message::warning(format!(
         "GitHop checked only the newest {MAX_COMMITS} commits in this push."
     ))
+}
+
+// ---------------------------------------------------------------- tags
+
+/// An annotated tag in the push whose tagger email is wrong.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OffendingTag {
+    /// Short tag name (`v1`).
+    pub name: String,
+    /// The tag object's id.
+    pub sha: String,
+    pub tagger_email: String,
+}
+
+/// `for-each-ref` format for tags: object id, type, tagger email, ref name.
+pub const TAG_FORMAT: &str = "--format=%(objectname)%00%(objecttype)%00%(taggeremail)%00%(refname)";
+
+/// Pushed updates whose local ref is a tag.
+fn tag_updates(updates: &[RefUpdate]) -> Vec<&RefUpdate> {
+    updates
+        .iter()
+        .filter(|u| u.local_ref.starts_with("refs/tags/"))
+        .collect()
+}
+
+/// `for-each-ref` arguments for the tags in `updates` (`None` = no tag pushed).
+pub fn build_tag_args(updates: &[RefUpdate]) -> Option<Vec<String>> {
+    let tags = tag_updates(updates);
+    if tags.is_empty() {
+        return None;
+    }
+    let mut args = vec!["for-each-ref".to_string(), TAG_FORMAT.to_string()];
+    if tags.len() > MAX_TAG_PATTERNS {
+        args.push("refs/tags/".to_string());
+    } else {
+        let mut names: Vec<&str> = tags.iter().map(|u| u.local_ref.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        args.extend(names.iter().map(|n| n.to_string()));
+    }
+    Some(args)
+}
+
+/// Annotated tags in the push with a wrong tagger email. `raw` = output of
+/// [`build_tag_args`]; only tags whose object id is a pushed local sha count. Pure.
+pub fn find_tag_offenders(
+    raw: &[u8],
+    updates: &[RefUpdate],
+    rules: &IdentityRules,
+) -> Vec<OffendingTag> {
+    let text = String::from_utf8_lossy(raw);
+    let pushed = tag_updates(updates);
+    let mut out: Vec<OffendingTag> = Vec::new();
+    for line in text.lines() {
+        let mut f = line.split('\0');
+        let (Some(sha), Some(kind), Some(email), Some(refname)) =
+            (f.next(), f.next(), f.next(), f.next())
+        else {
+            continue;
+        };
+        let sha = sha.trim().to_ascii_lowercase();
+        if kind != "tag"
+            || !pushed
+                .iter()
+                .any(|u| u.local_sha == sha && u.local_ref == refname)
+        {
+            continue;
+        }
+        let email = email.trim().trim_start_matches('<').trim_end_matches('>');
+        if rules.author_wrong(email) && !out.iter().any(|t| t.sha == sha) {
+            out.push(OffendingTag {
+                name: refname
+                    .strip_prefix("refs/tags/")
+                    .unwrap_or(refname)
+                    .to_string(),
+                sha,
+                tagger_email: email.to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// The one other profile every email in `emails` belongs to, if there is one.
+fn single_other_profile<'a, 'e>(
+    set: &'a ProfileSet,
+    emails: impl IntoIterator<Item = &'e str>,
+) -> Option<&'a Profile> {
+    let mut other: Option<&Profile> = None;
+    for e in emails {
+        let p = set.profiles.iter().find(|p| email_eq(&p.email, e))?;
+        match other {
+            None => other = Some(p),
+            Some(q) if q.id == p.id => {}
+            Some(_) => return None,
+        }
+    }
+    other
+}
+
+/// "a" / "an" by the label's first letter ("an Office repo").
+fn indefinite_article(label: &str) -> &'static str {
+    match label
+        .trim_start()
+        .chars()
+        .next()
+        .map(|c| c.to_ascii_lowercase())
+    {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+        _ => "a",
+    }
+}
+
+/// Messages for annotated tags with a wrong tagger email. Pure.
+///
+/// `GitHop: push blocked — tag v1 uses the Personal email in an Office repo.`
+pub fn tag_messages(
+    owner: &Profile,
+    set: &ProfileSet,
+    tags: &[OffendingTag],
+    mode: EnforceMode,
+) -> Vec<Message> {
+    let n = tags.len();
+    let subject = match tags {
+        [t] => format!("tag {}", t.name),
+        _ => format!("{n} tags"),
+    };
+    let what = match single_other_profile(set, tags.iter().map(|t| t.tagger_email.as_str())) {
+        Some(p) => format!(
+            "{subject} {} the {} email in {} {} repo.",
+            if n == 1 { "uses" } else { "use" },
+            p.label,
+            indefinite_article(&owner.label),
+            owner.label
+        ),
+        None => format!(
+            "{subject} {} use the {} email.",
+            if n == 1 { "doesn't" } else { "don't" },
+            owner.label
+        ),
+    };
+    let mut out = vec![if mode == EnforceMode::Warn {
+        Message::warning(format!("GitHop: push went through, but {what}"))
+    } else {
+        Message::blocked(format!("GitHop: push blocked — {what}"))
+    }];
+    for t in tags.iter().take(MAX_LISTED) {
+        out.push(Message::info(format!("  {}  {}", t.name, t.tagger_email)));
+    }
+    if n > MAX_LISTED {
+        out.push(Message::info(format!("  …and {} more", n - MAX_LISTED)));
+    }
+    if let Some(last) = out.last_mut() {
+        last.hint = Some(match tags {
+            [t] => format!("Run: git tag -f -a {0} {0}^{{}}", t.name),
+            _ => "Re-create each tag: git tag -f -a <tag> <tag>^{}".to_string(),
+        });
+    }
+    out
+}
+
+// ------------------------------------------------------- pushed record
+
+/// One line of [`PUSHED_FILE`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushedEntry {
+    /// Local sha that was pushed (commit or tag object).
+    pub sha: String,
+    /// Remote ref it was pushed to (`refs/heads/feature`).
+    pub remote_ref: String,
+    /// Remote name or URL (pre-push `$1`).
+    pub remote: String,
+}
+
+/// `<common dir>/githop/pushed`.
+pub fn pushed_record_path(common_dir: &Path) -> PathBuf {
+    common_dir.join(PUSHED_FILE)
+}
+
+/// Record lines for `updates` (deletes are already gone). Pure.
+pub fn pushed_lines(remote: &str, updates: &[RefUpdate]) -> String {
+    let remote: String = remote.chars().filter(|c| !c.is_control()).collect();
+    updates
+        .iter()
+        .map(|u| format!("{}\t{}\t{remote}\n", u.local_sha, u.remote_ref))
+        .collect()
+}
+
+/// Parse [`PUSHED_FILE`] content; malformed lines are skipped. Pure.
+pub fn parse_pushed(text: &str) -> Vec<PushedEntry> {
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.trim_end_matches('\r').splitn(3, '\t');
+            let sha = f.next()?.trim().to_ascii_lowercase();
+            if !is_hex_oid(&sha) || is_null_sha(&sha) {
+                return None;
+            }
+            Some(PushedEntry {
+                sha,
+                remote_ref: f.next().unwrap_or_default().to_string(),
+                remote: f.next().unwrap_or_default().to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Read the record of `common_dir` (missing file = empty). Bounded by
+/// [`PUSHED_KEEP`] lines after trimming; reads at most 4 MiB.
+pub fn read_pushed(common_dir: &Path) -> std::io::Result<Vec<PushedEntry>> {
+    use std::io::Read;
+    let path = pushed_record_path(common_dir);
+    let file = match std::fs::File::open(&path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut buf = Vec::new();
+    file.take(4 * 1024 * 1024).read_to_end(&mut buf)?;
+    Ok(parse_pushed(&String::from_utf8_lossy(&buf)))
+}
+
+/// Append `updates` to the record (one write, append mode, so concurrent
+/// pushes don't clobber each other); trim to the last [`PUSHED_KEEP`] lines
+/// once the file is big. No spawn.
+pub fn record_pushed(common_dir: &Path, remote: &str, updates: &[RefUpdate]) -> Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+    let path = pushed_record_path(common_dir);
+    let io = |e| crate::error::CoreError::io(&path, e);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(io)?;
+    }
+    let lines = pushed_lines(remote, updates);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(io)?;
+    f.write_all(lines.as_bytes()).map_err(io)?;
+    drop(f);
+    let big = std::fs::metadata(&path).map(|m| m.len() > PUSHED_TRIM_BYTES);
+    if big.unwrap_or(false) {
+        let text = std::fs::read(&path).map_err(io)?;
+        let text = String::from_utf8_lossy(&text);
+        let all: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        if all.len() > PUSHED_KEEP {
+            let kept: String = all[all.len() - PUSHED_KEEP..]
+                .iter()
+                .map(|l| format!("{l}\n"))
+                .collect();
+            crate::store::atomic_write(&path, kept.as_bytes())?;
+        }
+    }
+    Ok(())
 }
 
 fn norm_key(s: &str) -> String {
@@ -344,7 +574,9 @@ pub(crate) fn run(
     if updates.is_empty() {
         return Ok(result);
     }
-    let root = super::hook_repo(ctx)?.root().to_path_buf();
+    let repo = super::hook_repo(ctx)?;
+    let root = repo.root().to_path_buf();
+    let remote_arg = args.first().map(String::as_str).unwrap_or_default();
     let snapshot = ConfigSnapshot::read(&ctx.git, &root)?;
     let mut store = super::open_store(ctx)?;
     let aliases = store.settings().github_host_aliases.clone();
@@ -356,9 +588,12 @@ pub(crate) fn run(
         if super::first_hint(&mut store, &root) {
             result.messages.push(super::unresolved_message());
         }
+        // The push goes through: remember what it publishes (best effort).
+        let _ = record_pushed(repo.common_dir(), remote_arg, &updates);
         return Ok(result);
     };
     result.profile_id = Some(owner.id.clone());
+    let rules = IdentityRules::for_repo(&ctx.git, &ctx.paths, store.profiles(), &owner, &snapshot);
 
     let remote_url = args.get(1).map(String::as_str);
 
@@ -387,7 +622,7 @@ pub(crate) fn run(
         result.capped = true;
         result.messages.push(capped_message());
     }
-    let offenders = find_offenders(&commits, &owner.email);
+    let offenders = find_offenders(&commits, &rules);
     if !offenders.is_empty() {
         result.messages.extend(mismatch_messages(
             &owner,
@@ -397,6 +632,26 @@ pub(crate) fn run(
         ));
         result.offending = offenders;
         result.outcome = Outcome::Mismatch { pinned_now: None };
+    }
+
+    // Annotated tags: one more spawn, only when the push includes a tag.
+    if let Some(a) = build_tag_args(&updates) {
+        let refs: Vec<&str> = a.iter().map(String::as_str).collect();
+        match ctx.git.run(&root, &refs) {
+            Ok(raw) => {
+                let tags = find_tag_offenders(&raw, &updates, &rules);
+                if !tags.is_empty() {
+                    result
+                        .messages
+                        .extend(tag_messages(&owner, store.profiles(), &tags, enforce));
+                    result.outcome = Outcome::Mismatch { pinned_now: None };
+                }
+            }
+            // Don't lose the commit result over the tag lookup.
+            Err(_) => result.messages.push(Message::warning(
+                "GitHop couldn't check the tags in this push.",
+            )),
+        }
     }
 
     let env_ssh = ctx
@@ -410,6 +665,10 @@ pub(crate) fn run(
     };
     if let Some(w) = ssh_key_warning(&owner, cmd.as_deref(), from_env, remote_url) {
         result.messages.push(w);
+    }
+    if result.exit_code() == 0 {
+        // Best effort: a failed record must never block or fail the push.
+        let _ = record_pushed(repo.common_dir(), remote_arg, &updates);
     }
     Ok(result)
 }
@@ -449,6 +708,116 @@ mod tests {
                 profile("personal", "Personal", "me@personal.example"),
             ],
         }
+    }
+
+    /// Rules for `owner`: both profile emails plus a global `user.email`.
+    fn rules(owner: &str) -> IdentityRules {
+        IdentityRules::new(
+            owner,
+            [
+                "me@office.example",
+                "me@personal.example",
+                "global@me.example",
+            ],
+            None,
+            None,
+        )
+    }
+
+    fn upd(local_ref: &str, sha: &str) -> RefUpdate {
+        RefUpdate {
+            local_ref: local_ref.into(),
+            local_sha: sha.into(),
+            remote_ref: local_ref.into(),
+            remote_sha: Z40.into(),
+        }
+    }
+
+    #[test]
+    fn foreign_commits_are_not_offenders() {
+        let o = find_offenders(
+            &[
+                lc(A, "alice@contrib.example", "alice@contrib.example"),
+                lc(B, "alice@contrib.example", "me@office.example"),
+            ],
+            &rules("me@office.example"),
+        );
+        assert!(o.is_empty(), "{o:?}");
+    }
+
+    #[test]
+    fn tag_args_only_when_tags_are_pushed() {
+        assert_eq!(build_tag_args(&[upd("refs/heads/main", A)]), None);
+        let a = build_tag_args(&[
+            upd("refs/heads/main", A),
+            upd("refs/tags/v2", B),
+            upd("refs/tags/v1", C),
+        ])
+        .unwrap();
+        assert_eq!(a[..2], ["for-each-ref".to_string(), TAG_FORMAT.to_string()]);
+        assert_eq!(a[2..], ["refs/tags/v1".to_string(), "refs/tags/v2".into()]);
+        let many: Vec<RefUpdate> = (0..=MAX_TAG_PATTERNS)
+            .map(|i| upd(&format!("refs/tags/t{i}"), A))
+            .collect();
+        assert_eq!(
+            build_tag_args(&many).unwrap()[2..],
+            ["refs/tags/".to_string()]
+        );
+    }
+
+    #[test]
+    fn tag_offenders_need_a_pushed_annotated_tag_with_the_users_email() {
+        let updates = [upd("refs/tags/v1", A), upd("refs/tags/v2", B)];
+        let raw = format!(
+            "{A}\0tag\0<me@personal.example>\0refs/tags/v1\n\
+             {B}\0tag\0<alice@contrib.example>\0refs/tags/v2\n\
+             {C}\0tag\0<me@personal.example>\0refs/tags/v3\n\
+             {C}\0commit\0\0refs/tags/light\n"
+        );
+        let t = find_tag_offenders(raw.as_bytes(), &updates, &rules("me@office.example"));
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].name, "v1");
+        assert_eq!(t[0].tagger_email, "me@personal.example");
+        let s = set();
+        let m = tag_messages(s.get("office").unwrap(), &s, &t, EnforceMode::Block);
+        assert_eq!(
+            m[0].text,
+            "GitHop: push blocked — tag v1 uses the Personal email in an Office repo."
+        );
+        assert_eq!(
+            m.last().unwrap().hint.as_deref(),
+            Some("Run: git tag -f -a v1 v1^{}")
+        );
+    }
+
+    #[test]
+    fn pushed_record_roundtrip_and_trim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let u = [upd("refs/heads/feature", A), upd("refs/tags/v1", B)];
+        record_pushed(tmp.path(), "origin", &u).unwrap();
+        record_pushed(tmp.path(), "C:/my\tremotes/x.git", &u[..1]).unwrap();
+        let e = read_pushed(tmp.path()).unwrap();
+        assert_eq!(e.len(), 3);
+        assert_eq!(
+            e[0],
+            PushedEntry {
+                sha: A.into(),
+                remote_ref: "refs/heads/feature".into(),
+                remote: "origin".into()
+            }
+        );
+        assert_eq!(e[2].remote, "C:/myremotes/x.git", "control chars dropped");
+        // Garbage lines are skipped.
+        assert_eq!(parse_pushed("nope\n\n0000\tx\ty\n").len(), 0);
+        // Bounded: only the newest PUSHED_KEEP lines survive.
+        let many: Vec<RefUpdate> = (0..PUSHED_KEEP + 50)
+            .map(|i| upd("refs/heads/x", &format!("{i:040x}")))
+            .collect();
+        record_pushed(tmp.path(), "origin-with-a-long-name", &many).unwrap();
+        let e = read_pushed(tmp.path()).unwrap();
+        assert_eq!(e.len(), PUSHED_KEEP);
+        assert_eq!(e.last().unwrap().sha, format!("{:040x}", PUSHED_KEEP + 49));
+        assert!(read_pushed(&tmp.path().join("missing")).unwrap().is_empty());
     }
 
     #[test]
@@ -562,20 +931,22 @@ mod tests {
             lc(B, "me@office.example", "noreply@github.com"),
             lc(C, "me@personal.example", "me@office.example"),
         ];
-        let o = find_offenders(&commits, "me@office.example");
+        let o = find_offenders(&commits, &rules("me@office.example"));
         assert_eq!(o.len(), 1);
         assert_eq!(o[0].sha, C);
         assert!(o[0].author_mismatch && !o[0].committer_mismatch);
-        // noreply is only allowed as committer.
+        // noreply as author isn't one of the user's emails, so not an offender
+        // (the "only as committer" exemption matters only when it is the user's:
+        // see identity_rules::noreply_committer_allowed_but_not_as_author).
         let o = find_offenders(
             &[lc(A, "noreply@github.com", "me@office.example")],
-            "me@office.example",
+            &rules("me@office.example"),
         );
-        assert_eq!(o.len(), 1);
+        assert!(o.is_empty());
         // committer-only mismatch
         let o = find_offenders(
             &[lc(A, "me@office.example", "me@personal.example")],
-            "me@office.example",
+            &rules("me@office.example"),
         );
         assert_eq!(o[0].wrong_email(), "me@personal.example");
     }
@@ -589,7 +960,7 @@ mod tests {
                 lc(A, "me@office.example", "me@office.example"),
                 lc(B, "me@office.example", "me@office.example"),
             ],
-            &owner.email,
+            &rules(&owner.email),
         );
         let m = mismatch_messages(owner, &s, &o, EnforceMode::Block);
         assert_eq!(m[0].level, Level::Blocked);
@@ -608,8 +979,8 @@ mod tests {
         let s = set();
         let owner = s.get("office").unwrap();
         let o = find_offenders(
-            &[lc(A, "who@else.example", "who@else.example")],
-            &owner.email,
+            &[lc(A, "global@me.example", "global@me.example")],
+            &rules(&owner.email),
         );
         let m = mismatch_messages(owner, &s, &o, EnforceMode::Block);
         assert_eq!(
@@ -634,7 +1005,7 @@ mod tests {
                 )
             })
             .collect();
-        let o = find_offenders(&commits, &owner.email);
+        let o = find_offenders(&commits, &rules(&owner.email));
         assert_eq!(o.len(), 13);
         let m = mismatch_messages(owner, &s, &o, EnforceMode::Block);
         assert_eq!(m.len(), 1 + 10 + 1);
