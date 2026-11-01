@@ -19,9 +19,10 @@
 
 <p align="center">
   <a href="#install">Install</a> ·
-  <a href="#set-up-in-the-app-10-minutes">Set up (app)</a> ·
-  <a href="#set-up-from-the-command-line">Set up (CLI)</a> ·
-  <a href="#command-reference">Commands</a> ·
+  <a href="#the-githop-app">The app</a> ·
+  <a href="#set-up-in-the-app-10-minutes">Set up</a> ·
+  <a href="#everyday-use">Everyday use</a> ·
+  <a href="#for-terminal-users">Command line</a> ·
   <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="docs/user-guide.md">User guide</a>
 </p>
@@ -117,6 +118,87 @@ OpenSSH (built into Windows) is used for SSH keys.
 
 ---
 
+## The GitHop app
+
+GitHop lives in your **system tray** and starts with Windows. Everything you need
+day to day is in the app — you never have to open a terminal.
+
+### 🎯 Tray icon and menu
+
+- The tray icon shows your **default profile** as a coloured circle with its
+  initial, so you always know which identity new repos will use.
+- A small dot appears when GitHop **recently blocked** a commit or push, and the
+  GitHop logo shows when setup isn't finished or something needs attention.
+- **Left-click** opens a quick menu: switch the default profile in one click, or
+  open the main window. **Right-click** gives Open GitHop and Quit.
+- Closing the window keeps GitHop running in the tray; your checks keep working
+  even when the app is closed.
+
+### ✨ First-run setup
+
+A short guided setup (six steps) that you can leave and resume:
+
+1. **Welcome** — what GitHop does, and its promise to stay offline.
+2. **Your first profile** — pre-filled from the git identity already on your PC,
+   asking which GitHub organisation or account owns its repos.
+3. **Safety backup** — your git config is backed up before anything changes.
+4. **Another profile** — add your second identity (and fix the first one's owner in place if needed).
+5. **Protection** — one click installs the commit and push checks.
+6. **Done** — you're protected.
+
+### 👤 Profiles
+
+Your identities as cards — colour, label, email, owners, folders and key at a glance.
+
+- **Add profile** / **Edit** with a clear form: required fields are marked, and
+  mistakes are explained right under the field.
+- **SSH key panel:** **Generate key**, **Use existing key file**, **Copy public key**,
+  **Open GitHub SSH settings**, **Test connection** (shows
+  *"✓ Connected to GitHub as …"* right on the card) and **Remember my passphrase**.
+- Warns you if a key belongs to a different GitHub account than the profile owns.
+- **Make default**, **Test connection** and **Delete** from each card's menu.
+
+### 📁 Repos
+
+See every repo on your PC and the identity it uses.
+
+- **Scan folder** finds your repos; each row shows its profile, why it was chosen
+  (pin / owner / folder / default) and a status pill.
+- **Choose a profile for these GitHub owners** — when repos match no profile,
+  GitHop groups them by GitHub owner and suggests the right profile.
+  One click per owner.
+- **Pin** / **Pin all** lock repos to their profile.
+- **Switch to SSH** / **Switch all to SSH** for repos that would otherwise push
+  with Windows' saved account — undo is one click.
+- Repos with their own hooks (husky and friends) get a **How to fix** guide.
+
+### 🩹 Fix commits
+
+Pick a repo and see exactly which commits used the wrong identity.
+
+- Unpushed and already-pushed commits are shown separately — **only unpushed
+  ones are ever changed**, and other people's commits keep their author.
+- **Fix with &lt;profile&gt; identity** re-stamps them; a backup is saved first and
+  **Undo** puts everything back.
+- Tells you clearly whether a plain push will work afterwards.
+
+### ⚙️ Settings
+
+- **Enforce mode:** Block (default), Warn, or Strict.
+- **GitHub HTTPS remotes:** switch to SSH automatically, ask, or leave them.
+- **Start with Windows**, opt-in **logging**.
+- **Export / Import** profiles to a password-protected file for another PC.
+- **Diagnostics:** **Run doctor** checks hooks, git, SSH and your config, with a
+  fix for each problem; **Save diagnostics file** for sharing.
+- **About**, licences, and **Wipe GitHop** (type `WIPE` to confirm) to remove
+  everything and restore your original git settings.
+
+> The app is keyboard-friendly (`Ctrl+1`–`4` switch screens, `Ctrl+N` adds a
+> profile), works with Windows text scaling and contrast themes, and respects
+> "reduce motion".
+
+---
+
 ## Set up in the app (10 minutes)
 
 Have both GitHub accounts handy (for example your **office** and **personal** accounts).
@@ -206,9 +288,40 @@ the right identity.
 
 ---
 
-## Set up from the command line
+## Everyday use
 
-Everything in the app is also available from `githop`:
+| You want to… | In the app | From a terminal |
+|---|---|---|
+| Clone a repo | — just clone it; it's pinned to the owner's profile automatically | `git clone git@github.com:owner/repo.git` |
+| Commit and push | — nothing new: use git or VS Code's **Sync** as always | `git commit` / `git push` |
+| Switch the default profile | **Tray icon** → pick a profile | `githop use office` |
+| See which identity a repo uses | **Repos** screen | `githop status` |
+| Pin a repo to a profile | **Repos → Pin** | `githop pin personal` |
+| Use the profile's key for an HTTPS repo | **Repos → Switch to SSH** | `githop remote ssh` |
+| Fix commits made with the wrong email | **Fix commits** screen | `githop fix` |
+| Check your setup | **Settings → Run doctor** | `githop doctor` |
+| Move profiles to another PC | **Settings → Export / Import** | `githop export` / `githop import` |
+
+**When GitHop blocks a commit** you'll see something like:
+
+```text
+✗ GitHop: commit blocked
+This repo belongs to Office.
+Commit would use 12345678+janedoe@users.noreply.github.com.
+✓ Identity fixed for this repo: pinned to Office.
+Run the commit again.
+```
+
+Run the commit again — it now uses the Office identity.
+
+---
+
+## For terminal users
+
+Everything in the app is also available from `githop.exe` — handy for scripts,
+servers, or if you simply prefer the terminal.
+
+### Set up from the command line
 
 ```powershell
 # 1. Set up: back up your git config, turn your current identity into the first
@@ -240,35 +353,7 @@ githop status               # inside a repo: which profile, and why
 githop doctor               # whole setup: hooks, keys, ssh config, …
 ```
 
----
-
-## Everyday use
-
-| You want to… | Do this |
-|---|---|
-| Clone a repo | `git clone git@github.com:owner/repo.git` — it's pinned to the owner's profile automatically. |
-| Commit and push | Plain `git commit` / `git push`, or VS Code's **Sync**. Nothing new to learn. |
-| Switch the default profile | Click the **tray icon** and pick a profile, or `githop use office`. |
-| See which identity a repo uses | `githop status`, or the **Repos** screen. |
-| Pin a repo to a specific profile | `githop pin personal`, or **Pin** on the Repos screen. |
-| Fix commits made with the wrong email | **Fix commits** screen, or `githop fix` (unpushed commits only). |
-| Move profiles to another PC | **Settings → Export / Import**, or `githop export` / `githop import`. |
-
-**When GitHop blocks a commit** you'll see something like:
-
-```text
-✗ GitHop: commit blocked
-This repo belongs to Office.
-Commit would use 12345678+janedoe@users.noreply.github.com.
-✓ Identity fixed for this repo: pinned to Office.
-Run the commit again.
-```
-
-Run the commit again — it now uses the Office identity.
-
----
-
-## Command reference
+### Command reference
 
 `githop <command> [options]` — run `githop <command> --help` for every option.
 
@@ -441,6 +526,9 @@ Interrupted? Run it again — it picks up where it stopped.
 </details>
 
 ### Settings and environment variables
+
+Most people change settings in the app (**Settings** screen); these are the same
+settings for terminal users and scripts.
 
 | Setting | Where | Values |
 |---|---|---|
