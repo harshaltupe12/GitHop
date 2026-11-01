@@ -100,7 +100,9 @@ pub fn initial(label: &str, id: &str) -> char {
         .map_or('G', |c| c.to_ascii_uppercase())
 }
 
-/// Icon for the model (`blocked` only shows in the normal state).
+/// Icon for the model (`blocked` only shows in the normal state). Normal =
+/// profile-colour circle; setup needed and error = brand logo tile (the error
+/// one with the sunshine dot), per brand/README.md "the tray icon is not the logo".
 pub fn icon_spec(m: &TrayModel, blocked: bool) -> IconSpec {
     match (&m.kind, m.color) {
         (TrayKind::Normal, Some(c)) => IconSpec {
@@ -108,18 +110,21 @@ pub fn icon_spec(m: &TrayModel, blocked: bool) -> IconSpec {
             filled: true,
             initial: m.initial,
             dot: blocked.then_some(BLOCKED),
+            logo: false,
         },
         (TrayKind::Error(_), _) => IconSpec {
             fill: TEXT_MUTED,
             filled: true,
             initial: m.initial,
             dot: Some(WARNING),
+            logo: true,
         },
         _ => IconSpec {
             fill: TEXT_MUTED,
             filled: false,
             initial: 'G',
             dot: None,
+            logo: true,
         },
     }
 }
@@ -228,6 +233,10 @@ mod tests {
         let spec = icon_spec(&m, false);
         assert_eq!(spec.fill, profile_rgb(ProfileColor::Violet));
         assert!(spec.filled);
+        assert!(
+            !spec.logo,
+            "normal state = profile-colour circle, not the logo"
+        );
         assert_eq!(spec.initial, 'P');
         assert_eq!(spec.dot, None);
         assert_eq!(
@@ -245,6 +254,7 @@ mod tests {
         assert_eq!(m.kind, TrayKind::Setup);
         let spec = icon_spec(&m, true);
         assert!(!spec.filled);
+        assert!(spec.logo, "setup needed shows the brand logo");
         assert_eq!(spec.fill, TEXT_MUTED);
         assert_eq!(spec.dot, None, "blocked dot only in normal state");
         assert!(tooltip(&m, false).contains("first profile"));
@@ -264,6 +274,7 @@ mod tests {
         assert!(matches!(m.kind, TrayKind::Error(_)));
         let spec = icon_spec(&m, false);
         assert_eq!(spec.dot, Some(WARNING));
+        assert!(spec.logo, "error shows the brand logo + sunshine dot");
         assert_eq!(spec.fill, TEXT_MUTED);
         assert!(tooltip(&m, false).contains("Protection is off"));
 

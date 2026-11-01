@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Banner } from './components/Banner';
+import { BrandLockup } from './components/Brand';
 import { Button } from './components/Button';
 import { DefaultPanel } from './components/DefaultPanel';
 import { Details } from './components/ErrorText';
@@ -193,11 +194,16 @@ function Layout({
         {S.app.skipToContent}
       </a>
       <aside className="flex w-sidebar shrink-0 flex-col justify-between border-r border-line bg-surface p-2">
+        {/* Left edge lines up with the nav icons, centre with the screen title row;
+            ≥ ¼-tile clear space all round (brand/README.md). */}
+        <div className="p-3 pt-4">
+          <BrandLockup height={32} />
+        </div>
         <nav
           ref={navRef}
           aria-label={S.app.mainNav}
           data-indicator={indicator.box ? 'ready' : undefined}
-          className="relative"
+          className="relative flex-1"
         >
           {/* Selected background glides between items (MOTION.md). */}
           <SlidingIndicator {...indicator} className="rounded-md bg-aqua-tint" />
