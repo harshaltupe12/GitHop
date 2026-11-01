@@ -43,6 +43,7 @@ export function ProfileForm({
   embedded = false,
   submitLabel,
   heading,
+  autoFocusHeading = !embedded,
 }: {
   profiles: ProfileSet;
   original?: Profile;
@@ -55,6 +56,8 @@ export function ProfileForm({
   embedded?: boolean;
   submitLabel?: string;
   heading?: string;
+  /** Move focus to the form heading on mount (screen change, added form). */
+  autoFocusHeading?: boolean;
 }) {
   const toast = useToast();
   const formId = useId();
@@ -78,6 +81,13 @@ export function ProfileForm({
   const [testing, setTesting] = useState(false);
 
   const refs = useRef<Partial<Record<FieldName, HTMLElement | null>>>({});
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Screen readers and keyboard users start at the form, not on <body>.
+  useEffect(() => {
+    if (autoFocusHeading) headingRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only
+  }, []);
   const colourLabelId = `${formId}-colour`;
   const colourHelpId = `${formId}-colour-help`;
 
@@ -143,21 +153,30 @@ export function ProfileForm({
     return m;
   }, [profiles, original?.id]);
 
+  // Checks only the form can make: the noreply placeholder left in, and a
+  // "Generate new key" profile whose key was never created.
+  const keyMissing = keyMode === 'generate' && !publicKey;
+  const localIssues = useMemo(
+    () => localChecks(draft.email, keyMissing && !!draft.id),
+    [draft.email, keyMissing, draft.id],
+  );
+  const allIssues = useMemo(() => [...issues, ...localIssues], [issues, localIssues]);
+
   const byField = useMemo(() => {
     const m = new Map<string, ValidationIssue[]>();
-    for (const i of issues) {
+    for (const i of allIssues) {
       const f = (FIELDS as readonly string[]).includes(i.field) ? i.field : '_other';
       m.set(f, [...(m.get(f) ?? []), i]);
     }
     return m;
-  }, [issues]);
+  }, [allIssues]);
 
   const visible = (f: FieldName) =>
     submitted || touched.has(f)
       ? (byField.get(f) ?? [])
       : (byField.get(f) ?? []).filter((i) => i.severity !== 'error');
   const otherIssues = submitted ? (byField.get('_other') ?? []) : [];
-  const hasErrors = issues.some((i) => i.severity === 'error');
+  const hasErrors = allIssues.some((i) => i.severity === 'error');
 
   const onSubmit = async (e?: FormEvent) => {
     e?.preventDefault();
@@ -171,7 +190,7 @@ export function ProfileForm({
     } catch {
       // Fall through: save_profile validates again.
     }
-    const firstErr = current.find((i) => i.severity === 'error');
+    const firstErr = [...current, ...localIssues].find((i) => i.severity === 'error');
     if (firstErr) {
       const f = firstErr.field as FieldName;
       refs.current[f]?.focus();
@@ -180,7 +199,11 @@ export function ProfileForm({
     setSaving(true);
     try {
       const result = await ipc.saveProfile(toSave, original?.id);
-      toast({ message: S.form.saved(toSave.label) });
+      toast(
+        keyMissing
+          ? { kind: 'warning', message: S.form.savedNoKey(toSave.label) }
+          : { message: S.form.saved(toSave.label) },
+      );
       onSaved(result, result.profile.find((p) => p.id === toSave.id) ?? toSave);
     } catch (err) {
       const ie = err as IpcError;
@@ -258,11 +281,11 @@ export function ProfileForm({
       <div className={cx('flex items-center gap-3', embedded ? 'mb-4' : 'mb-6')}>
         <Avatar label={draft.label || '?'} color={draft.color} size={40} decorative />
         {embedded ? (
-          <h2 id={`${formId}-title`} className="text-heading">
+          <h2 id={`${formId}-title`} ref={headingRef} tabIndex={-1} className="text-heading">
             {title}
           </h2>
         ) : (
-          <h1 id={`${formId}-title`} className="text-title">
+          <h1 id={`${formId}-title`} ref={headingRef} tabIndex={-1} className="text-title">
             {title}
           </h1>
         )}
@@ -608,6 +631,18 @@ function FormSection({
       {children}
     </section>
   );
+}
+
+/** The "Use noreply" template still has its `ID+` placeholder. */
+const NOREPLY_PLACEHOLDER = /^ID\+[^@]*@users\.noreply\.github\.com$/;
+
+function localChecks(email: string, keyMissing: boolean): ValidationIssue[] {
+  const out: ValidationIssue[] = [];
+  if (NOREPLY_PLACEHOLDER.test(email.trim()))
+    out.push({ field: 'email', severity: 'error', message: S.form.noreplyPlaceholder });
+  if (keyMissing)
+    out.push({ field: 'ssh_key', severity: 'warning', message: S.form.keyNotCreated });
+  return out;
 }
 
 function IssueList({ issues }: { issues: ValidationIssue[] }) {

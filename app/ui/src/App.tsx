@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { Banner } from './components/Banner';
 import { Button } from './components/Button';
 import { DefaultPanel } from './components/DefaultPanel';
+import { Details } from './components/ErrorText';
 import { Icons } from './components/icons';
 import { NavItem } from './components/NavItem';
 import { Spinner } from './components/Spinner';
@@ -36,11 +37,14 @@ export function App() {
   );
 }
 
+/**
+ * First run until onboarding is finished once. After that, no profiles shows the
+ * Profiles empty state (Design §8.7) and missing hooks show the warning banner.
+ * Wipe clears the flag, so a fresh install starts with onboarding again.
+ */
 function needsOnboarding(s: AppState): boolean {
-  return (
-    !s.onboarding.has_profiles ||
-    (!s.onboarding.hooks_installed && !readJson<boolean>(KEYS.onboardingDone, false))
-  );
+  if (readJson<boolean>(KEYS.onboardingDone, false)) return false;
+  return !s.onboarding.has_profiles || !s.onboarding.hooks_installed;
 }
 
 export function Shell() {
@@ -100,7 +104,7 @@ export function Shell() {
   }, [go, onboarding]);
 
   if (!state) {
-    if (error) return <ConfigError message={error.message} onRetry={() => void refetch()} full />;
+    if (error) return <ConfigError error={error} onRetry={() => void refetch()} full />;
     return (
       <div className="flex h-full items-center justify-center gap-2 text-ink-muted" role="status">
         <Spinner />
@@ -214,7 +218,7 @@ function Layout({
         <div key={current} className="fade-in mx-auto max-w-content p-6">
           {error ? (
             <div className="mb-4">
-              <ConfigError message={error.message} onRetry={onRetry} />
+              <ConfigError error={error} onRetry={onRetry} />
             </div>
           ) : null}
           {!hooksHealthy(state) ? (
@@ -224,6 +228,11 @@ function Layout({
               action={{ label: S.states.turnOn, onClick: () => void turnOn(), busy: installing }}
             >
               {S.states.hooksMissing}
+            </Banner>
+          ) : state.hooks.overridden_by.length ? (
+            // Plan C2: an included config sets its own core.hooksPath after GitHop's.
+            <Banner kind="warning" className="mb-4">
+              {S.states.hooksOverridden(state.hooks.overridden_by.map((o) => o.file).join(', '))}
             </Banner>
           ) : null}
           {current === 'profiles' ? (
@@ -241,16 +250,26 @@ function Layout({
   );
 }
 
-/** Design §8.7 "Config read error": blocked banner + "Restore last backup". */
+/** Codes that mean profiles.toml itself can't be used (TOML parse, version, invalid). */
+const DAMAGED: ReadonlyArray<IpcError['code']> = ['io', 'unsupported', 'validation'];
+
+/**
+ * Design §8.7 "Config read error": blocked banner + "Restore last backup".
+ * Design §9 voice: what happened → why → next step; the raw parser text and
+ * file path stay behind "Show details".
+ */
 function ConfigError({
-  message,
+  error,
   onRetry,
   full = false,
 }: {
-  message: string;
+  error: IpcError;
   onRetry: () => void;
   full?: boolean;
 }) {
+  const damaged = DAMAGED.includes(error.code);
+  const title = damaged ? S.states.configError : S.states.loadError;
+  const body = damaged ? S.states.configErrorBody : S.states.loadErrorBody;
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const restore = async () => {
@@ -270,18 +289,30 @@ function ConfigError({
       kind="blocked"
       action={{ label: S.states.restoreBackup, onClick: () => void restore(), busy }}
     >
-      <span className="block font-medium">{S.states.configError}</span>
-      {message ? <span className="block text-small">{message}</span> : null}
+      {/* The full page has its own h1 with the title; the banner then carries the body only. */}
+      {full ? null : <span className="block font-medium">{title}</span>}
+      <span className="block">{body}</span>
+      {error.message ? <Details>{error.message}</Details> : null}
     </Banner>
   );
-  if (!full) return banner;
+  if (!full) {
+    return (
+      <div className="flex flex-col gap-2">
+        {banner}
+        <div>
+          <Button compact onClick={onRetry}>
+            {S.common.retry}
+          </Button>
+        </div>
+      </div>
+    );
+  }
   return (
     <main className="mx-auto flex h-full max-w-content flex-col justify-center gap-4 p-6">
+      <h1 className="text-title text-ink">{title}</h1>
       {banner}
       <div>
-        <Button icon={Icons.undo} onClick={onRetry}>
-          {S.common.retry}
-        </Button>
+        <Button onClick={onRetry}>{S.common.retry}</Button>
       </div>
     </main>
   );

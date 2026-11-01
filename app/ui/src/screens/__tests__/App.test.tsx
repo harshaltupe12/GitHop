@@ -20,7 +20,9 @@ describe('App shell', () => {
       'aria-current',
       'page',
     );
-    expect(screen.getByRole('button', { name: /Default profile: Personal/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Default Personal, change default profile' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'Profiles' })).toBeInTheDocument();
     await expectNoA11yViolations(container);
   });
@@ -64,6 +66,23 @@ describe('App shell', () => {
     m.getState.mockResolvedValue(appState());
   });
 
+  it('includeIf override of core.hooksPath (C2): warning banner names the file', async () => {
+    m.getState.mockResolvedValue(
+      appState({
+        hooks: hooks({
+          overridden_by: [
+            { condition: 'gitdir/i:C:/work/', file: '~/.gitconfig-work', value: '.husky' },
+          ],
+        }),
+      }),
+    );
+    render(<App />);
+    expect(
+      await screen.findByText(/Protection is off in some repos: ~\/\.gitconfig-work sets its own/),
+    ).toBeInTheDocument();
+    m.getState.mockResolvedValue(appState());
+  });
+
   it('config read error: blocked banner + Restore last backup', async () => {
     m.getState.mockRejectedValueOnce({
       code: 'io',
@@ -71,11 +90,50 @@ describe('App shell', () => {
       issues: [],
     });
     const { container } = render(<App />);
-    expect(await screen.findByText('Couldn’t read profiles.toml.')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('profiles.toml line 3');
+    // Friendly copy first (Design §9); the full page has an h1.
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Your profiles file is damaged.' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'GitHop can’t read it, so nothing was changed. Restore the last backup, or fix the file and try again.',
+    );
+    // Parser text sits behind a keyboard-reachable "Show details" disclosure.
+    const raw = screen.getByText('profiles.toml line 3: expected "="');
+    expect(raw).not.toBeVisible();
+    const details = screen.getByRole('button', { name: 'Show details' });
+    expect(details).toHaveAttribute('aria-expanded', 'false');
+    details.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByRole('button', { name: 'Hide details' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(raw).toBeVisible();
     await expectNoA11yViolations(container);
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Restore last backup' }));
     expect(m.restoreLastBackup).toHaveBeenCalled();
+  });
+
+  it('other load errors: calm title, details hidden, Try again refetches', async () => {
+    m.getState.mockRejectedValueOnce({ code: 'internal', message: 'thread panicked', issues: [] });
+    render(<App />);
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'GitHop couldn’t load your profiles.' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('thread panicked')).not.toBeVisible();
+    const n = m.getState.mock.calls.length;
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(m.getState.mock.calls.length).toBeGreaterThan(n));
+  });
+
+  it('onboarding finished once + no profiles: Profiles empty state, not onboarding', async () => {
+    m.getState.mockResolvedValue(emptyState());
+    window.localStorage.setItem(KEYS.onboardingDone, 'true');
+    render(<App />);
+    expect(await screen.findByText('No profiles yet')).toBeInTheDocument();
+    expect(screen.getByText('Add your first identity to start.')).toBeInTheDocument();
+    m.getState.mockResolvedValue(appState());
   });
 
   it('no profiles: onboarding is shown', async () => {
@@ -128,6 +186,24 @@ describe('Tray menu', () => {
     expect(m.quitApp).toHaveBeenCalled();
     await userEvent.keyboard('{Escape}');
     expect(m.hideCurrentWindow).toHaveBeenCalled();
+  });
+
+  it('long label: truncates (keeps a minimum width) with the full text on hover', async () => {
+    const long = {
+      ...profileSet().profile[0]!,
+      label: 'A very long profile label for the tray',
+      email: 'me@verylongdomainname-example.com',
+    };
+    m.listProfiles.mockResolvedValueOnce(profileSet({ profile: [long, profileSet().profile[1]!] }));
+    render(<TrayMenu />);
+    const item = await screen.findByRole('menuitemradio', { name: /A very long profile label/ });
+    expect(item).toHaveAttribute(
+      'title',
+      'A very long profile label for the tray · me@verylongdomainname-example.com',
+    );
+    const label = screen.getByText('A very long profile label for the tray');
+    expect(label).toHaveClass('truncate', 'min-w-[5rem]');
+    expect(screen.getByText('verylongdomainname-example.com')).toHaveClass('max-w-[45%]', 'shrink');
   });
 
   it('empty and error states', async () => {

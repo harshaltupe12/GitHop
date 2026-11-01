@@ -5,7 +5,7 @@
 //! (main window: all of them; tray window: only what the tray menu needs).
 //! A command missing from this list is not callable from any window.
 
-/// Keep in sync with `commands::handler()` in `src/lib.rs` and `app/IPC.md`.
+/// Keep in sync with `tauri::generate_handler![..]` in `src/lib.rs` and `app/IPC.md`.
 const COMMANDS: &[&str] = &[
     // profiles
     "get_state",

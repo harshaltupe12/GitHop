@@ -5,7 +5,7 @@ import * as ipc from '../../lib/ipc';
 import { KEYS } from '../../lib/storage';
 import type { ScanProgress } from '../../lib/types';
 import { expectNoA11yViolations } from '../../test/a11y';
-import { plan, profileSet, repo } from '../../test/fixtures';
+import { profileSet, repo } from '../../test/fixtures';
 import { renderWith } from '../../test/render';
 import { repoStatus, ReposScreen } from '../Repos';
 
@@ -19,26 +19,29 @@ const repos = [
   repo('C:/Misc/notes', { profile_id: null, source: null, pinned: null, remote: null }),
 ];
 
+// The backend counts unpushed wrong commits per row (RepoRow.unpushed_offenders).
+const withWrong = repos.map((r) => (r.root.endsWith('blog') ? { ...r, unpushed_offenders: 2 } : r));
+
 describe('repoStatus', () => {
   const ps = profileSet();
   it('maps every Design §8.3 status', () => {
-    expect(repoStatus(repos[0]!, 0, ps)).toMatchObject({ kind: 'ok', text: 'Matches' });
-    expect(repoStatus(repos[0]!, 2, ps)).toMatchObject({
+    expect(repoStatus(repos[0]!, ps)).toMatchObject({ kind: 'ok', text: 'Matches' });
+    expect(repoStatus({ ...repos[0]!, unpushed_offenders: 2 }, ps)).toMatchObject({
       kind: 'blocked',
       text: '2 wrong commits',
       action: 'fix',
     });
-    expect(repoStatus(repos[2]!, 0, ps)).toMatchObject({
+    expect(repoStatus(repos[2]!, ps)).toMatchObject({
       kind: 'warning',
       text: 'Husky hooks',
       action: 'husky',
     });
-    expect(repoStatus(repos[1]!, 0, ps)).toMatchObject({
+    expect(repoStatus(repos[1]!, ps)).toMatchObject({
       kind: 'warning',
       text: 'Unassigned',
       action: 'pin',
     });
-    expect(repoStatus(repo('C:/x', { remote: null }), 0, ps)).toMatchObject({ text: 'No remote' });
+    expect(repoStatus(repo('C:/x', { remote: null }), ps)).toMatchObject({ text: 'No remote' });
   });
 });
 
@@ -61,11 +64,6 @@ describe('Repos screen', () => {
     });
     let finish: (v: typeof repos) => void = () => undefined;
     m.scan.mockImplementationOnce(() => new Promise((r) => (finish = r)));
-    m.fixPlan.mockImplementation((root: string) =>
-      Promise.resolve(
-        plan({ repo: root, offenders: root.endsWith('blog') ? plan().offenders : [] }),
-      ),
-    );
 
     const { container, user } = renderWith(<ReposScreen profiles={profileSet()} />);
     await user.click(screen.getAllByRole('button', { name: 'Scan folder' })[0]!);
@@ -73,7 +71,7 @@ describe('Repos screen', () => {
     progress?.({ folder: 'C:/Personal', found: 12, done: 3 });
     expect(await screen.findByText('Scanning C:/Personal… 12 repos found')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    finish(repos);
+    finish(withWrong);
 
     const table = await screen.findByRole('table', { name: 'Repos' });
     expect(within(table).getAllByRole('row')).toHaveLength(5);
@@ -89,11 +87,10 @@ describe('Repos screen', () => {
   it('Pin all pins resolvable repos; Fix navigates; How to fix shows the snippet', async () => {
     reposStore.set((s) => ({
       ...s,
-      repos,
+      repos: withWrong,
       scanned: true,
       autoScanned: true,
       folders: ['C:/'],
-      offenders: { 'C:/Personal/blog': 2 },
     }));
     m.pinAll.mockResolvedValueOnce([
       repo('C:/Office/api', { profile_id: 'office', source: 'pin', pinned: 'office' }),
@@ -113,6 +110,38 @@ describe('Repos screen', () => {
     await user.click(within(dlg).getByRole('button', { name: 'Copy line' }));
     expect(m.copyText).toHaveBeenCalledWith('githop check commit || exit $?');
     await expectNoA11yViolations();
+  });
+
+  it('Cancel stops the backend scan too (cancel_scan)', async () => {
+    m.pickFolder.mockResolvedValueOnce('C:/Big');
+    let finish: (v: typeof repos) => void = () => undefined;
+    m.scan.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    const { user } = renderWith(<ReposScreen profiles={profileSet()} />);
+    await user.click(screen.getAllByRole('button', { name: 'Scan folder' })[0]!);
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(m.cancelScan).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Scan cancelled.')).toBeInTheDocument();
+    // Late results of the cancelled scan are dropped.
+    finish(repos);
+    await waitFor(() => expect(screen.queryByRole('table')).toBeNull());
+  });
+
+  it('wrong-commit pill comes from unpushed_offenders, no fix_plan per repo', async () => {
+    m.pickFolder.mockResolvedValueOnce('C:/Personal');
+    m.scan.mockResolvedValueOnce(withWrong);
+    m.fixPlan.mockClear();
+    const { user } = renderWith(<ReposScreen profiles={profileSet()} />);
+    await user.click(screen.getAllByRole('button', { name: 'Scan folder' })[0]!);
+    const table = await screen.findByRole('table', { name: 'Repos' });
+    expect(within(table).getByText('2 wrong commits')).toBeInTheDocument();
+    expect(m.fixPlan).not.toHaveBeenCalled();
+    // Table stacks rows at large text sizes instead of scrolling sideways (CSS container query).
+    expect(table.parentElement).toHaveClass('gh-table');
+    expect(
+      within(table)
+        .getAllByRole('cell')
+        .some((c) => c.getAttribute('data-align') === 'right'),
+    ).toBe(true);
   });
 
   it('Pin on an unassigned repo opens a profile menu', async () => {

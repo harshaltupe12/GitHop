@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { STATE_KEY } from '../../lib/appState';
 import * as ipc from '../../lib/ipc';
 import { getQueryData, setQueryData } from '../../lib/query';
+import { KEYS } from '../../lib/storage';
 import type { AppState } from '../../lib/types';
 import { expectNoA11yViolations } from '../../test/a11y';
 import { appState, personal, settings } from '../../test/fixtures';
@@ -12,7 +13,10 @@ import { SettingsScreen } from '../Settings';
 vi.mock('../../lib/ipc', async () => (await import('../../test/ipcMock')).createIpcMock());
 const m = vi.mocked(ipc);
 
-beforeEach(() => setQueryData(STATE_KEY, appState()));
+beforeEach(() => {
+  vi.clearAllMocks();
+  setQueryData(STATE_KEY, appState());
+});
 
 describe('Settings screen', () => {
   it('normal: every row from Design §8.5', async () => {
@@ -177,11 +181,109 @@ describe('Settings screen', () => {
     ]);
   });
 
-  it('strict mode note', () => {
-    renderWith(
+  it('strict mode: shown as its own selected option, never silently downgraded', async () => {
+    const { user, container } = renderWith(
       <SettingsScreen state={appState({ settings: settings({ enforce: 'block-strict' }) })} />,
     );
     expect(screen.getByText(/Strict mode is on/)).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'Block' })).toHaveAttribute('aria-checked', 'true');
+    const strict = screen.getByRole('radio', { name: 'Strict' });
+    expect(strict).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Block' })).toHaveAttribute('aria-checked', 'false');
+    // Clicking the option that is already selected sends nothing.
+    await user.click(strict);
+    expect(m.updateSettings).not.toHaveBeenCalled();
+    await expectNoA11yViolations(container);
+    // Choosing Block is an explicit change.
+    m.updateSettings.mockResolvedValueOnce(settings({ enforce: 'block' }));
+    await user.click(screen.getByRole('radio', { name: 'Block' }));
+    expect(m.updateSettings).toHaveBeenCalledWith({ enforce: 'block' });
+  });
+
+  it('plain block mode has no Strict option and clicking Block sends nothing', async () => {
+    const { user } = renderWith(<SettingsScreen state={appState()} />);
+    expect(screen.queryByRole('radio', { name: 'Strict' })).toBeNull();
+    await user.click(screen.getByRole('radio', { name: 'Block' }));
+    expect(m.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('keyboard focus stays on the segmented control while it saves', async () => {
+    let done: (v: ReturnType<typeof settings>) => void = () => undefined;
+    m.updateSettings.mockImplementationOnce(() => new Promise((r) => (done = r)));
+    const { user } = renderWith(<SettingsScreen state={appState()} />);
+    const block = screen.getByRole('radio', { name: 'Block' });
+    block.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(m.updateSettings).toHaveBeenCalledWith({ enforce: 'warn' });
+    const warn = screen.getByRole('radio', { name: 'Warn' });
+    expect(warn).toHaveFocus();
+    expect(screen.getByRole('radiogroup')).toHaveAttribute('aria-busy', 'true');
+    expect(warn).not.toBeDisabled();
+    // Input is ignored while busy, focus doesn't move.
+    await user.keyboard('{ArrowLeft}');
+    expect(m.updateSettings).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveFocus();
+    done(settings({ enforce: 'warn' }));
+    await waitFor(() => expect(screen.getByRole('radiogroup')).not.toHaveAttribute('aria-busy'));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('Save diagnostics file: native save dialog → save_diagnostics', async () => {
+    m.pickSavePath.mockResolvedValueOnce('C:/Users/h/githop-diagnostics.txt');
+    const { user } = renderWith(<SettingsScreen state={appState()} />);
+    const diag = screen.getByRole('region', { name: 'Diagnostics' });
+    await user.click(within(diag).getByRole('button', { name: 'Save diagnostics file' }));
+    expect(m.pickSavePath).toHaveBeenCalledWith(
+      'Save diagnostics',
+      'githop-diagnostics.txt',
+      'Text file',
+      ['txt'],
+    );
+    await waitFor(() =>
+      expect(m.saveDiagnostics).toHaveBeenCalledWith('C:/Users/h/githop-diagnostics.txt'),
+    );
+    expect(await screen.findByText('Diagnostics file saved.')).toBeInTheDocument();
+  });
+
+  it('Save diagnostics file: cancelled picker does nothing', async () => {
+    const { user } = renderWith(<SettingsScreen state={appState()} />);
+    await user.click(screen.getByRole('button', { name: 'Save diagnostics file' }));
+    await waitFor(() => expect(m.pickSavePath).toHaveBeenCalled());
+    expect(m.saveDiagnostics).not.toHaveBeenCalled();
+  });
+
+  it('wipe report names steps in words; success clears onboarding memory', async () => {
+    window.localStorage.setItem(KEYS.onboardingDone, 'true');
+    m.wipe.mockResolvedValueOnce({
+      steps: [
+        { step: 'hooks', ok: true, detail: '' },
+        { step: 'unpin', ok: true, detail: '2 repos' },
+        { step: 'something-new', ok: true, detail: '' },
+      ],
+    });
+    const { user } = renderWith(<SettingsScreen state={appState()} />);
+    await user.click(screen.getByRole('button', { name: 'Wipe GitHop' }));
+    const dlg = screen.getByRole('dialog', { name: 'Wipe GitHop?' });
+    await user.type(within(dlg).getByRole('textbox', { name: 'Type WIPE to confirm' }), 'WIPE');
+    await user.click(within(dlg).getByRole('button', { name: 'Wipe GitHop' }));
+    const report = await screen.findByRole('dialog', { name: 'Wipe finished' });
+    expect(report).toHaveTextContent('Remove GitHop’s git hooks');
+    expect(report).toHaveTextContent('Remove Pins from repos');
+    expect(report).toHaveTextContent('something-new');
+    expect(report).not.toHaveTextContent(/^hooks/);
+    expect(window.localStorage.getItem(KEYS.onboardingDone)).toBeNull();
+  });
+
+  it('doctor error: friendly text, technical message behind Show details', async () => {
+    m.doctor.mockRejectedValueOnce({ code: 'io', message: 'os error 5 at C:/x', issues: [] });
+    const { user } = renderWith(<SettingsScreen state={appState()} />);
+    await user.click(screen.getByRole('button', { name: 'Run doctor' }));
+    const dlg = screen.getByRole('dialog', { name: 'Doctor' });
+    expect(await within(dlg).findByRole('alert')).toHaveTextContent(
+      'GitHop couldn’t read or write a file it needs, so nothing was changed. Try again.',
+    );
+    expect(within(dlg).getByText('os error 5 at C:/x')).not.toBeVisible();
+    await user.click(within(dlg).getByRole('button', { name: 'Show details' }));
+    expect(within(dlg).getByText('os error 5 at C:/x')).toBeVisible();
+    await expectNoA11yViolations();
   });
 });

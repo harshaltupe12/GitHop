@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
+import { ErrorText } from '../components/ErrorText';
 import { ConfirmDialog, Dialog } from '../components/Dialog';
 import { Checkbox } from '../components/Field';
 import { Ico, Icons } from '../components/icons';
@@ -13,9 +14,32 @@ import { Toggle } from '../components/Toggle';
 import { STATE_KEY } from '../lib/appState';
 import * as ipc from '../lib/ipc';
 import { setQueryData, useQuery } from '../lib/query';
-import type { AppState, DoctorReport, IpcError, SettingsPatch, WipeReport } from '../lib/types';
+import { KEYS, removeKey } from '../lib/storage';
+import type {
+  AppState,
+  DoctorReport,
+  EnforceMode,
+  IpcError,
+  SettingsPatch,
+  WipeReport,
+} from '../lib/types';
 import { S } from '../strings';
 import { ExportDialog, ImportDialog } from './TransferDialogs';
+
+/**
+ * Block / Warn (Design §8.5). Strict mode (`block-strict`, set from the CLI) is
+ * shown as its own selected option while it's on, so it's never displayed as
+ * plain Block or downgraded by a click on the option that already looks selected.
+ */
+function enforceOptions(current: EnforceMode): { value: EnforceMode; label: string }[] {
+  const opts: { value: EnforceMode; label: string }[] = [
+    { value: 'block', label: S.settings.block },
+    { value: 'warn', label: S.settings.warn },
+  ];
+  if (current === 'block-strict')
+    opts.splice(1, 0, { value: 'block-strict', label: S.settings.strict });
+  return opts;
+}
 
 export function SettingsScreen({ state }: { state: AppState }) {
   const toast = useToast();
@@ -41,6 +65,28 @@ export function SettingsScreen({ state }: { state: AppState }) {
     }
   };
 
+  const [savingDiag, setSavingDiag] = useState(false);
+  const saveDiagnostics = async () => {
+    const path = await ipc
+      .pickSavePath(
+        S.settings.saveDiagnosticsTitle,
+        S.settings.diagnosticsFileName,
+        S.settings.diagnosticsFileType,
+        ['txt'],
+      )
+      .catch(() => null);
+    if (!path) return;
+    setSavingDiag(true);
+    try {
+      await ipc.saveDiagnostics(path);
+      toast({ message: S.settings.diagnosticsSaved });
+    } catch (e) {
+      toast({ kind: 'error', message: (e as IpcError).message });
+    } finally {
+      setSavingDiag(false);
+    }
+  };
+
   const enforce = state.settings.enforce;
   const close = () => setDialog(null);
 
@@ -61,15 +107,17 @@ export function SettingsScreen({ state }: { state: AppState }) {
           }
           helperId="set-enforce-help"
         >
-          <Segmented
+          <Segmented<EnforceMode>
             labelledBy="set-enforce"
-            value={enforce === 'warn' ? 'warn' : 'block'}
-            disabled={busy === 'enforce'}
-            onChange={(v) => v !== enforce && void patch({ enforce: v })}
-            options={[
-              { value: 'block', label: S.settings.block },
-              { value: 'warn', label: S.settings.warn },
-            ]}
+            describedBy="set-enforce-help"
+            value={enforce}
+            busy={busy === 'enforce'}
+            onChange={(v) => {
+              // Never send a no-op (or a silent strict → block downgrade): only a
+              // different option the user picked is saved.
+              if (v !== enforce) void patch({ enforce: v });
+            }}
+            options={enforceOptions(enforce)}
           />
         </SettingRow>
 
@@ -132,6 +180,9 @@ export function SettingsScreen({ state }: { state: AppState }) {
           helper={S.settings.diagnosticsHelp}
         >
           <Button onClick={() => setDialog('doctor')}>{S.settings.runDoctor}</Button>
+          <Button onClick={() => void saveDiagnostics()} loading={savingDiag}>
+            {S.settings.saveDiagnostics}
+          </Button>
         </SettingRow>
 
         <SettingRow
@@ -173,7 +224,7 @@ const DOCTOR_STATUS = {
 function DoctorDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const toast = useToast();
   const [report, setReport] = useState<DoctorReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<IpcError | null>(null);
   const [running, setRunning] = useState(false);
 
   const run = async () => {
@@ -182,7 +233,7 @@ function DoctorDialog({ open, onClose }: { open: boolean; onClose: () => void })
     try {
       setReport(await ipc.doctor());
     } catch (e) {
-      setError((e as IpcError).message);
+      setError(e as IpcError);
     } finally {
       setRunning(false);
     }
@@ -233,7 +284,7 @@ function DoctorDialog({ open, onClose }: { open: boolean; onClose: () => void })
         </p>
       ) : error ? (
         <Banner kind="blocked" action={{ label: S.common.retry, onClick: () => void run() }}>
-          {error}
+          <ErrorText error={error} />
         </Banner>
       ) : report ? (
         <div className="flex flex-col gap-3">
@@ -306,6 +357,11 @@ function AboutDialog({
   );
 }
 
+/** Core step ids (backup, hooks, identity, unpin, autostart, data, keys) as words. */
+function wipeStepLabel(step: string): string {
+  return (S.wipeDialog.steps as Record<string, string>)[step] ?? step;
+}
+
 function WipeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [deleteKeys, setDeleteKeys] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -316,7 +372,14 @@ function WipeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      setReport(await ipc.wipe({ unpin_repos: true, delete_keys: deleteKeys, keep_data: false }));
+      const r = await ipc.wipe({ unpin_repos: true, delete_keys: deleteKeys, keep_data: false });
+      // GitHop's data is gone: a reinstall must start with onboarding again.
+      if (r.steps.every((x) => x.ok)) {
+        removeKey(KEYS.onboardingDone);
+        removeKey(KEYS.onboardingStep);
+        removeKey(KEYS.scanFolders);
+      }
+      setReport(r);
     } catch (e) {
       setError((e as IpcError).message);
     } finally {
@@ -354,7 +417,7 @@ function WipeDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
                 <span className="sr-only">
                   {s.ok ? S.wipeDialog.stepOk : S.wipeDialog.stepFailed}:{' '}
                 </span>
-                <span className="font-medium">{s.step}</span>
+                <span className="font-medium">{wipeStepLabel(s.step)}</span>
                 {s.detail ? (
                   <span className="block text-small text-ink-muted">{s.detail}</span>
                 ) : null}
