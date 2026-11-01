@@ -31,15 +31,16 @@ pub async fn update_settings<R: Runtime>(
     let settings = blocking(move || {
         let _guard = ops::write_lock();
         let mut store = ops::store()?;
-        let mut settings = store.settings().clone();
-        if let Some(enforce) = patch.enforce {
-            settings.enforce = enforce;
-        }
-        if let Some(logging) = patch.logging {
-            settings.logging = logging;
-        }
         if patch.enforce.is_some() || patch.logging.is_some() {
-            store.save_settings(&settings)?;
+            store.update_settings(|s| {
+                if let Some(enforce) = patch.enforce {
+                    s.enforce = enforce;
+                }
+                if let Some(logging) = patch.logging {
+                    s.logging = logging;
+                }
+                Ok(())
+            })?;
         }
         Ok(store.settings().clone())
     })
@@ -59,10 +60,9 @@ pub async fn install_hooks<R: Runtime>(app: AppHandle<R>) -> IpcResult<HookHealt
         let paths = store.paths().clone();
         paths.ensure_dirs()?;
         backup::backup_global_gitconfig(&paths, &git)?;
-        let mut settings = store.settings().clone();
-        let exe = ops::githop_exe(&settings.githop_exe)?;
-        let report = hooks::install_hooks(&paths, &git, &mut settings, &exe)?;
-        store.save_settings(&settings)?;
+        let exe = ops::githop_exe(&store.settings().githop_exe)?;
+        // Inside the update so the recorded hook state lands on fresh settings.
+        let report = store.update_settings(|s| hooks::install_hooks(&paths, &git, s, &exe))?;
         Ok((
             hooks::verify_hooks(&paths, &git, store.settings()),
             !report.reinstall,

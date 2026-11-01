@@ -5,7 +5,6 @@
 
 use std::io::ErrorKind;
 
-use githop_core::check::push::OffendingCommit;
 use githop_core::hooks::HookHealth;
 use githop_core::{
     CoreError, EnforceMode, Identity, Profile, ProfileSet, Settings, ValidationIssue,
@@ -113,6 +112,9 @@ impl From<CoreError> for IpcError {
             }
             CoreError::NotARepo => IpcError::new(ErrorCode::NotARepo, message),
             CoreError::Locked => IpcError::new(ErrorCode::Locked, message),
+            CoreError::Conflict { .. } => IpcError::new(ErrorCode::Conflict, message),
+            // Already a full user-facing sentence with the next step.
+            CoreError::FixRefused(msg) => IpcError::new(ErrorCode::BadInput, msg),
             CoreError::NoDataDir => IpcError::new(ErrorCode::Internal, message),
         }
     }
@@ -210,26 +212,6 @@ pub enum DoctorStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoctorReport {
     pub checks: Vec<DoctorCheck>,
-}
-
-// INTEGRATE: replace with core type `githop_core::fix::FixPlan`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FixPlan {
-    pub repo: String,
-    pub branch: Option<String>,
-    pub profile_id: Option<String>,
-    pub profile_email: Option<String>,
-    pub offenders: Vec<OffendingCommit>,
-    pub pushed_offenders: Vec<OffendingCommit>,
-    pub blocked_reason: Option<String>,
-}
-
-// INTEGRATE: replace with core type `githop_core::fix::FixResult`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FixResult {
-    pub backup_ref: String,
-    pub rewritten: usize,
-    pub undo_hint: String,
 }
 
 // INTEGRATE: replace with core type `githop_core::wipe::WipeOptions`.
@@ -341,10 +323,24 @@ mod tests {
                 ErrorCode::Io,
             ),
             (CoreError::NoDataDir, ErrorCode::Internal),
+            (
+                CoreError::Conflict {
+                    path: PathBuf::from("profiles.toml"),
+                },
+                ErrorCode::Conflict,
+            ),
         ];
         for (core, code) in cases {
             assert_eq!(IpcError::from(core).code, code);
         }
+    }
+
+    #[test]
+    fn fix_refusal_is_bad_input_with_cores_sentence() {
+        let msg = "Finish or abort the rebase first, then run fix again.";
+        let e = IpcError::from(CoreError::FixRefused(msg.into()));
+        assert_eq!(e.code, ErrorCode::BadInput);
+        assert_eq!(e.message, msg);
     }
 
     #[test]

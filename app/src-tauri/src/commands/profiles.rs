@@ -1,6 +1,6 @@
 //! Profile commands: list, validate, save (add/edit/rename), delete, set default.
 
-use githop_core::{pin as core_pin, Profile, ProfileSet, Severity, ValidationIssue};
+use githop_core::{pin as core_pin, CoreError, Profile, ProfileSet, Severity, ValidationIssue};
 use tauri::{AppHandle, Runtime};
 
 use crate::dto::{IpcError, IpcResult};
@@ -28,7 +28,11 @@ pub async fn validate_profile(
         if !shape.is_empty() {
             return Ok(shape);
         }
-        let (candidate, set) = candidate_set(store.profiles(), profile, original_id.as_deref())?;
+        let mut candidate = profile;
+        candidate.normalize();
+        let orig = original_id.as_deref();
+        let set = candidate_set(store.profiles(), &candidate, orig)
+            .ok_or_else(|| no_such_profile(orig.unwrap_or_default()))?;
         Ok(issues_for(&set, &candidate.id))
     })
     .await
@@ -79,35 +83,46 @@ pub fn set_default_blocking(id: &str) -> IpcResult<ProfileSet> {
     let _guard = ops::write_lock();
     let git = ops::git()?;
     let mut store = ops::store()?;
-    let set = store.profiles().clone();
-    ops::profile(&set, id)?;
-    ops::switch_default(&git, &mut store, set, id)?;
+    ops::profile(store.profiles(), id)?;
+    ops::switch_default(&git, &mut store, id, |_| {})?;
     Ok(store.profiles().clone())
 }
 
-/// `profile` normalised, plus the set it would produce with the candidate moved
-/// to the end, so clash issues ("email already used by …") land on it.
+/// The set `candidate` (already normalised) would produce, with the candidate
+/// moved to the end so clash issues ("email already used by …") land on it.
+/// `None` when `original_id` doesn't exist.
 fn candidate_set(
     current: &ProfileSet,
-    profile: Profile,
+    candidate: &Profile,
     original_id: Option<&str>,
-) -> IpcResult<(Profile, ProfileSet)> {
-    let mut candidate = profile;
-    candidate.normalize();
+) -> Option<ProfileSet> {
     let mut set = current.clone();
     if let Some(orig) = original_id {
-        let idx = set
-            .profiles
-            .iter()
-            .position(|p| p.id == orig)
-            .ok_or_else(|| IpcError::not_found(format!("There's no profile called \"{orig}\".")))?;
+        let idx = set.profiles.iter().position(|p| p.id == orig)?;
         set.profiles.remove(idx);
         if set.default.as_deref() == Some(orig) {
             set.default = Some(candidate.id.clone());
         }
     }
     set.profiles.push(candidate.clone());
-    Ok((candidate, set))
+    Some(set)
+}
+
+fn no_such_profile(id: &str) -> IpcError {
+    IpcError::not_found(format!("There's no profile called \"{id}\"."))
+}
+
+/// The edited profile vanished between loading and saving (another window or
+/// the CLI removed it). Reported as a validation issue on its id.
+fn removed_meanwhile(id: &str) -> CoreError {
+    CoreError::Validation(vec![ValidationIssue {
+        profile_id: Some(id.to_string()),
+        field: "id".to_string(),
+        severity: Severity::Error,
+        message: format!(
+            "Profile \"{id}\" was removed by another GitHop window or command. Nothing was saved."
+        ),
+    }])
 }
 
 /// Issues addressed to profile `id`.
@@ -128,44 +143,53 @@ fn save_profile_blocking(profile: Profile, original_id: Option<String>) -> IpcRe
         return Err(IpcError::validation(shape));
     }
     let _guard = ops::write_lock();
-    let mut store = ops::store()?;
-    let current = store.profiles().clone();
-    let orig = original_id.as_deref();
-    let before = orig.and_then(|o| current.get(o).cloned());
-
-    let (candidate, check) = candidate_set(&current, profile, orig)?;
-    let issues = issues_for(&check, &candidate.id);
-    if has_errors(&issues) {
-        return Err(IpcError::validation(issues));
-    }
-
-    // Final set keeps the original order (an edited profile stays in place).
-    let mut set = current.clone();
-    match orig {
-        Some(o) => {
-            if let Some(slot) = set.profiles.iter_mut().find(|p| p.id == o) {
-                *slot = candidate.clone();
-            }
-            if set.default.as_deref() == Some(o) {
-                set.default = Some(candidate.id.clone());
-            }
-        }
-        None => set.profiles.push(candidate.clone()),
-    }
-    // The first profile becomes the default profile. Like `githop init`, the
-    // global identity is not rewritten here (its SSH key may not exist yet);
-    // only a backup is taken, before anything else changes ("Safety first").
-    let first_profile = set.default.is_none() && set.profiles.len() == 1;
-    if first_profile {
-        set.default = Some(candidate.id.clone());
-    }
-
-    let is_default = set.default.as_deref() == Some(candidate.id.as_str());
     let git = ops::git()?;
-    if first_profile {
+    let mut store = ops::store()?;
+    let orig = original_id.as_deref();
+    let mut candidate = profile;
+    candidate.normalize();
+
+    // "Safety first": before the very first profile is written, back up the
+    // global git config. Like `githop init`, the global identity itself is not
+    // rewritten for the first profile (its SSH key may not exist yet).
+    if store.profiles().profiles.is_empty() {
         let paths = store.paths().clone();
         githop_core::backup::backup_global_gitconfig(&paths, &git)?;
     }
+
+    // Conflict-free: applied to the freshly re-read files under the lock.
+    let (before, is_default) = store.update(|set, _| {
+        let before = match orig {
+            Some(o) => Some(set.get(o).cloned().ok_or_else(|| removed_meanwhile(o))?),
+            None => None,
+        };
+        let check = candidate_set(set, &candidate, orig)
+            .ok_or_else(|| removed_meanwhile(orig.unwrap_or(candidate.id.as_str())))?;
+        let issues = issues_for(&check, &candidate.id);
+        if has_errors(&issues) {
+            return Err(CoreError::Validation(issues));
+        }
+        // Keep the original order (an edited profile stays in place).
+        match orig {
+            Some(o) => {
+                if let Some(slot) = set.profiles.iter_mut().find(|p| p.id == o) {
+                    *slot = candidate.clone();
+                }
+                if set.default.as_deref() == Some(o) {
+                    set.default = Some(candidate.id.clone());
+                }
+            }
+            None => set.profiles.push(candidate.clone()),
+        }
+        // The first profile becomes the default profile.
+        if set.default.is_none() && set.profiles.len() == 1 {
+            set.default = Some(candidate.id.clone());
+        }
+        Ok((
+            before,
+            set.default.as_deref() == Some(candidate.id.as_str()),
+        ))
+    })?;
 
     // Keep the global identity in sync when GitHop manages it (it matched the
     // default profile before this edit) and the identity changed.
@@ -174,17 +198,13 @@ fn save_profile_blocking(profile: Profile, original_id: Option<String>) -> IpcRe
             || !b.email.eq_ignore_ascii_case(&candidate.email)
             || b.ssh_key != candidate.ssh_key
     });
-    let resync_global = is_default
+    if is_default
         && identity_changed
         && before
             .as_ref()
-            .is_some_and(|b| ops::global_matches(&git, b));
-
-    if resync_global {
-        ops::switch_default(&git, &mut store, set, &candidate.id)?;
-    } else {
-        let settings = store.settings().clone();
-        store.save(&set, &settings)?;
+            .is_some_and(|b| ops::global_matches(&git, b))
+    {
+        ops::switch_default(&git, &mut store, &candidate.id, |_| {})?;
     }
 
     // Re-pin repos pinned to this profile so their local identity (and pin id
@@ -213,7 +233,7 @@ fn save_profile_blocking(profile: Profile, original_id: Option<String>) -> IpcRe
 fn delete_profile_blocking(id: &str, new_default: Option<&str>) -> IpcResult<ProfileSet> {
     let _guard = ops::write_lock();
     let mut store = ops::store()?;
-    let mut set = store.profiles().clone();
+    let set = store.profiles().clone();
     let target = ops::profile(&set, id)?.clone();
     let is_default = set.default.as_deref() == Some(id);
     let others = set.profiles.len() - 1;
@@ -243,18 +263,19 @@ fn delete_profile_blocking(id: &str, new_default: Option<&str>) -> IpcResult<Pro
         (_, _, None) => None,
     };
 
-    set.profiles.retain(|p| p.id != id);
     match new_default {
         Some(nd) => {
             let git = ops::git()?;
-            ops::switch_default(&git, &mut store, set, nd)?;
+            ops::switch_default(&git, &mut store, nd, |p| p.profiles.retain(|x| x.id != id))?;
         }
         None => {
-            if is_default {
-                set.default = None;
-            }
-            let settings = store.settings().clone();
-            store.save(&set, &settings)?;
+            store.update(|p, _| {
+                p.profiles.retain(|x| x.id != id);
+                if p.default.as_deref() == Some(id) {
+                    p.default = None;
+                }
+                Ok(())
+            })?;
         }
     }
     Ok(store.profiles().clone())
@@ -295,8 +316,8 @@ mod tests {
         // Editing the first profile to the second's email: the issue must be
         // addressed to the edited profile, not to "personal".
         let edited = p("office", "me@home.dev", ProfileColor::Blue);
-        let (cand, s) = candidate_set(&set(), edited, Some("office")).unwrap();
-        let issues = issues_for(&s, &cand.id);
+        let s = candidate_set(&set(), &edited, Some("office")).unwrap();
+        let issues = issues_for(&s, &edited.id);
         assert!(has_errors(&issues), "{issues:?}");
         assert!(issues
             .iter()
@@ -305,20 +326,19 @@ mod tests {
     }
 
     #[test]
-    fn rename_moves_default_and_unknown_original_is_not_found() {
+    fn rename_moves_default_and_unknown_original_is_none() {
         let renamed = p("work", "me@company.com", ProfileColor::Blue);
-        let (_, s) = candidate_set(&set(), renamed.clone(), Some("office")).unwrap();
+        let s = candidate_set(&set(), &renamed, Some("office")).unwrap();
         assert_eq!(s.default.as_deref(), Some("work"));
         assert!(s.get("office").is_none());
-        let e = candidate_set(&set(), renamed, Some("nope")).unwrap_err();
-        assert_eq!(e.code, crate::dto::ErrorCode::NotFound);
+        assert!(candidate_set(&set(), &renamed, Some("nope")).is_none());
     }
 
     #[test]
     fn duplicate_id_on_add_is_an_error() {
         let dup = p("office", "x@y.dev", ProfileColor::Pink);
-        let (cand, s) = candidate_set(&set(), dup, None).unwrap();
-        let issues = issues_for(&s, &cand.id);
+        let s = candidate_set(&set(), &dup, None).unwrap();
+        let issues = issues_for(&s, &dup.id);
         assert!(issues
             .iter()
             .any(|i| i.field == "id" && i.severity == Severity::Error));
@@ -327,8 +347,8 @@ mod tests {
     #[test]
     fn invalid_id_is_reported_by_core_validation() {
         let bad = p("Bad Id", "x@y.dev", ProfileColor::Pink);
-        let (cand, s) = candidate_set(&set(), bad, None).unwrap();
-        let issues = issues_for(&s, &cand.id);
+        let s = candidate_set(&set(), &bad, None).unwrap();
+        let issues = issues_for(&s, &bad.id);
         assert!(issues.iter().any(|i| i.field == "id"));
     }
 }

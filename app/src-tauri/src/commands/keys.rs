@@ -111,12 +111,12 @@ fn generate_key_blocking(id: &str, no_passphrase: bool) -> IpcResult<String> {
     if profile.ssh_key != key {
         let _guard = ops::write_lock();
         let mut store = ops::store()?;
-        let mut set = store.profiles().clone();
-        if let Some(p) = set.get_mut(&profile.id) {
-            p.ssh_key = key.clone();
-        }
-        let settings = store.settings().clone();
-        store.save(&set, &settings)?;
+        store.update(|set, _| {
+            if let Some(p) = set.get_mut(&profile.id) {
+                p.ssh_key = key.clone();
+            }
+            Ok(())
+        })?;
     }
     Ok(ssh::read_public_key(&key)?)
 }

@@ -62,10 +62,7 @@ pub async fn pin<R: Runtime>(
         let profile = ops::profile(store.profiles(), &id)?.clone();
         let repo = Repo::discover(&git, &dir)?;
         core_pin::pin_repo(&repo, &profile)?;
-        let mut settings = store.settings().clone();
-        if ops::remember_repo(&mut settings.pinned_repos, repo.root()) {
-            store.save_settings(&settings)?;
-        }
+        ops::remember_pinned(&mut store, repo.root())?;
         rescan_one(&git, repo.root(), &store)
     })
     .await?;
@@ -83,10 +80,7 @@ pub async fn unpin<R: Runtime>(app: AppHandle<R>, repo: String) -> IpcResult<Sca
         let mut store = ops::store()?;
         let repo = Repo::discover(&git, &dir)?;
         core_pin::unpin_repo(&repo)?;
-        let mut settings = store.settings().clone();
-        if ops::forget_repo(&mut settings.pinned_repos, repo.root()) {
-            store.save_settings(&settings)?;
-        }
+        ops::forget_pinned(&mut store, repo.root())?;
         rescan_one(&git, repo.root(), &store)
     })
     .await?;
@@ -107,8 +101,7 @@ pub async fn pin_all<R: Runtime>(
         let git = ops::git()?;
         let mut store = ops::store()?;
         let set = store.profiles().clone();
-        let mut settings = store.settings().clone();
-        let mut changed = false;
+        let mut pinned_roots = Vec::new();
         let mut out = Vec::with_capacity(dirs.len());
         for dir in &dirs {
             let scanned = rescan_one(&git, dir, &store)?;
@@ -125,8 +118,8 @@ pub async fn pin_all<R: Runtime>(
                 .and_then(|repo| core_pin::pin_repo(&repo, profile).map(|()| repo));
             match pinned {
                 Ok(repo) => {
-                    changed |= ops::remember_repo(&mut settings.pinned_repos, repo.root());
                     out.push(rescan_one(&git, repo.root(), &store)?);
+                    pinned_roots.push(repo.root().to_path_buf());
                 }
                 Err(e) => out.push(ScannedRepo {
                     error: Some(crate::dto::sentence(&e.to_string())),
@@ -134,8 +127,13 @@ pub async fn pin_all<R: Runtime>(
                 }),
             }
         }
-        if changed {
-            store.save_settings(&settings)?;
+        if !pinned_roots.is_empty() {
+            store.update_settings(|s| {
+                for root in &pinned_roots {
+                    ops::remember_repo(&mut s.pinned_repos, root);
+                }
+                Ok(())
+            })?;
         }
         Ok(out)
     })

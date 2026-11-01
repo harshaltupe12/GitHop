@@ -1,48 +1,45 @@
-//! Fix commands (Phase 4): plan, apply, undo.
-//!
-//! Inputs are validated here already; the bodies switch on once core's `fix`
-//! module lands (see the `// INTEGRATE:` lines — each is a one-line swap).
+//! Fix commands (Phase 4): plan, apply, undo — thin wrappers over
+//! `githop_core::fix`. Core refuses unsafe states (`CoreError::FixRefused` →
+//! `bad_input` with core's sentence) and never touches pushed commits.
 
+use githop_core::fix::{self, FixPlan, FixResult};
+use githop_core::Paths;
 use tauri::{AppHandle, Runtime};
 
-use crate::dto::{FixPlan, FixResult, IpcError, IpcResult};
+use crate::dto::IpcResult;
 use crate::events;
 use crate::ops::{self, blocking};
 use crate::validate;
 
-/// Message while the core API is missing in this build.
-const NOT_YET: &str = "Fixing commits isn't available in this build yet. Run: githop fix";
-
+/// What a fix in `repo` would do. Read-only.
 #[tauri::command]
 pub async fn fix_plan(repo: String) -> IpcResult<FixPlan> {
     let dir = validate::existing_dir(&repo)?;
     blocking(move || {
-        let _git = ops::git()?;
-        let _store = ops::store()?;
-        let _ = dir;
-        // INTEGRATE: Ok(githop_core::fix::plan(&_git, &dir, &_store)?)
-        Err(IpcError::unsupported(NOT_YET))
+        let git = ops::git()?;
+        let paths = Paths::resolve()?;
+        Ok(fix::plan(&git, &dir, &paths)?)
     })
     .await
 }
 
-/// Long operation: runs on a worker thread.
+/// Re-stamp the unpushed wrong-identity commits (backup ref first). Long
+/// operation: runs on a worker thread.
 #[tauri::command]
 pub async fn fix_apply<R: Runtime>(app: AppHandle<R>, repo: String) -> IpcResult<FixResult> {
     let dir = validate::existing_dir(&repo)?;
     let result = blocking(move || {
         let _guard = ops::write_lock();
-        let _git = ops::git()?;
-        let _store = ops::store()?;
-        let _ = dir;
-        // INTEGRATE: Ok(githop_core::fix::apply(&_git, &dir, &_store)?)
-        Err::<FixResult, _>(IpcError::unsupported(NOT_YET))
+        let git = ops::git()?;
+        let paths = Paths::resolve()?;
+        Ok(fix::apply(&git, &dir, &paths)?)
     })
     .await?;
     events::data_changed(&app);
     Ok(result)
 }
 
+/// Restore the branch from `backup_ref` (from `FixResult::backup_ref`).
 #[tauri::command]
 pub async fn fix_undo<R: Runtime>(
     app: AppHandle<R>,
@@ -50,13 +47,11 @@ pub async fn fix_undo<R: Runtime>(
     backup_ref: String,
 ) -> IpcResult<()> {
     let dir = validate::existing_dir(&repo)?;
-    validate::git_ref(&backup_ref)?;
+    validate::backup_ref(&backup_ref)?;
     blocking(move || {
         let _guard = ops::write_lock();
-        let _git = ops::git()?;
-        let _ = (dir, backup_ref);
-        // INTEGRATE: Ok(githop_core::fix::undo(&_git, &dir, &backup_ref)?)
-        Err::<(), _>(IpcError::unsupported(NOT_YET))
+        let git = ops::git()?;
+        Ok(fix::undo(&git, &dir, &backup_ref)?)
     })
     .await?;
     events::data_changed(&app);

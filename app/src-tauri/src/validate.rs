@@ -132,17 +132,20 @@ pub fn stage(s: &str) -> IpcResult<&'static str> {
     }
 }
 
-/// A git ref name GitHop created (e.g. a fix backup ref). Conservative subset of
-/// `git check-ref-format`: `refs/…`, ASCII `[A-Za-z0-9/._-]`, no `..`, `//`,
-/// leading `-`/`.` in any part, no `.lock` suffix, no trailing `/` or `.`.
-pub fn git_ref(s: &str) -> IpcResult<&str> {
+/// A fix backup ref (`refs/githop/backup/<branch>/<time>`). Rules from
+/// `git check-ref-format`: no control chars, whitespace, `~^:?*[\`, `..`,
+/// `@{`, `//`, parts starting with `.`/`-` or ending in `.lock`. Core's
+/// `fix::undo` then checks it really is one of its backups.
+pub fn backup_ref(s: &str) -> IpcResult<&str> {
     let bad = || IpcError::bad_input("That backup reference isn't valid.");
-    if !s.starts_with("refs/") || s.len() > 255 || s.ends_with('/') || s.ends_with('.') {
+    let Some(rest) = s.strip_prefix(githop_core::fix::BACKUP_PREFIX) else {
+        return Err(bad());
+    };
+    if rest.is_empty() || s.len() > 1024 || s.ends_with('/') || s.ends_with('.') {
         return Err(bad());
     }
-    if !s
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-'))
+    if s.chars()
+        .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
     {
         return Err(bad());
     }
@@ -397,27 +400,30 @@ mod tests {
     #[test]
     fn refs() {
         for ok in [
-            "refs/githop/backup/main-20261031T142233.123Z",
-            "refs/githop/backup/feature/x_y",
+            "refs/githop/backup/main/20261031T142233.123Z",
+            "refs/githop/backup/feature/x_y/20261031T142233.123Z-01",
+            "refs/githop/backup/fix+ü/20261031T142233.123Z",
         ] {
-            assert!(git_ref(ok).is_ok(), "{ok}");
+            assert!(backup_ref(ok).is_ok(), "{ok}");
         }
         for bad in [
             "",
             "main",
-            "refs/",
-            "refs/heads/../x",
-            "refs//x",
-            "refs/heads/-x",
-            "refs/heads/.x",
-            "refs/heads/x.lock",
-            "refs/heads/x.",
-            "refs/heads/a b",
-            "refs/heads/a@{1}",
-            "refs/heads/a;b",
+            "refs/heads/main",
+            "refs/githop/backup/",
+            "refs/githop/backup/../x",
+            "refs/githop/backup//x",
+            "refs/githop/backup/-x",
+            "refs/githop/backup/.x",
+            "refs/githop/backup/x.lock",
+            "refs/githop/backup/x.",
+            "refs/githop/backup/a b",
+            "refs/githop/backup/a@{1}",
+            "refs/githop/backup/a:b",
+            "refs/githop/backup/a\nb",
             "--upload-pack=evil",
         ] {
-            assert!(git_ref(bad).is_err(), "{bad}");
+            assert!(backup_ref(bad).is_err(), "{bad}");
         }
     }
 

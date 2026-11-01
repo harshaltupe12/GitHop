@@ -143,8 +143,13 @@ fn short_passwords_are_rejected() {
 fn bad_backup_ref_is_rejected_before_anything_runs() {
     // fix_undo needs an AppHandle, so check its validator directly with the
     // same inputs it would receive.
-    for r in ["main", "refs/heads/../x", "--upload-pack=x", "refs/a b"] {
-        assert!(crate::validate::git_ref(r).is_err(), "{r}");
+    for r in [
+        "main",
+        "refs/githop/backup/../x",
+        "--upload-pack=x",
+        "refs/githop/backup/a b",
+    ] {
+        assert!(crate::validate::backup_ref(r).is_err(), "{r}");
     }
     let bad = [ImportResolution {
         profile_id: "ok".into(),

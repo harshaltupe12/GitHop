@@ -55,37 +55,64 @@ pub fn profile<'a>(set: &'a ProfileSet, id: &str) -> IpcResult<&'a Profile> {
         .ok_or_else(|| IpcError::not_found(format!("There's no profile called \"{id}\".")))
 }
 
-/// Back up the global git config, record the keys GitHop manages (saved
-/// *before* writing so wipe can always restore them), set global
-/// `user.name`/`user.email`/`core.sshCommand`, then save `profiles` with
-/// `default = id`. Mirrors the CLI's `switch_default` (Plan §7.6).
+/// Make `id` the default profile (Plan §7.6, mirrors the CLI's
+/// `switch_default`): back up the global git config, record the keys GitHop
+/// manages (saved *before* writing so wipe can always restore them), set
+/// global `user.name`/`user.email`/`core.sshCommand`, then — in one
+/// conflict-free [`Store::update`] — apply `change` (e.g. remove a deleted
+/// profile) and set `default = id`.
+///
+/// `change` runs twice: once on a fresh copy to find the target profile, once
+/// inside the update.
 pub fn switch_default(
     git: &Git,
     store: &mut Store,
-    mut profiles: ProfileSet,
     id: &str,
+    change: impl Fn(&mut ProfileSet),
 ) -> IpcResult<()> {
-    let target = profile(&profiles, id)?.clone();
+    store.reload()?;
+    let mut preview = store.profiles().clone();
+    change(&mut preview);
+    let target = profile(&preview, id)?.clone();
+
     let paths = store.paths().clone();
     paths.ensure_dirs()?;
     backup::backup_global_gitconfig(&paths, git)?;
-
-    let mut settings = store.settings().clone();
-    let mut changed = false;
-    for key in MANAGED_GLOBAL_KEYS {
-        if !settings.managed_global_keys.iter().any(|k| k == key) {
-            settings.managed_global_keys.push(key.to_string());
-            changed = true;
+    store.update_settings(|s| {
+        for key in MANAGED_GLOBAL_KEYS {
+            if !s.managed_global_keys.iter().any(|k| k == key) {
+                s.managed_global_keys.push(key.to_string());
+            }
         }
-    }
-    if changed {
-        store.save_settings(&settings)?;
-    }
+        Ok(())
+    })?;
 
     core_pin::set_default_profile_global(git, &target)?;
 
-    profiles.default = Some(id.to_string());
-    store.save(&profiles, &settings)?;
+    // A profile removed meanwhile makes `default` invalid → Validation, nothing written.
+    store.update(|p, _| {
+        change(p);
+        p.default = Some(id.to_string());
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// Add a repo root to `settings.pinned_repos` (conflict-free).
+pub fn remember_pinned(store: &mut Store, root: &Path) -> IpcResult<()> {
+    store.update_settings(|s| {
+        remember_repo(&mut s.pinned_repos, root);
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// Remove a repo root from `settings.pinned_repos` (conflict-free).
+pub fn forget_pinned(store: &mut Store, root: &Path) -> IpcResult<()> {
+    store.update_settings(|s| {
+        forget_repo(&mut s.pinned_repos, root);
+        Ok(())
+    })?;
     Ok(())
 }
 
