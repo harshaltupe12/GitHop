@@ -104,6 +104,10 @@ pub enum Command {
     #[command(subcommand)]
     Hooks(HooksCommand),
 
+    /// Switch GitHub HTTPS remotes to SSH, so pushes use the profile's key
+    #[command(subcommand)]
+    Remote(RemoteCommand),
+
     /// Fix unpushed commits that used the wrong identity
     Fix(FixArgs),
 
@@ -290,6 +294,30 @@ pub enum HooksCommand {
     Status,
     /// Print a line to call GitHop from a repo's own hook (husky etc.)
     Snippet(HooksSnippetArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RemoteCommand {
+    /// Switch this repo's GitHub HTTPS remotes to SSH (the old URL is kept for undo)
+    Ssh(RemoteSshArgs),
+    /// Put back the HTTPS URLs GitHop switched in this repo
+    Undo,
+    /// Show or set what pinning does with GitHub HTTPS remotes (ask, auto, never)
+    Policy(RemotePolicyArgs),
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct RemoteSshArgs {
+    /// Switch every repo with a profile in this folder instead
+    #[arg(long, value_name = "FOLDER")]
+    pub all_in: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct RemotePolicyArgs {
+    /// ask (default), auto or never
+    #[arg(value_parser = ["ask", "auto", "never"])]
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Args)]

@@ -23,6 +23,10 @@ pub fn run(ctx: &Ctx, args: TestArgs) -> Result<Exit> {
         ));
     }
 
+    // GitHub's published host keys first, so ssh never stops at yes/no (ADR 0006).
+    if let Ok(git) = ctx.git() {
+        ssh::ensure_github_known_hosts_best_effort(git, store.paths());
+    }
     ui.line(&format!(
         "Connecting to github.com with the {} key…",
         profile.label

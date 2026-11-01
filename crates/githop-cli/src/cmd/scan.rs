@@ -139,6 +139,7 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
 
     let mut applied: Vec<String> = Vec::new();
     let mut apply_errors: Vec<(String, String)> = Vec::new();
+    let mut pinned_now: Vec<Repo> = Vec::new();
     if args.apply {
         for (r, status) in repos.iter().zip(statuses.iter_mut()) {
             if !pinnable(r, *status, args.include_default) {
@@ -159,6 +160,7 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
                     remember_repo(&mut settings.pinned_repos, repo.root());
                     *status = RepoStatus::PinnedNow;
                     applied.push(r.root.clone());
+                    pinned_now.push(repo);
                 }
                 Err(e) => apply_errors.push((r.root.clone(), e.to_string())),
             }
@@ -171,6 +173,23 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
                 }
                 Ok(())
             })?;
+            githop_core::ssh::ensure_github_known_hosts_best_effort(git, store.paths());
+        }
+    }
+    // ADR 0006: repos pinned now that still push over GitHub HTTPS.
+    let mut switched_to_ssh: Vec<String> = Vec::new();
+    let mut still_https: Vec<&Repo> = Vec::new();
+    let policy = store.settings().remote_https_policy;
+    for repo in &pinned_now {
+        match githop_core::remote_ssh::apply_policy(repo, policy) {
+            Ok(githop_core::remote_ssh::HttpsAction::Switched(l)) if !l.is_empty() => {
+                switched_to_ssh.push(normalize_repo_root(repo.root()));
+            }
+            Ok(
+                githop_core::remote_ssh::HttpsAction::Ask(_)
+                | githop_core::remote_ssh::HttpsAction::Warn(_),
+            ) => still_https.push(repo),
+            _ => {}
         }
     }
 
@@ -206,6 +225,11 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
             "repos": items,
             "applied": applied,
             "apply_errors": errors,
+            "switched_to_ssh": switched_to_ssh,
+            "still_https": still_https
+                .iter()
+                .map(|r| normalize_repo_root(r.root()))
+                .collect::<Vec<_>>(),
         }))?;
         return Ok(Exit::Ok);
     }
@@ -275,6 +299,41 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
             "Pinned {}.",
             plural(applied.len(), "repo", "repos")
         ));
+        if !switched_to_ssh.is_empty() {
+            ui.ok(&format!(
+                "Switched {} from HTTPS to SSH, so pushes use each profile's key.",
+                plural(switched_to_ssh.len(), "repo", "repos")
+            ));
+        }
+        if !still_https.is_empty() {
+            let n = still_https.len();
+            ui.warn(&wrap(
+                &format!(
+                    "{} {} GitHub over HTTPS, so Windows signs in with the account it saved, not the profile's SSH key.",
+                    plural(n, "pinned repo", "pinned repos"),
+                    if n == 1 { "pushes to" } else { "push to" }
+                ),
+                crate::ui::MAX_WIDTH - 2,
+                "  ",
+            ));
+            let ask = policy == githop_core::RemoteHttpsPolicy::Ask && ui.interactive;
+            if ask && ui.confirm("Switch them to SSH now?", true)? {
+                let mut done = 0;
+                for repo in &still_https {
+                    if githop_core::remote_ssh::switch_all_to_ssh(repo).is_ok_and(|l| !l.is_empty())
+                    {
+                        done += 1;
+                    }
+                }
+                ui.ok(&format!("Switched {}.", plural(done, "repo", "repos")));
+                ui.hint("To always do this when pinning: githop remote policy auto");
+            } else {
+                ui.fix_hint(&format!(
+                    "Run: githop remote ssh --all-in {}",
+                    githop_core::paths::to_slash(&args.folder)
+                ));
+            }
+        }
     }
     let waiting = repos
         .iter()
