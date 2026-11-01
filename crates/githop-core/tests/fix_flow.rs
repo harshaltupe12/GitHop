@@ -944,14 +944,21 @@ fn good_commits_after_an_offender_keep_their_author() {
     );
     fx.right();
     let plan = fx.plan();
-    // "Someone Else" is a mismatch too (author email ≠ office) — same rule as the push check.
-    assert_eq!(plan.offenders.len(), 2);
+    // "Someone Else" isn't one of the user's emails: not an offender (Review #3).
+    assert_eq!(plan.offenders.len(), 1);
+    assert_eq!(plan.foreign, 1);
     assert_eq!(plan.rewrite_count, 3);
-    let last_author = fx.show("HEAD", "%an|%ae|%ad");
+    let last = fx.show("HEAD", "%an|%ae|%ad|%cn|%ce|%cd");
+    let other = fx.show("HEAD~1", "%an|%ae|%ad|%cn|%ce|%cd");
     fx.apply().unwrap();
-    assert_eq!(fx.show("HEAD", "%an|%ae|%ad"), last_author);
+    assert_eq!(fx.show("HEAD", "%an|%ae|%ad|%cn|%ce|%cd"), last);
     assert_eq!(
-        fx.show("HEAD~1", "%an|%ae"),
+        fx.show("HEAD~1", "%an|%ae|%ad|%cn|%ce|%cd"),
+        other,
+        "someone else's commit is copied exactly"
+    );
+    assert_eq!(
+        fx.show("HEAD~2", "%an|%ae"),
         format!("{OFFICE_NAME}|{OFFICE}")
     );
 }
@@ -1080,4 +1087,351 @@ fn for_each_ref_contains_means_any() {
         "refs/remotes/",
     ]);
     assert_eq!(out, "refs/remotes/origin/x");
+}
+
+// ------------------------------------------- Review 2026-11-01 #2: "pushed"
+
+/// Run the pre-push check like the hook would (it records the push when it
+/// goes through), then really push. `enforce = warn` so a wrong commit can be
+/// published, which is how wrong commits end up pushed in real life.
+fn push_through_hook(fx: &Fx, remote: &str, branch: &str) {
+    std::fs::write(
+        fx.env.paths().settings_file(),
+        "version = 1\nenforce = \"warn\"\n",
+    )
+    .unwrap();
+    let local = fx.git(&["rev-parse", branch]);
+    let stdin = format!(
+        "refs/heads/{branch} {local} refs/heads/{branch} {}\n",
+        "0".repeat(40)
+    );
+    let ctx = CheckContext {
+        git: fx.env.git_handle(),
+        cwd: fx.repo.clone(),
+        paths: fx.env.paths(),
+    };
+    let r = check::run_check(
+        Stage::Push,
+        &[remote.to_string(), remote.to_string()],
+        &stdin,
+        &ctx,
+    );
+    assert_eq!(r.exit_code(), 0, "{:?}", r.messages);
+    fx.git(&["push", "-q", remote, branch]);
+}
+
+fn file_url(path: &Path) -> String {
+    format!("file://{}", path.to_string_lossy().replace('\\', "/"))
+}
+
+/// A `git clone --single-branch` of a remote with one office commit on
+/// main, pinned to office, on a new branch `feature`.
+fn single_branch_fixture() -> Fx {
+    let fx = Fx::new();
+    let remote = fx.env.bare_remote("office-org/api");
+    let seed = fx.env.repos().join("seed");
+    let seed_s = seed.to_string_lossy().to_string();
+    fx.env.git(
+        &["clone", "-q", &remote.to_string_lossy(), &seed_s],
+        fx.env.root(),
+    );
+    fx.env.commit_as(&seed, "base.txt", OFFICE_NAME, OFFICE);
+    fx.env.git(&["push", "-q", "origin", "main"], &seed);
+    std::fs::remove_dir_all(&fx.repo).unwrap();
+    let dest = fx.repo.to_string_lossy().to_string();
+    fx.env.git(
+        &["clone", "-q", "--single-branch", &file_url(&remote), &dest],
+        fx.env.root(),
+    );
+    fx.git(&["config", "githop.profile", "office"]);
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    fx
+}
+
+/// Review #2 scenario 1: `git push -u origin feature` in a single-branch clone
+/// creates no remote-tracking ref. Without a record, Fix must refuse.
+#[test]
+fn single_branch_clone_unrecorded_push_is_refused() {
+    let fx = single_branch_fixture();
+    let pushed = fx.wrong();
+    fx.git(&["push", "-q", "-u", "origin", "feature"]);
+    assert!(!fx.git_ok(&["rev-parse", "--verify", "-q", "origin/feature"]));
+
+    let plan = fx.plan();
+    assert_eq!(plan.offenders.len(), 1, "still listed for the UI");
+    assert_eq!(plan.blocker, Some(FixBlocker::PushedUnknown));
+    let reason = plan.blocked_reason.unwrap();
+    assert!(
+        reason.contains("git remote set-branches --add origin feature"),
+        "{reason}"
+    );
+    assert!(refused(fx.apply()).contains("can't tell"));
+    assert_eq!(fx.head(), pushed);
+    assert!(fx.githop_refs().is_empty());
+}
+
+/// Same clone, but the push went through GitHop's pre-push check: the record
+/// marks it as pushed, later commits are fixable, and the result fast-forwards.
+#[test]
+fn single_branch_clone_recorded_push_is_never_rewritten() {
+    let fx = single_branch_fixture();
+    let pushed = fx.wrong();
+    push_through_hook(&fx, "origin", "feature");
+    fx.git(&["config", "branch.feature.remote", "origin"]);
+    fx.git(&["config", "branch.feature.merge", "refs/heads/feature"]);
+    let local = fx.wrong();
+
+    let plan = fx.plan();
+    assert_eq!(plan.blocked_reason, None);
+    assert_eq!(plan.offenders.len(), 1);
+    assert_eq!(plan.offenders[0].sha, local);
+    assert_eq!(plan.pushed_offenders.len(), 1);
+    assert_eq!(plan.pushed_offenders[0].sha, pushed);
+    let res = fx.apply().unwrap();
+    assert_eq!(res.recreated, 1);
+    assert_eq!(
+        fx.git(&["rev-parse", "HEAD~1"]),
+        pushed,
+        "pushed commit kept"
+    );
+    assert!(res.fast_forward);
+    // A plain (non-force) push is accepted.
+    fx.git(&["push", "-q", "origin", "feature"]);
+}
+
+/// Review #2 scenario 2: a commit published only through a tag.
+#[test]
+fn commit_published_only_by_a_tag_is_never_rewritten() {
+    let fx = Fx::with_remote(1);
+    let tagged = fx.wrong();
+    fx.git(&["tag", "rel-1"]);
+    fx.git(&["push", "-q", "origin", "rel-1"]);
+    let plan = fx.plan();
+    assert!(plan.offenders.is_empty(), "{:?}", plan.offenders);
+    assert_eq!(plan.pushed_offenders.len(), 1);
+    assert_eq!(plan.pushed_offenders[0].sha, tagged);
+
+    let local = fx.wrong();
+    let plan = fx.plan();
+    assert_eq!(plan.offenders.len(), 1);
+    assert_eq!(plan.offenders[0].sha, local);
+    fx.apply().unwrap();
+    assert_eq!(fx.git(&["rev-parse", "HEAD~1"]), tagged);
+    assert!(fx.git_ok(&["merge-base", "--is-ancestor", "rel-1", "main"]));
+}
+
+/// Even a local-only tag counts as pushed (conservative).
+#[test]
+fn local_tags_count_as_pushed() {
+    let fx = Fx::new();
+    let tagged = fx.wrong();
+    fx.git(&[
+        "-c",
+        &format!("user.email={OFFICE}"),
+        "tag",
+        "-a",
+        "-m",
+        "x",
+        "v0",
+    ]);
+    let plan = fx.plan();
+    assert!(plan.offenders.is_empty());
+    assert_eq!(plan.pushed_offenders[0].sha, tagged);
+}
+
+/// Review #2 scenario 3: a push to a URL leaves no remote-tracking ref; the
+/// pre-push record covers it.
+#[test]
+fn push_to_a_url_is_recorded_and_respected() {
+    let fx = Fx::new();
+    let remote = fx.env.bare_remote("office-org/api");
+    let url = remote.to_string_lossy().replace('\\', "/");
+    fx.right();
+    let pushed = fx.wrong();
+    push_through_hook(&fx, &url, "main");
+    let local = fx.wrong();
+
+    let plan = fx.plan();
+    assert!(!plan.has_remote_refs);
+    assert_eq!(plan.offenders.len(), 1);
+    assert_eq!(plan.offenders[0].sha, local);
+    assert_eq!(plan.unpushed, 1);
+    fx.apply().unwrap();
+    assert_eq!(fx.git(&["rev-parse", "HEAD~1"]), pushed);
+}
+
+/// Another local branch whose upstream has no tracking ref counts as pushed
+/// up to its tip.
+#[test]
+fn other_branch_with_untracked_upstream_counts_as_pushed() {
+    let fx = single_branch_fixture();
+    let pushed = fx.wrong();
+    fx.git(&["push", "-q", "-u", "origin", "feature"]);
+    fx.git(&["checkout", "-q", "-b", "next"]);
+    let local = fx.wrong();
+    let plan = fx.plan();
+    assert_eq!(plan.blocked_reason, None, "next has no upstream");
+    assert_eq!(plan.offenders.len(), 1);
+    assert_eq!(plan.offenders[0].sha, local);
+    fx.apply().unwrap();
+    assert_eq!(fx.git(&["rev-parse", "HEAD~1"]), pushed);
+}
+
+#[test]
+fn shallow_clone_needs_a_tracked_upstream() {
+    let fx = Fx::with_remote(3);
+    let url = file_url(&fx.env.remotes().join("office-org/api.git"));
+    let shallow = fx.env.repos().join("shallow");
+    let dest = shallow.to_string_lossy().to_string();
+    fx.env
+        .git(&["clone", "-q", "--depth", "1", &url, &dest], fx.env.root());
+    assert!(shallow.join(".git/shallow").exists());
+    fx.env
+        .git(&["config", "githop.profile", "office"], &shallow);
+    // On main (tracks origin/main): allowed.
+    fx.env.commit_as(&shallow, "w.txt", PERSONAL_NAME, PERSONAL);
+    let plan = |repo: &Path| fix::plan(&fx.env.git_handle(), repo, &fx.env.paths()).unwrap();
+    let p = plan(&shallow);
+    assert_eq!(p.offenders.len(), 1);
+    assert_eq!(p.blocked_reason, None, "{:?}", p.blocked_reason);
+    // A new branch without upstream: refused.
+    fx.env.git(&["checkout", "-q", "-b", "topic"], &shallow);
+    let p = plan(&shallow);
+    assert_eq!(p.blocker, Some(FixBlocker::Shallow));
+    assert!(p.blocked_reason.unwrap().contains("git fetch --unshallow"));
+}
+
+/// An unpushed merge whose side branch was published only by a tag: the side
+/// commit is pushed, so only the merge is rewritten (no unpushed offender can
+/// have a pushed descendant).
+#[test]
+fn merge_of_a_tag_published_branch_keeps_the_pushed_parent() {
+    let fx = Fx::with_remote(1);
+    fx.git(&["checkout", "-q", "-b", "side"]);
+    let side = fx.wrong();
+    fx.git(&["tag", "side-1"]);
+    fx.git(&["push", "-q", "origin", "side-1"]);
+    fx.git(&["checkout", "-q", "main"]);
+    fx.git(&["branch", "-q", "-D", "side"]);
+    fx.right();
+    fx.git(&[
+        "-c",
+        &format!("user.name={PERSONAL_NAME}"),
+        "-c",
+        &format!("user.email={PERSONAL}"),
+        "merge",
+        "--no-ff",
+        "-q",
+        "-m",
+        "merge side",
+        "side-1",
+    ]);
+    let plan = fx.plan();
+    assert_eq!(plan.offenders.len(), 1);
+    assert_eq!(plan.offenders[0].subject, "merge side");
+    assert_eq!(plan.rewrite_count, 1);
+    fx.apply().unwrap();
+    assert_eq!(fx.git(&["rev-parse", "HEAD^2"]), side);
+}
+
+/// "You can push now" only when the fixed branch fast-forwards from its remote.
+#[test]
+fn diverged_branch_is_not_reported_as_ready_to_push() {
+    let fx = Fx::with_remote(1);
+    fx.git(&["branch", "-q", "--set-upstream-to=origin/main"]);
+    let other = fx.env.repos().join("other");
+    let remote = fx.env.remotes().join("office-org/api.git");
+    let other_s = other.to_string_lossy().to_string();
+    fx.env.git(
+        &["clone", "-q", &remote.to_string_lossy(), &other_s],
+        fx.env.root(),
+    );
+    fx.env
+        .commit_as(&other, "theirs.txt", "Colleague", "colleague@company.com");
+    fx.env.git(&["push", "-q", "origin", "main"], &other);
+    fx.git(&["fetch", "-q", "origin"]);
+    fx.wrong();
+    assert!(!fx.apply().unwrap().fast_forward);
+
+    let fx = Fx::with_remote(1);
+    fx.git(&["branch", "-q", "--set-upstream-to=origin/main"]);
+    fx.wrong();
+    assert!(fx.apply().unwrap().fast_forward);
+}
+
+// ----------------------------- Review 2026-11-01 #3: other people's commits
+
+const ALICE: &str = "alice@contrib.example";
+
+/// Review #3 scenario: a PR from Alice fetched into a local branch and merged
+/// with the wrong identity. Only the merge is the user's; Alice's commit is
+/// never listed and keeps its hash and authorship.
+#[test]
+fn merged_pr_from_someone_else_is_never_reauthored() {
+    let fx = Fx::with_remote(1);
+    fx.git(&["checkout", "-q", "-b", "pr-1"]);
+    let alice = fx.commit_as("Alice", ALICE);
+    let alice_ident = fx.show(&alice, "%an|%ae|%ad|%cn|%ce|%cd");
+    fx.git(&["checkout", "-q", "main"]);
+    fx.git(&[
+        "-c",
+        &format!("user.name={PERSONAL_NAME}"),
+        "-c",
+        &format!("user.email={PERSONAL}"),
+        "merge",
+        "--no-ff",
+        "-q",
+        "-m",
+        "Merge pr-1",
+        "pr-1",
+    ]);
+    let plan = fx.plan();
+    assert_eq!(plan.offenders.len(), 1, "{:?}", plan.offenders);
+    assert_eq!(plan.offenders[0].subject, "Merge pr-1");
+    assert_eq!(plan.foreign, 1);
+    assert_eq!(plan.rewrite_count, 1);
+    fx.apply().unwrap();
+    assert_eq!(
+        fx.git(&["rev-parse", "HEAD^2"]),
+        alice,
+        "Alice's commit untouched"
+    );
+    assert_eq!(fx.show("HEAD^2", "%an|%ae|%ad|%cn|%ce|%cd"), alice_ident);
+    assert_eq!(fx.show("HEAD", "%ae %ce"), format!("{OFFICE} {OFFICE}"));
+}
+
+/// `git am` / cherry-pick from a fork: Alice's authorship, the user's wrong
+/// committer. Only the committer changes.
+#[test]
+fn foreign_author_with_wrong_committer_keeps_the_author_exactly() {
+    let fx = Fx::with_remote(1);
+    fx.commit_full(
+        ("Alice", ALICE),
+        (PERSONAL_NAME, PERSONAL),
+        "2026-07-04T10:00:00+0100",
+        b"patch from alice\n",
+        false,
+    );
+    let before = fx.show("HEAD", "%an|%ae|%ad");
+    let plan = fx.plan();
+    assert_eq!(plan.offenders.len(), 1);
+    assert!(!plan.offenders[0].author_mismatch);
+    assert!(plan.offenders[0].committer_mismatch);
+    fx.apply().unwrap();
+    assert_eq!(fx.show("HEAD", "%an|%ae|%ad"), before);
+    assert_eq!(
+        fx.show("HEAD", "%cn|%ce"),
+        format!("{OFFICE_NAME}|{OFFICE}")
+    );
+}
+
+/// The global `user.email` is the user's even when no profile uses it.
+#[test]
+fn global_user_email_is_an_offender() {
+    let fx = Fx::with_remote(1);
+    fx.env.set_global("user.email", "harshal@old-job.example");
+    fx.commit_as("Harshal", "harshal@old-job.example");
+    let plan = fx.plan();
+    assert_eq!(plan.offenders.len(), 1);
+    assert_eq!(plan.foreign, 0);
 }

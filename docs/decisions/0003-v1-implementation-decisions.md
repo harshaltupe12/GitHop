@@ -24,7 +24,20 @@ from Plan.md / Design.md. Each can be revisited.
 4. **Fix with already-pushed offenders: fix the unpushed ones, report the pushed ones.**
    Plan §7.5 / Design §8.4 said "refuse"; that would make Fix unusable forever in any
    repo where one bad commit was ever pushed. Pushed commits are still never touched.
-   `pushed_offenders` = recent pushed commits on HEAD using *another profile's* email.
+   **A commit email is "wrong" only when it is one of the user's own identities** and
+   not the owning profile's: any other profile's email, the global `user.email`
+   (`author.email`/`committer.email`), the email in `gitconfig.original`, `$EMAIL`, or
+   git's auto-detected `<user>@<host>` / `(none)` ident — case-insensitive, the same
+   rule for the push check and Fix (`check::identity_rules`). Someone else's commits (a
+   merged PR, `git am`, a cherry-pick) never block a push and Fix never re-stamps
+   them; when only the committer is wrong, only the committer changes and the foreign
+   author is kept exactly. Annotated tags' tagger emails follow the same rule on push.
+   **"Pushed" is conservative**: reachable from any remote-tracking ref, any tag
+   (local ones too), a sha the pre-push check recorded in `.git/githop/pushed`, or an
+   upstream that has no remote-tracking ref (Fix refuses on that branch; other such
+   branches count as pushed up to their tip). Shallow clones are refused unless the
+   branch has a remote-tracking upstream.
+   `pushed_offenders` = recent pushed commits on HEAD using another of the user's emails.
 5. **Fix backups: keep the newest 10 per branch** (refs under `refs/githop/backup/`).
 6. **`scan --apply` pins only owner/folder matches**; default-only matches need
    `--include-default`, so an office repo can't be pinned to a personal default by accident.

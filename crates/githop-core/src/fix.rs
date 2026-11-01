@@ -7,15 +7,35 @@
 //!
 //! # Which commits are touched
 //!
-//! Only commits on the current branch that are on **no** remote-tracking ref
-//! (`git rev-list HEAD --not --remotes`). Inside that set a commit is recreated
-//! when it is an offender (author or committer email ≠ the profile's email,
-//! case-insensitive; committer `noreply@github.com` allowed — same rule as the
-//! push check) **or** one of its parents was recreated. Unpushed commits before
-//! the first offender keep their hashes; pushed commits are never recreated,
-//! even when an unpushed merge has a pushed parent (that parent is kept as is).
+//! Only commits on the current branch that are **not pushed**. "Pushed" is
+//! conservative (Review 2026-11-01 #2, CLAUDE.md rule 7) — a commit is pushed
+//! when it is reachable from any of:
+//!
+//! - a remote-tracking ref (`--remotes`);
+//! - any tag, local tags included (`--tags`);
+//! - a sha the pre-push check recorded in `<common dir>/githop/pushed`
+//!   ([`crate::check::push::PUSHED_FILE`]);
+//! - the tip of any *other* local branch whose configured upstream
+//!   (`branch.<b>.remote` + `branch.<b>.merge`) has no remote-tracking ref and
+//!   no recorded push (single-branch clones, URL remotes, pruned branches).
+//!
+//! When the **current** branch is in that last state, Fix refuses
+//! ([`FixBlocker::PushedUnknown`]); in a shallow clone it refuses unless the
+//! branch has a live remote-tracking upstream ([`FixBlocker::Shallow`]).
+//!
+//! Inside the unpushed set a commit is recreated when it is an offender **or**
+//! one of its parents was recreated. Offenders follow
+//! [`crate::check::identity_rules`]: an email is wrong only when it is one of
+//! the user's own identities and not the profile's — someone else's commits
+//! are never offenders. Only the wrong fields change: a wrong author gets the
+//! profile's name/email, a wrong committer the profile's identity and a new
+//! date; every other field (a colleague's authorship, a correct committer and
+//! its date) is copied exactly. Unpushed commits before the first offender keep
+//! their hashes; pushed commits are never recreated, even when an unpushed
+//! merge has a pushed parent (that parent is kept as is). A pushed commit can't
+//! descend from an unpushed one, so the rewrite set never contains one.
 //! Before anything is written the minimal recreated commits are checked again
-//! with `for-each-ref --contains … refs/remotes/` (Plan D6, CLAUDE.md rule 7).
+//! with `for-each-ref --contains … refs/remotes/ refs/tags/` (Plan D6).
 //!
 //! # How the rewrite works — plumbing, not `git rebase`
 //!
@@ -53,7 +73,9 @@
 //!
 //! Known limits: commit signatures (`gpgsig`) and `mergetag` headers are
 //! dropped from recreated commits ([`FixPlan::signed`] counts them so callers
-//! can warn); remote-tracking refs are only as fresh as the last fetch.
+//! can warn); remote-tracking refs are only as fresh as the last fetch; a push
+//! that skipped GitHop's hook (`--no-verify`, before install) to a ref with no
+//! remote-tracking ref and no upstream config can't be seen.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -64,7 +86,8 @@ use serde::{Deserialize, Serialize};
 use time::macros::format_description;
 use time::OffsetDateTime;
 
-use crate::check::push::{find_offenders, LogCommit, OffendingCommit};
+use crate::check::identity_rules::{find_offenders, IdentityRules};
+use crate::check::push::{read_pushed, LogCommit, OffendingCommit, PushedEntry};
 use crate::error::{CoreError, Result};
 use crate::git::Git;
 use crate::gitconfig::ConfigSnapshot;
@@ -99,6 +122,11 @@ pub enum FixBlocker {
     DirtyTree,
     /// More than [`MAX_REWRITE`] commits would be recreated.
     TooManyCommits,
+    /// The branch has an upstream GitHop can't see (no remote-tracking ref, no
+    /// recorded push), so it can't tell which commits are pushed.
+    PushedUnknown,
+    /// Shallow clone without a remote-tracking upstream for the branch.
+    Shallow,
 }
 
 /// What `fix` would do. Serde shape per `app/IPC.md` (`FixPlan`), plus the
@@ -114,10 +142,11 @@ pub struct FixPlan {
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_email: Option<String>,
-    /// Unpushed commits with the wrong identity — these get re-stamped. Newest first.
+    /// Unpushed commits that use one of the user's other emails — these get
+    /// re-stamped. Someone else's commits are never listed. Newest first.
     pub offenders: Vec<OffendingCommit>,
-    /// Recent pushed commits on this branch that use another profile's email.
-    /// Never touched; shown so the user knows. Newest first.
+    /// Recent pushed commits on this branch that use one of the user's other
+    /// emails. Never touched; shown so the user knows. Newest first.
     pub pushed_offenders: Vec<OffendingCommit>,
     /// Set when the fix can't run now: a full sentence with the next step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,7 +154,8 @@ pub struct FixPlan {
     /// Extra: machine-readable kind of `blocked_reason`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<FixBlocker>,
-    /// Extra: unpushed commits checked on this branch.
+    /// Extra: unpushed commits checked on this branch (not reachable from a
+    /// remote-tracking ref, a tag, a recorded push or an untracked upstream).
     #[serde(default)]
     pub unpushed: usize,
     /// Extra: commits that will get new hashes (offenders + unpushed commits after them).
@@ -134,9 +164,14 @@ pub struct FixPlan {
     /// Extra: signed commits among those — their signatures will be dropped.
     #[serde(default)]
     pub signed: usize,
-    /// Extra: the repo has remote-tracking refs. `false` = every commit counts as unpushed.
+    /// Extra: the repo has remote-tracking refs. `false` = only tags and
+    /// recorded pushes mark commits as pushed.
     #[serde(default)]
     pub has_remote_refs: bool,
+    /// Extra: unpushed commits on this branch authored by someone else. Never
+    /// re-stamped (they only get a new id when they sit on top of an offender).
+    #[serde(default)]
+    pub foreign: usize,
 }
 
 impl FixPlan {
@@ -164,6 +199,11 @@ pub struct FixResult {
     /// Extra: branch head after the fix.
     #[serde(default)]
     pub new_head: String,
+    /// Extra: the new head fast-forwards from every last known remote value of
+    /// the branch (its remote-tracking upstream and its last recorded push), or
+    /// none is known — so a plain `git push` will be accepted.
+    #[serde(default)]
+    pub fast_forward: bool,
 }
 
 /// Test-only failure injection for [`apply_with_fault`].
@@ -209,10 +249,11 @@ pub fn apply_with_fault(
     if plan.offenders.is_empty() {
         return Err(CoreError::FixRefused(NOTHING_TO_FIX.to_string()));
     }
-    let (Some(branch_ref), Some(head), Some(profile)) = (
+    let (Some(branch_ref), Some(head), Some(profile), Some(rules)) = (
         analysis.state.branch_ref.as_deref(),
         analysis.state.head.as_deref(),
         analysis.profile.as_ref(),
+        analysis.rules.as_ref(),
     ) else {
         return Err(CoreError::FixRefused(NOTHING_TO_FIX.to_string()));
     };
@@ -221,18 +262,24 @@ pub fn apply_with_fault(
         plan.offenders.iter().map(|o| (o.sha.as_str(), o)).collect();
     let rewrite = rewrite_set(&analysis.commits, &offenders);
 
-    // Rule 7 double-check: nothing we recreate may be on a remote.
+    // Rule 7 double-check: nothing we recreate may be on a remote or a tag.
     let minimal: Vec<&str> = analysis
         .commits
         .iter()
         .filter(|c| rewrite.contains(&c.sha) && !c.parents.iter().any(|p| rewrite.contains(p)))
         .map(|c| c.sha.as_str())
         .collect();
-    if let Some(remote) = remote_containing(&git, root, &minimal)? {
+    if let Some(found) = remote_containing(&git, root, &minimal)? {
+        let place = match found.strip_prefix("refs/tags/") {
+            Some(tag) => format!("tag {tag}"),
+            None => found
+                .strip_prefix("refs/remotes/")
+                .unwrap_or(&found)
+                .to_string(),
+        };
         return Err(CoreError::FixRefused(format!(
-            "Some of these commits are already on {}. GitHop never changes pushed commits, \
-             so nothing was changed.",
-            remote.strip_prefix("refs/remotes/").unwrap_or(&remote)
+            "Some of these commits are already on {place}. GitHop never changes pushed commits, \
+             so nothing was changed."
         )));
     }
 
@@ -245,6 +292,8 @@ pub fn apply_with_fault(
         rewrite: &rewrite,
         offenders: &offenders,
         profile,
+        rules,
+        negatives: &analysis.boundary.negatives,
         branch_ref,
         head,
         backup_ref: &backup_ref,
@@ -274,6 +323,7 @@ pub fn apply_with_fault(
     );
     // Housekeeping only: a failure here must not turn a good fix into an error.
     let _ = prune(&git, root);
+    let fast_forward = fast_forwards(&git, root, &analysis.boundary.head_known, &new_head);
 
     Ok(FixResult {
         undo_hint: format!("githop fix --undo {backup_ref}"),
@@ -282,6 +332,16 @@ pub fn apply_with_fault(
         recreated: rewrite.len(),
         old_head: head.to_string(),
         new_head,
+        fast_forward,
+    })
+}
+
+/// Every known remote value of the branch is an ancestor of `new_head`.
+/// Unknown (git error) counts as "no".
+fn fast_forwards(git: &Git, root: &Path, known: &[String], new_head: &str) -> bool {
+    known.iter().all(|k| {
+        git.output(root, &["merge-base", "--is-ancestor", k, new_head], None)
+            .is_ok_and(|o| o.status.success())
     })
 }
 
@@ -412,8 +472,12 @@ struct Analysis {
     plan: FixPlan,
     state: State,
     profile: Option<Profile>,
+    /// Which emails are wrong (`None` when no profile owns the repo).
+    rules: Option<IdentityRules>,
     /// Unpushed commits on HEAD, parents before children.
     commits: Vec<RawCommit>,
+    /// What counts as pushed besides remote-tracking refs and tags.
+    boundary: Boundary,
 }
 
 /// Where HEAD is.
@@ -421,10 +485,28 @@ struct State {
     root: PathBuf,
     /// Per-worktree git dir (where `rebase-merge/`, `MERGE_HEAD`… live).
     git_dir: PathBuf,
+    /// Common git dir (shared by worktrees: `shallow`, `githop/pushed`).
+    common_dir: PathBuf,
     /// `refs/heads/<branch>`; `None` when detached.
     branch_ref: Option<String>,
     /// HEAD commit; `None` on an unborn branch.
     head: Option<String>,
+}
+
+/// Pushed commits that `--remotes --tags` can't see.
+#[derive(Debug, Default)]
+struct Boundary {
+    /// Extra "pushed" commits, fed to `rev-list` as `^<sha>` on stdin: recorded
+    /// pushes that still exist locally, and tips of other branches whose
+    /// upstream has no remote-tracking ref and no recorded push.
+    negatives: Vec<String>,
+    /// The current branch's upstream can't be seen: the reason to refuse.
+    head_unknown: Option<String>,
+    /// The current branch has an existing remote-tracking upstream.
+    head_tracked: bool,
+    /// Last known remote values of the current branch (tracking ref name,
+    /// last recorded sha) for [`FixResult::fast_forward`].
+    head_known: Vec<String>,
 }
 
 fn analyze(git: &Git, cwd: &Path, paths: &Paths) -> Result<Analysis> {
@@ -444,6 +526,9 @@ fn analyze(git: &Git, cwd: &Path, paths: &Paths) -> Result<Analysis> {
         .as_deref()
         .and_then(|id| store.profiles().get(id))
         .cloned();
+    let rules = profile
+        .as_ref()
+        .map(|p| IdentityRules::for_repo(&git, paths, store.profiles(), p, &snapshot));
 
     let mut plan = FixPlan {
         repo: to_slash(&root),
@@ -461,6 +546,7 @@ fn analyze(git: &Git, cwd: &Path, paths: &Paths) -> Result<Analysis> {
         rewrite_count: 0,
         signed: 0,
         has_remote_refs: false,
+        foreign: 0,
     };
 
     let mut blocker: Option<(FixBlocker, String)> = None;
@@ -482,24 +568,19 @@ fn analyze(git: &Git, cwd: &Path, paths: &Paths) -> Result<Analysis> {
     }
 
     let mut commits = Vec::new();
-    if let (Some(head), Some(p)) = (state.head.as_deref(), profile.as_ref()) {
+    let mut boundary = Boundary::default();
+    if let (Some(head), Some(rules)) = (state.head.as_deref(), rules.as_ref()) {
         plan.has_remote_refs = has_remote_refs(&git, &root)?;
-        let shas = rev_list(
-            &git,
-            &root,
-            &[
-                "rev-list",
-                "--topo-order",
-                "--reverse",
-                head,
-                "--not",
-                "--remotes",
-            ],
-        )?;
+        boundary = pushed_boundary(&git, &state, &snapshot)?;
+        let shas = unpushed_list(&git, &root, head, &boundary.negatives)?;
         commits = read_commits(&git, &root, &shas)?;
         plan.unpushed = commits.len();
         let log: Vec<LogCommit> = commits.iter().map(RawCommit::log_commit).collect();
-        let mut offenders = find_offenders(&log, &p.email);
+        plan.foreign = log
+            .iter()
+            .filter(|c| rules.is_foreign(&c.author_email))
+            .count();
+        let mut offenders = find_offenders(&log, rules);
         offenders.reverse(); // newest first, like `git log`
         let by_sha: HashMap<&str, &OffendingCommit> =
             offenders.iter().map(|o| (o.sha.as_str(), o)).collect();
@@ -510,13 +591,20 @@ fn analyze(git: &Git, cwd: &Path, paths: &Paths) -> Result<Analysis> {
             .filter(|c| c.signed && rewrite.contains(&c.sha))
             .count();
         plan.offenders = offenders;
-        if plan.has_remote_refs {
-            plan.pushed_offenders = pushed_offenders(&git, &root, head, &commits, p, &store)?;
-        }
+        plan.pushed_offenders = pushed_offenders(&git, &root, head, &commits, rules)?;
     }
 
     if blocker.is_none() && !plan.offenders.is_empty() {
-        if is_dirty(&git, &root)? {
+        if let Some(reason) = boundary.head_unknown.clone() {
+            blocker = Some((FixBlocker::PushedUnknown, reason));
+        } else if state.common_dir.join("shallow").exists() && !boundary.head_tracked {
+            blocker = Some((
+                FixBlocker::Shallow,
+                "This repo is a shallow clone, so GitHop can't confirm these commits were never \
+                 pushed. Nothing was changed. Run: git fetch --unshallow, then try again."
+                    .to_string(),
+            ));
+        } else if is_dirty(&git, &root)? {
             blocker = Some((FixBlocker::DirtyTree, DIRTY.to_string()));
         } else if plan.rewrite_count > MAX_REWRITE {
             blocker = Some((
@@ -537,29 +625,174 @@ fn analyze(git: &Git, cwd: &Path, paths: &Paths) -> Result<Analysis> {
         plan,
         state,
         profile,
+        rules,
         commits,
+        boundary,
     })
 }
 
-/// Recent pushed commits on HEAD whose wrong email belongs to another profile.
+/// Commits on `tip` that aren't pushed, parents first: `rev-list --topo-order
+/// --reverse <tip> --not --remotes --tags`, plus `^<sha>` for each of
+/// `negatives` on stdin (no command-line length limit). One spawn.
+fn unpushed_list(git: &Git, root: &Path, tip: &str, negatives: &[String]) -> Result<Vec<String>> {
+    let input: String = negatives.iter().map(|n| format!("^{n}\n")).collect();
+    let out = run_piped(
+        git,
+        root,
+        &[
+            "rev-list",
+            "--topo-order",
+            "--reverse",
+            "--stdin",
+            tip,
+            "--not",
+            "--remotes",
+            "--tags",
+        ],
+        input.into_bytes(),
+    )?;
+    Ok(String::from_utf8_lossy(&out)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Work out the pushed commits `--remotes --tags` doesn't cover (see the
+/// module docs). Spawns: one `for-each-ref`, plus one `cat-file --batch-check`
+/// when the pushed record isn't empty.
+fn pushed_boundary(git: &Git, state: &State, snapshot: &ConfigSnapshot) -> Result<Boundary> {
+    let root = state.root.as_path();
+    let recorded = read_pushed(&state.common_dir)
+        .map_err(|e| CoreError::io(crate::check::push::pushed_record_path(&state.common_dir), e))?;
+    let mut b = Boundary {
+        negatives: existing_objects(git, root, &recorded)?,
+        ..Boundary::default()
+    };
+    let out = git.run_text(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:track)",
+            "refs/heads/",
+        ],
+    )?;
+    let head_branch = state.branch_ref.as_deref();
+    for line in out.lines() {
+        let mut f = line.split('\0');
+        let (Some(refname), Some(tip), Some(upstream), track) =
+            (f.next(), f.next(), f.next(), f.next().unwrap_or_default())
+        else {
+            continue;
+        };
+        let branch = short_branch(refname);
+        let remote = snapshot.get(&format!("branch.{branch}.remote"));
+        let merge = snapshot.get(&format!("branch.{branch}.merge"));
+        let (Some(remote), Some(merge)) = (remote, merge) else {
+            continue; // no upstream: only the record can tell
+        };
+        if remote == "." || remote.is_empty() || merge.is_empty() {
+            continue; // upstream is a local branch
+        }
+        let is_head = head_branch == Some(refname);
+        let gone = track.contains("gone");
+        let last_recorded = recorded
+            .iter()
+            .rev()
+            .find(|e| e.remote == remote && e.remote_ref == merge);
+        if is_head {
+            if !upstream.is_empty() && !gone {
+                b.head_tracked = true;
+                b.head_known.push(upstream.to_string());
+            }
+            if let Some(e) = last_recorded {
+                b.head_known.push(e.sha.clone());
+            }
+        }
+        if (!upstream.is_empty() && !gone) || last_recorded.is_some() {
+            continue; // covered by --remotes or by the recorded shas
+        }
+        if is_head {
+            b.head_unknown = Some(unknown_upstream_reason(
+                branch,
+                remote,
+                merge,
+                gone.then_some(upstream),
+                snapshot,
+            ));
+        } else if !b.negatives.iter().any(|n| n == tip) {
+            b.negatives.push(tip.to_string());
+        }
+    }
+    Ok(b)
+}
+
+/// Why Fix refuses when the current branch's upstream can't be seen.
+fn unknown_upstream_reason(
+    branch: &str,
+    remote: &str,
+    merge: &str,
+    gone: Option<&str>,
+    snapshot: &ConfigSnapshot,
+) -> String {
+    let short = merge.strip_prefix("refs/heads/").unwrap_or(merge);
+    let named = snapshot.remotes().iter().any(|r| r == remote);
+    match gone {
+        Some(tracking) => format!(
+            "{branch} was pushed to {remote}, but {} is gone, so GitHop can't tell which commits \
+             are already pushed. Nothing was changed. Run: git fetch {remote}, then try again.",
+            tracking.strip_prefix("refs/remotes/").unwrap_or(tracking)
+        ),
+        None if named => format!(
+            "{branch} was pushed to {remote}, but this clone doesn't track {remote}/{short}, so \
+             GitHop can't tell which commits are already pushed. Nothing was changed. \
+             Run: git remote set-branches --add {remote} {short}, then git fetch {remote}, \
+             then try again."
+        ),
+        None => format!(
+            "{branch} was pushed to {remote}, and GitHop can't tell which of its commits are \
+             already there. Nothing was changed."
+        ),
+    }
+}
+
+/// The recorded shas that exist in this repo (a pushed branch may have been
+/// deleted and its commits pruned), de-duplicated. One spawn when non-empty.
+fn existing_objects(git: &Git, root: &Path, recorded: &[PushedEntry]) -> Result<Vec<String>> {
+    let mut shas: Vec<&str> = Vec::new();
+    for e in recorded {
+        if !shas.contains(&e.sha.as_str()) {
+            shas.push(&e.sha);
+        }
+    }
+    if shas.is_empty() {
+        return Ok(Vec::new());
+    }
+    let input: String = shas.iter().map(|s| format!("{s}\n")).collect();
+    let out = run_piped(
+        git,
+        root,
+        &["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+        input.into_bytes(),
+    )?;
+    Ok(String::from_utf8_lossy(&out)
+        .lines()
+        .filter_map(|l| {
+            let (sha, kind) = l.trim().split_once(' ')?;
+            (matches!(kind, "commit" | "tag") && is_hex(sha)).then(|| sha.to_string())
+        })
+        .collect())
+}
+
+/// Recent pushed commits on HEAD that use one of the user's other emails.
 fn pushed_offenders(
     git: &Git,
     root: &Path,
     head: &str,
     unpushed: &[RawCommit],
-    profile: &Profile,
-    store: &Store,
+    rules: &IdentityRules,
 ) -> Result<Vec<OffendingCommit>> {
-    let others: Vec<String> = store
-        .profiles()
-        .profiles
-        .iter()
-        .filter(|o| o.id != profile.id)
-        .map(|o| o.email.trim().to_lowercase())
-        .collect();
-    if others.is_empty() {
-        return Ok(Vec::new());
-    }
     let count = format!("--max-count={}", unpushed.len() + PUSHED_SCAN);
     let recent = rev_list(git, root, &["rev-list", &count, head])?;
     let skip: HashSet<&str> = unpushed.iter().map(|c| c.sha.as_str()).collect();
@@ -570,14 +803,7 @@ fn pushed_offenders(
         .collect();
     let commits = read_commits(git, root, &pushed)?;
     let log: Vec<LogCommit> = commits.iter().map(RawCommit::log_commit).collect();
-    let is_other = |e: &str| others.contains(&e.trim().to_lowercase());
-    Ok(find_offenders(&log, &profile.email)
-        .into_iter()
-        .filter(|o| {
-            (o.author_mismatch && is_other(&o.author_email))
-                || (o.committer_mismatch && is_other(&o.committer_email))
-        })
-        .collect())
+    Ok(find_offenders(&log, rules))
 }
 
 /// Commits to recreate: offenders and every unpushed descendant of one.
@@ -604,6 +830,9 @@ struct Rewrite<'a> {
     rewrite: &'a HashSet<String>,
     offenders: &'a HashMap<&'a str, &'a OffendingCommit>,
     profile: &'a Profile,
+    rules: &'a IdentityRules,
+    /// Extra pushed commits (see [`Boundary::negatives`]).
+    negatives: &'a [String],
     branch_ref: &'a str,
     head: &'a str,
     backup_ref: &'a str,
@@ -658,12 +887,15 @@ impl Rewrite<'_> {
     }
 
     /// `git commit-tree` with the same tree and message; identity via env only.
+    /// Only the wrong fields change: a wrong author → the profile's name and
+    /// email (author date kept); a wrong committer → the profile's identity
+    /// and the current date. Anything else (someone else's authorship, a right
+    /// committer and its date) is copied exactly.
     fn write_commit(&self, c: &RawCommit, map: &HashMap<String, String>) -> Result<String> {
         let p = self.profile;
-        let author_wrong = self
-            .offenders
-            .get(c.sha.as_str())
-            .is_some_and(|o| o.author_mismatch);
+        let off = self.offenders.get(c.sha.as_str());
+        let author_wrong = off.is_some_and(|o| o.author_mismatch);
+        let committer_wrong = off.is_some_and(|o| o.committer_mismatch);
         let (author_name, author_email) = if author_wrong {
             (p.name.as_str(), p.email.as_str())
         } else {
@@ -673,13 +905,23 @@ impl Rewrite<'_> {
             .git
             .clone()
             .env("GIT_AUTHOR_NAME", author_name)
-            .env("GIT_AUTHOR_EMAIL", author_email)
-            .env("GIT_COMMITTER_NAME", &p.name)
-            .env("GIT_COMMITTER_EMAIL", &p.email)
-            .env_remove("GIT_COMMITTER_DATE");
+            .env("GIT_AUTHOR_EMAIL", author_email);
         g = match &c.author.date {
             Some(d) => g.env("GIT_AUTHOR_DATE", d),
             None => g.env_remove("GIT_AUTHOR_DATE"),
+        };
+        g = if committer_wrong {
+            g.env("GIT_COMMITTER_NAME", &p.name)
+                .env("GIT_COMMITTER_EMAIL", &p.email)
+                .env_remove("GIT_COMMITTER_DATE")
+        } else {
+            let g = g
+                .env("GIT_COMMITTER_NAME", &c.committer.name)
+                .env("GIT_COMMITTER_EMAIL", &c.committer.email);
+            match &c.committer.date {
+                Some(d) => g.env("GIT_COMMITTER_DATE", d),
+                None => g.env_remove("GIT_COMMITTER_DATE"),
+            }
         };
         let mut args: Vec<String> = Vec::new();
         if let Some(enc) = &c.encoding {
@@ -711,24 +953,13 @@ impl Rewrite<'_> {
         if trees.len() != 2 || trees[0] != trees[1] {
             return Err(verify_failed("the files would change"));
         }
-        let shas = rev_list(
-            self.git,
-            self.root,
-            &[
-                "rev-list",
-                "--topo-order",
-                "--reverse",
-                new_head,
-                "--not",
-                "--remotes",
-            ],
-        )?;
+        let shas = unpushed_list(self.git, self.root, new_head, self.negatives)?;
         if shas.len() != self.expected_unpushed {
             return Err(verify_failed("the number of commits would change"));
         }
         let commits = read_commits(self.git, self.root, &shas)?;
         let log: Vec<LogCommit> = commits.iter().map(RawCommit::log_commit).collect();
-        if !find_offenders(&log, &self.profile.email).is_empty() {
+        if !find_offenders(&log, self.rules).is_empty() {
             return Err(verify_failed("some commits still use the wrong email"));
         }
         Ok(())
@@ -898,6 +1129,7 @@ fn fix_git(git: &Git) -> Git {
 fn inspect(git: &Git, cwd: &Path) -> Result<State> {
     let repo = Repo::discover(git, cwd)?;
     let root = repo.root().to_path_buf();
+    let common_dir = repo.common_dir().to_path_buf();
     let git_dir = git.run_text(&root, &["rev-parse", "--absolute-git-dir"])?;
     let git_dir = PathBuf::from(git_dir.trim());
     let args = ["symbolic-ref", "-q", "HEAD"];
@@ -913,6 +1145,7 @@ fn inspect(git: &Git, cwd: &Path) -> Result<State> {
     Ok(State {
         root,
         git_dir,
+        common_dir,
         branch_ref,
         head,
     })
@@ -989,7 +1222,7 @@ fn has_remote_refs(git: &Git, root: &Path) -> Result<bool> {
     Ok(!out.trim().is_empty())
 }
 
-/// First remote-tracking ref containing any of `commits`.
+/// First remote-tracking ref or tag containing any of `commits`.
 fn remote_containing(git: &Git, root: &Path, commits: &[&str]) -> Result<Option<String>> {
     if commits.is_empty() {
         return Ok(None);
@@ -1000,6 +1233,7 @@ fn remote_containing(git: &Git, root: &Path, commits: &[&str]) -> Result<Option<
         args.push(c);
     }
     args.push("refs/remotes/");
+    args.push("refs/tags/");
     let out = git.run_text(root, &args)?;
     Ok(out
         .lines()

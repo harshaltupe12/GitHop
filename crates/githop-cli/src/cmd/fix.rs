@@ -104,10 +104,19 @@ pub fn run(ctx: &Ctx, args: FixArgs) -> Result<Exit> {
         ui.json_out(&json!({ "plan": plan, "result": result }))?;
         return Ok(Exit::Ok);
     }
-    ui.ok(&format!(
-        "{} fixed. You can push now.",
-        commits(result.rewritten)
-    ));
+    if result.fast_forward {
+        ui.ok(&format!(
+            "{} fixed. You can push now.",
+            commits(result.rewritten)
+        ));
+    } else {
+        ui.ok(&format!("{} fixed.", commits(result.rewritten)));
+        let branch = plan.branch.as_deref().unwrap_or("This branch");
+        ui.warn(&format!(
+            "{branch} and its remote have both changed, so a plain push will be rejected."
+        ));
+        ui.hint("  Run: git pull --rebase, then git push");
+    }
     ui.line(&format!("  Backup: {}", result.backup_ref));
     ui.hint("  Undo: githop fix --undo");
     Ok(Exit::Ok)
@@ -222,6 +231,16 @@ fn show_plan(ctx: &Ctx, plan: &FixPlan, profiles: &ProfileSet, owner: Option<&Pr
                 commits(later),
                 verb(later, "gets", "get")
             ));
+        }
+        if plan.foreign > 0 {
+            ui.line(&if plan.foreign == 1 {
+                "1 commit by someone else keeps its author.".to_string()
+            } else {
+                format!(
+                    "{} commits by other people keep their authors.",
+                    plan.foreign
+                )
+            });
         }
         if !plan.has_remote_refs {
             ui.warn(&format!(
