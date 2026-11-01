@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { cx } from '../lib/cx';
+import { usePresence } from '../lib/motion';
 import { Ico, Icons, type Icon } from './icons';
 import { Tooltip } from './Tooltip';
 
@@ -58,6 +59,7 @@ export function MenuButton({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const presence = usePresence(open);
 
   const itemEls = () =>
     Array.from(
@@ -125,7 +127,7 @@ export function MenuButton({
       onClick={() => setOpen((o) => !o)}
       onKeyDown={onTriggerKey}
       className={cx(
-        'transition-ui',
+        'press',
         iconOnly &&
           cx(
             'inline-flex items-center justify-center rounded-md text-ink-muted hover:bg-surface-hover active:bg-surface-pressed',
@@ -141,18 +143,29 @@ export function MenuButton({
   return (
     <div ref={wrapRef} className="relative inline-flex">
       {iconOnly ? <Tooltip content={label}>{button}</Tooltip> : button}
-      {open ? (
+      {presence.mounted ? (
         <div
           id={menuId}
           ref={menuRef}
           role="menu"
           aria-label={heading ?? label}
+          aria-hidden={presence.exiting || undefined}
           tabIndex={-1}
           onKeyDown={onMenuKey}
+          data-state={presence.state}
+          onAnimationEnd={presence.onAnimationEnd}
           className={cx(
-            'gh-menu menu-in absolute z-40 min-w-[13rem] rounded-lg border border-line bg-surface p-1 shadow-float',
+            'gh-menu gh-pop absolute z-40 min-w-[13rem] rounded-lg border border-line bg-surface p-1 shadow-float',
             align === 'right' ? 'right-0' : 'left-0',
             placement === 'bottom' ? 'top-full mt-1' : 'bottom-full mb-1',
+            // Grow out of the corner that touches the trigger.
+            placement === 'bottom'
+              ? align === 'right'
+                ? 'origin-top-right'
+                : 'origin-top-left'
+              : align === 'right'
+                ? 'origin-bottom-right'
+                : 'origin-bottom-left',
           )}
         >
           {heading ? (

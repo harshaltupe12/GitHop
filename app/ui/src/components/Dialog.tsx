@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { cx } from '../lib/cx';
+import { usePresence } from '../lib/motion';
 import { S } from '../strings';
 import { Button, type ButtonVariant } from './Button';
 import { Field, TextInput } from './Field';
@@ -43,6 +44,11 @@ export function Dialog({
   const opener = useRef<Element | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  // Stays mounted through its exit animation (MOTION.md); while closing it shows
+  // what it showed last, so content cleared by the parent doesn't collapse mid-fade.
+  const presence = usePresence(open);
+  const shown = useRef({ title, children, footer });
+  if (open) shown.current = { title, children, footer };
 
   useEffect(() => {
     if (!open) return;
@@ -61,9 +67,11 @@ export function Dialog({
     };
   }, [open, initialFocus]);
 
-  if (!open) return null;
+  if (!presence.mounted) return null;
+  const view = shown.current;
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!open) return;
     if (e.key === 'Escape') {
       e.stopPropagation();
       onCloseRef.current();
@@ -84,7 +92,12 @@ export function Dialog({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+    <div
+      data-state={presence.state}
+      aria-hidden={presence.exiting || undefined}
+      onAnimationEnd={presence.onAnimationEnd}
+      className="gh-scrim fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
+    >
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- dialog owns Esc and the focus trap */}
       <div
         ref={panel}
@@ -95,17 +108,19 @@ export function Dialog({
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className={cx(
-          'gh-dialog menu-in flex max-h-full w-full flex-col rounded-lg bg-surface p-6 shadow-float',
+          'gh-dialog flex max-h-full w-full flex-col rounded-lg bg-surface p-6 shadow-float',
           wide ? 'max-w-[40rem]' : 'max-w-dialog',
         )}
       >
         <h2 id={titleId} className="text-heading text-ink">
-          {title}
+          {view.title}
         </h2>
         <div id={bodyId} className="mt-3 min-h-0 overflow-y-auto text-body text-ink">
-          {children}
+          {view.children}
         </div>
-        {footer ? <div className="mt-6 flex flex-wrap justify-end gap-2">{footer}</div> : null}
+        {view.footer ? (
+          <div className="mt-6 flex flex-wrap justify-end gap-2">{view.footer}</div>
+        ) : null}
       </div>
     </div>,
     document.body,

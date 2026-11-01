@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Avatar } from '../components/Avatar';
 import { Ico, Icons } from '../components/icons';
 import { cx } from '../lib/cx';
@@ -18,6 +18,9 @@ const KEY = 'tray-profiles';
 export function TrayMenu() {
   const { data, error } = useQuery<ProfileSet>(KEY, ipc.listProfiles);
   const listRef = useRef<HTMLDivElement>(null);
+  // The window is hidden, not closed: go transparent on blur so the next show
+  // starts from nothing and rises in again (MOTION.md), instead of popping.
+  const [phase, setPhase] = useState<'open' | 'hidden'>('open');
 
   useEffect(() => {
     const subs: Array<Promise<() => void>> = [];
@@ -26,8 +29,14 @@ export function TrayMenu() {
       ipc.onTrayDefaultChanged((set) => setQueryData(KEY, set)).catch(() => () => undefined),
     );
     subs.push(
-      ipc.onCurrentWindowBlur(() => void ipc.hideCurrentWindow()).catch(() => () => undefined),
+      ipc
+        .onCurrentWindowBlur(() => {
+          setPhase('hidden');
+          void ipc.hideCurrentWindow();
+        })
+        .catch(() => () => undefined),
     );
+    subs.push(ipc.onCurrentWindowFocus(() => setPhase('open')).catch(() => () => undefined));
     const onFocus = () => invalidate(KEY);
     window.addEventListener('focus', onFocus);
     return () => {
@@ -63,6 +72,7 @@ export function TrayMenu() {
       els[els.length - 1]?.focus();
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      setPhase('hidden');
       void ipc.hideCurrentWindow();
     }
   };
@@ -72,13 +82,14 @@ export function TrayMenu() {
       const set = await ipc.setDefault(id);
       setQueryData(KEY, set);
     } finally {
+      setPhase('hidden');
       void ipc.hideCurrentWindow();
     }
   };
 
   const list = data ? sortProfiles(data) : [];
   const itemCls =
-    'transition-ui flex min-h-8 w-full cursor-default items-center gap-2 rounded-md px-2 text-left text-body text-ink outline-offset-0 hover:bg-surface-hover';
+    'transition-ui flex min-h-8 w-full cursor-default items-center gap-2 rounded-md px-2 text-left text-body text-ink outline-offset-0 hover:bg-surface-hover active:bg-surface-pressed';
 
   return (
     <div
@@ -87,7 +98,8 @@ export function TrayMenu() {
       aria-label={S.tray.heading}
       tabIndex={-1}
       onKeyDown={onKey}
-      className="gh-menu flex w-full flex-col rounded-lg border border-line bg-surface p-1 shadow-float"
+      data-state={phase}
+      className="gh-menu gh-tray flex w-full flex-col rounded-lg border border-line bg-surface p-1 shadow-float"
     >
       <div className="px-2 pb-1 pt-1.5 text-small text-ink-muted" aria-hidden="true">
         {S.tray.heading}

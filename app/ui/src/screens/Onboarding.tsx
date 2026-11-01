@@ -35,6 +35,9 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
+  // Direction of the last step change, so the new step slides in from that side.
+  const [dir, setDir] = useState<{ step: number; dir?: 'forward' | 'back' }>({ step });
+  if (dir.step !== step) setDir({ step, dir: step > dir.step ? 'forward' : 'back' });
 
   useEffect(() => {
     writeJson(KEYS.onboardingStep, step);
@@ -247,7 +250,10 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
   }
 
   return (
-    <main className="fade-in flex h-full flex-col overflow-y-auto bg-bg" aria-labelledby="ob-title">
+    <main
+      className="fade-in flex h-full flex-col overflow-y-auto overflow-x-hidden bg-bg"
+      aria-labelledby="ob-title"
+    >
       <div className="mx-auto flex w-full max-w-[40rem] flex-1 flex-col px-6 py-8">
         <ol
           className="mb-8 flex items-center justify-center gap-2"
@@ -258,7 +264,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
               key={i}
               aria-current={i === step ? 'step' : undefined}
               className={cx(
-                'transition-colour-base h-2 rounded-full',
+                'gh-dot h-2 rounded-full',
                 i === step ? 'w-6 bg-aqua-strong' : i < step ? 'w-2 bg-aqua' : 'w-2 bg-line-input',
               )}
             >
@@ -266,10 +272,12 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
             </li>
           ))}
         </ol>
-        <h1 id="ob-title" ref={headRef} tabIndex={-1} className="mb-4 text-display text-ink">
-          {title}
-        </h1>
-        <div className="flex-1">{content}</div>
+        <div key={step} className="gh-step flex flex-1 flex-col" data-dir={dir.dir}>
+          <h1 id="ob-title" ref={headRef} tabIndex={-1} className="mb-4 text-display text-ink">
+            {title}
+          </h1>
+          <div className="flex-1">{content}</div>
+        </div>
         <div className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
           <div>
             {step > 0 && step < TOTAL - 1 ? (

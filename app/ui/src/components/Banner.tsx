@@ -47,7 +47,7 @@ export function Banner({
     <div
       role={role}
       className={cx(
-        'gh-banner flex w-full flex-wrap items-start gap-x-3 gap-y-1 rounded-md border px-3 py-2.5 text-body',
+        'gh-banner appear flex w-full flex-wrap items-start gap-x-3 gap-y-1 rounded-md border px-3 py-2.5 text-body',
         k.cls,
         className,
       )}

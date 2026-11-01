@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { cx } from '../lib/cx';
+import { tooltipGroup } from '../lib/motion';
 
 /**
  * Design §7.15: bg `text`, white `small` text, radius-sm, padding 4 8, 500 ms
@@ -29,10 +30,18 @@ export function Tooltip({
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
+  // Opened straight away because a neighbour was just open: no delay, no animation.
+  const [instant, setInstant] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
   const show = () => {
     window.clearTimeout(timer.current);
+    if (tooltipGroup.skipDelay()) {
+      setInstant(true);
+      setOpen(true);
+      return;
+    }
+    setInstant(false);
     timer.current = window.setTimeout(() => setOpen(true), 500);
   };
   const hide = () => {
@@ -43,11 +52,15 @@ export function Tooltip({
   useEffect(() => () => window.clearTimeout(timer.current), []);
   useEffect(() => {
     if (!open) return;
+    tooltipGroup.opened();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      tooltipGroup.closed();
+    };
   }, [open]);
 
   return (
@@ -67,9 +80,10 @@ export function Tooltip({
         id={id}
         role="tooltip"
         hidden={!open}
+        data-instant={instant || undefined}
         className={cx(
           'gh-tooltip pointer-events-none absolute left-1/2 z-50 w-max max-w-tooltip -translate-x-1/2 rounded-sm bg-ink px-2 py-1 text-small font-medium text-white shadow-float',
-          placement === 'top' ? 'bottom-full mb-1' : 'top-full mt-1',
+          placement === 'top' ? 'bottom-full mb-1 origin-bottom' : 'top-full mt-1 origin-top',
         )}
       >
         {content}

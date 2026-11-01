@@ -29,7 +29,7 @@ export const NavItem = forwardRef<
       aria-current={selected ? 'page' : undefined}
       aria-keyshortcuts={shortcut}
       className={cx(
-        'gh-nav transition-ui flex min-h-9 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body',
+        'gh-nav press flex min-h-9 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body',
         selected
           ? 'bg-aqua-tint font-medium text-aqua-ink'
           : 'text-ink-nav hover:bg-surface-hover active:bg-surface-pressed',

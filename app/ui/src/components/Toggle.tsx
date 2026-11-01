@@ -34,20 +34,18 @@ export function Toggle({
       disabled={disabled}
       onClick={() => !busy && onChange(!checked)}
       className={cx(
-        'gh-toggle transition-ui relative inline-flex h-[1.2857rem] w-[2.2857rem] shrink-0 items-center rounded-full border',
+        'gh-toggle press relative inline-flex h-[1.2857rem] w-[2.2857rem] shrink-0 items-center rounded-full border',
         checked ? 'border-aqua-strong bg-aqua' : 'border-line-input bg-line',
         'disabled:cursor-not-allowed disabled:opacity-60 aria-disabled:opacity-60',
       )}
     >
       <span
         aria-hidden="true"
+        // Slides 1rem with a transform when on (index.css .gh-toggle-knob), never `left`.
         className={cx(
-          'transition-ui absolute h-3 w-3 rounded-full bg-surface',
-          checked
-            ? 'left-[1.1429rem] border border-aqua-strong'
-            : 'left-0.5 border border-line-input',
+          'gh-toggle-knob absolute left-0.5 h-3 w-3 rounded-full border bg-surface',
+          checked ? 'border-aqua-strong' : 'border-line-input',
         )}
-        style={{ transitionProperty: 'left, background-color' }}
       />
     </button>
   );

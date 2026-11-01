@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cx } from '../lib/cx';
+import { useArrivals } from '../lib/motion';
 
 export type Column<T> = {
   key: string;
@@ -23,6 +24,8 @@ export function Table<T>({
   rowKey: (row: T) => string;
   className?: string;
 }) {
+  // Rows that arrive after the table first rendered fade in; the initial set never does.
+  const arrived = useArrivals(rows.map(rowKey));
   return (
     <div className={cx('overflow-x-auto rounded-lg border border-line bg-surface', className)}>
       <table className="w-full border-collapse text-body" aria-label={label}>
@@ -47,7 +50,10 @@ export function Table<T>({
           {rows.map((r) => (
             <tr
               key={rowKey(r)}
-              className="transition-ui border-b border-line-row last:border-b-0 hover:bg-surface-hover"
+              className={cx(
+                'transition-ui border-b border-line-row last:border-b-0 hover:bg-surface-hover',
+                arrived(rowKey(r)) && 'appear',
+              )}
             >
               {columns.map((c) => (
                 <td
