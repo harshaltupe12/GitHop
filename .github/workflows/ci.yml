@@ -31,6 +31,28 @@ jobs:
       - name: Test
         run: cargo test --all
 
+  perf:
+    name: Hook performance (Windows)
+    runs-on: windows-latest
+    # perf-baseline.json was recorded on a dev PC. Report-only until it is
+    # refreshed on this runner (benches/perf.ps1 -UpdateBaseline); then drop this.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Install hyperfine
+        run: cargo install hyperfine --locked
+      - name: Benchmark (isolated env, fails on > 20% p95 regression or budget miss)
+        shell: powershell
+        run: .\benches\perf.ps1 -Runs 60 -Check -Out perf-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-results
+          path: perf-results.json
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

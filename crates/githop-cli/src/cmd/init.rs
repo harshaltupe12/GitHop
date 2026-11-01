@@ -147,8 +147,15 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
     set.profiles.push(profile);
     set.default = Some(id.clone());
     set.normalize();
-    let settings = store.settings().clone();
-    store.save(&set, &settings)?;
+    let new_profile = set.get(&id).cloned();
+    store.update(|p, _| {
+        if let Some(np) = new_profile {
+            p.profiles.push(np);
+        }
+        p.default = Some(id.clone());
+        p.normalize();
+        Ok(())
+    })?;
 
     let saved = set.get(&id).cloned();
     if let Some(p) = &saved {

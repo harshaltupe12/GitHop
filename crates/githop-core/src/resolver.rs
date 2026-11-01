@@ -72,7 +72,18 @@ pub struct Resolution {
 ///   when a pin decides; the remote warnings (`UnknownRemoteFormat`,
 ///   `NonGithubHost`) are only emitted when the owner rule was actually consulted.
 /// - A `githop.remote` naming a remote without a URL falls back to `origin` / first.
-/// - `repo_root` is normalised purely (no canonicalisation, no file system access).
+/// - The remote's URL is its **first** `remote.<name>.url` (git fetch semantics).
+///   When that URL as written isn't a GitHub URL, `url.<base>.insteadOf` rules
+///   from the snapshot are applied (longest prefix wins, like git) and the
+///   rewritten URL is used if it parses — so `gh:acme/x` shorthands resolve,
+///   while a GitHub URL redirected to a mirror/local path keeps its owner.
+/// - Folder rules (review #5): each rule and `repo_root` are compared both as
+///   written (normalised) and canonicalised through the file system when the
+///   path exists, so a rule on a junction, `subst` drive or mapped drive matches
+///   the resolved path git reports, and vice versa. Decision: canonicalise at
+///   match time (a few `stat`-like calls, no spawns) rather than storing a
+///   second canonical copy in `profiles.toml` — the file format stays unchanged
+///   and a rule created before its folder existed still starts matching later.
 pub fn resolve(
     snapshot: &ConfigSnapshot,
     repo_root: &Path,
@@ -89,7 +100,7 @@ pub fn resolve(
     }
 
     let (remote_name, remote_url) = pick_remote(snapshot);
-    let remote = remote_url.and_then(parse_remote_url);
+    let remote = remote_url.and_then(|url| parse_remote(snapshot, url, github_aliases));
 
     let mut res = Resolution {
         profile_id: None,
@@ -201,22 +212,55 @@ fn pick_remote(snapshot: &ConfigSnapshot) -> (Option<String>, Option<&str>) {
     }
 }
 
+/// Parse the remote URL; apply `insteadOf` when the URL as written isn't GitHub.
+fn parse_remote(snapshot: &ConfigSnapshot, url: &str, aliases: &[String]) -> Option<RemoteInfo> {
+    let raw = parse_remote_url(url);
+    if raw.as_ref().is_some_and(|i| i.is_github(aliases)) {
+        return raw;
+    }
+    snapshot
+        .rewrite_url(url)
+        .and_then(|u| parse_remote_url(&u))
+        .or(raw)
+}
+
 /// Longest folder rule that contains `repo_root` (C6). Ties → first profile.
+/// Rules and root are tried as written and canonicalised (see [`resolve`]).
 fn folder_match<'a>(repo_root: &Path, set: &'a ProfileSet) -> Option<&'a str> {
-    let root_key = folder_key(&normalize_root(repo_root));
+    let root_keys = path_keys(&normalize_root(repo_root));
     let mut best: Option<(usize, &str)> = None;
     for profile in &set.profiles {
         for folder in &profile.folders {
             let Some(norm) = normalize_folder(folder) else {
                 continue;
             };
-            let key = folder_key(&norm);
-            if root_key.starts_with(&key) && best.is_none_or(|(len, _)| key.len() > len) {
-                best = Some((key.len(), profile.id.as_str()));
+            for key in path_keys(&norm) {
+                if root_keys.iter().any(|r| r.starts_with(&key))
+                    && best.is_none_or(|(len, _)| key.len() > len)
+                {
+                    best = Some((key.len(), profile.id.as_str()));
+                }
             }
         }
     }
     best.map(|(_, id)| id)
+}
+
+/// Comparison keys for a normalised absolute path: as written, plus the
+/// canonical (junctions/subst/mapped drives resolved) form when the path
+/// exists and differs. File system only, never a spawn.
+fn path_keys(normalized: &str) -> Vec<String> {
+    let mut keys = vec![folder_key(normalized)];
+    if !crate::paths::is_absolute_str(normalized) {
+        return keys;
+    }
+    if let Ok(canon) = dunce::canonicalize(Path::new(normalized)) {
+        let key = folder_key(&normalize_root(&canon));
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
 }
 
 /// Pure repo-root normalisation: forward slashes, `\\?\` stripped, duplicate
@@ -677,6 +721,108 @@ mod tests {
             r.warnings[2],
             ResolutionWarning::OwnerFolderDisagree { .. }
         ));
+    }
+
+    /// Review #7: git fetches from the first `remote.origin.url`.
+    #[test]
+    fn first_remote_url_decides_owner() {
+        let s = snap(vec![
+            origin("git@github.com:acme/x.git"),
+            origin("git@github.com:harshal/x.git"),
+        ]);
+        let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
+        assert_eq!(id(&r), Some("office"));
+        assert_eq!(r.remote.as_ref().map(|i| i.owner.as_str()), Some("acme"));
+    }
+
+    /// Review #7: `url.<base>.insteadOf` shorthands resolve to their owner.
+    #[test]
+    fn insteadof_shorthand_is_rewritten() {
+        let s = snap(vec![
+            entry(ConfigScope::Global, "url.git@github.com:.insteadof", "gh:"),
+            origin("gh:ACME/x"),
+        ]);
+        let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
+        assert_eq!(id(&r), Some("office"));
+        assert_eq!(r.source, Some(ResolutionSource::Owner));
+        assert_eq!(
+            r.remote.as_ref().map(|i| i.host.as_str()),
+            Some("github.com")
+        );
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+
+        // Without the rule the shorthand is a non-GitHub host "gh".
+        let s = snap(vec![origin("gh:ACME/x")]);
+        let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
+        assert_eq!(r.source, Some(ResolutionSource::Default));
+
+        // A GitHub URL redirected elsewhere (mirror, local path) keeps its owner.
+        let s = snap(vec![
+            entry(
+                ConfigScope::Global,
+                "url.C:/mirror/.insteadOf",
+                "https://github.com/",
+            ),
+            origin("https://github.com/harshal/x.git"),
+        ]);
+        let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
+        assert_eq!(id(&r), Some("personal"));
+        assert_eq!(r.source, Some(ResolutionSource::Owner));
+    }
+
+    /// Review #5: a folder rule on a junction matches the resolved path git
+    /// reports, and a rule on the real folder matches a root given via the junction.
+    #[cfg(windows)]
+    #[test]
+    fn folder_rules_match_through_junctions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let real = base.join("real work");
+        let repo = real.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let link = base.join("jwork");
+        let ok = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&link)
+            .arg(&real)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("skipping: couldn't create a junction");
+            return;
+        }
+        let slash = |p: &Path| to_slash(p);
+
+        // Rule written on the junction; git reports the resolved root.
+        let set = ProfileSet {
+            version: 1,
+            default: None,
+            profiles: vec![profile("office", &[], &[&slash(&link)])],
+        };
+        let r = resolve(&snap(vec![]), &repo, &set, &[]);
+        assert_eq!(id(&r), Some("office"));
+        assert_eq!(r.source, Some(ResolutionSource::Folder));
+
+        // Rule on the real folder; root given through the junction.
+        let set = ProfileSet {
+            version: 1,
+            default: None,
+            profiles: vec![profile("office", &[], &[&slash(&real)])],
+        };
+        let r = resolve(&snap(vec![]), &link.join("repo"), &set, &[]);
+        assert_eq!(id(&r), Some("office"));
+
+        // A sibling folder still doesn't match.
+        let set = ProfileSet {
+            version: 1,
+            default: None,
+            profiles: vec![profile("office", &[], &[&slash(&base.join("real"))])],
+        };
+        assert_eq!(id(&resolve(&snap(vec![]), &repo, &set, &[])), None);
     }
 
     #[test]

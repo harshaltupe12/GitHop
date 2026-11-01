@@ -12,7 +12,7 @@ scripts and tests. Types written as `Resolution`, `Identity`, … are the core
 types listed in [`app/IPC.md`](../app/IPC.md), serialised the same way.
 
 Commands without a JSON form (`init`, `add`, `edit`, `remove`, `use`, `pin`,
-`unpin`, `keygen`, `fix`, `hooks install|uninstall|snippet`) refuse `--json`
+`unpin`, `keygen`, `hooks install|uninstall|snippet`) refuse `--json`
 with exit `2`.
 
 ---
@@ -146,6 +146,25 @@ type OffendingCommit = {
   sha: string; subject: string; author_email: string; committer_email: string;
   author_mismatch: boolean; committer_mismatch: boolean;
 };
+```
+
+## githop fix
+
+Never prompts with `--json` (pass `--yes` to apply). Exit `0` fixed (or
+`--dry-run` with nothing pending) · `1` refused or commits still to fix.
+
+```ts
+// githop fix --dry-run
+FixPlan                            // core `githop_core::fix::FixPlan` (app/IPC.md), bare
+
+// githop fix --yes
+{
+  plan: FixPlan;
+  result: FixResult | null;        // { backup_ref, rewritten, undo_hint }; null when refused
+}
+
+// githop fix --undo [<backup ref>] --yes
+{ undone: string | null }          // the backup ref restored; null when refused
 ```
 
 ## githop hooks status

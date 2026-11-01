@@ -81,9 +81,7 @@ pub fn install(ctx: &Ctx, store: &mut Store, ask: Ask) -> Result<Option<InstallR
         to_slash(&saved)
     ));
     let exe = current_exe()?;
-    let mut settings = store.settings().clone();
-    let report = hooks::install_hooks(&paths, git, &mut settings, &exe)?;
-    store.save_settings(&settings)?;
+    let report = store.update_settings(|s| hooks::install_hooks(&paths, git, s, &exe))?;
     Ok(Some(report))
 }
 
@@ -127,9 +125,7 @@ fn run_uninstall(ctx: &Ctx) -> Result<Exit> {
     let paths = store.paths().clone();
     paths.ensure_dirs()?;
     backup::backup_global_gitconfig(&paths, git)?;
-    let mut settings = store.settings().clone();
-    let report = hooks::uninstall_hooks(&paths, git, &mut settings)?;
-    store.save_settings(&settings)?;
+    let report = store.update_settings(|s| hooks::uninstall_hooks(&paths, git, s))?;
     ui.ok("Hooks removed. GitHop no longer checks commits and pushes.");
     match report.hooks_path {
         HooksPathChange::Restored { value } => {

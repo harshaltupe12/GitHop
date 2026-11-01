@@ -923,9 +923,10 @@ fn save_aliases(store: &mut Store, found: &[String]) -> Result<bool> {
     if current == found {
         return Ok(false);
     }
-    let mut settings = store.settings().clone();
-    settings.github_host_aliases = found.to_vec();
-    store.save_settings(&settings)?;
+    store.update_settings(|s| {
+        s.github_host_aliases = found.to_vec();
+        Ok(())
+    })?;
     Ok(true)
 }
 

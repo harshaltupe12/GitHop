@@ -80,6 +80,70 @@ impl Repo {
         })
     }
 
+    /// Build the repo for a git hook **without spawning** (Plan §11 budget),
+    /// falling back to [`Repo::discover`] (one spawn) when the layout isn't
+    /// recognised.
+    ///
+    /// git runs `pre-commit` / `pre-push` / `post-checkout` with the working
+    /// directory set to the top of the work tree, and exports `GIT_DIR` for
+    /// linked worktrees and `--git-dir` invocations (verified with Git for
+    /// Windows 2.51). So:
+    /// - `GIT_DIR` set → git dir = `GIT_DIR` (relative to `cwd`); work tree =
+    ///   `GIT_WORK_TREE` if set, else `cwd`.
+    /// - else `cwd/.git` is a directory → that's the git dir, `cwd` the top.
+    /// - else `cwd/.git` is a `gitdir: <path>` file (linked worktree / submodule).
+    ///
+    /// The common dir is `GIT_COMMON_DIR` if set, else the git dir's `commondir`
+    /// file, else the git dir. The git dir must contain `HEAD`, otherwise this
+    /// falls back to `discover`. Paths are canonicalised like `discover`.
+    pub fn from_hook_env(git: &Git, cwd: &Path) -> Result<Self> {
+        match Self::hook_layout(git, cwd) {
+            Some((root, git_dir)) => {
+                let common = git
+                    .env_var("GIT_COMMON_DIR")
+                    .filter(|v| !v.is_empty())
+                    .map(|v| absolute(cwd, Path::new(&v)))
+                    .or_else(|| read_commondir(&git_dir))
+                    .unwrap_or_else(|| git_dir.clone());
+                Ok(Self {
+                    git: git.clone(),
+                    root: canonical(&root),
+                    common_dir: canonical(&common),
+                })
+            }
+            None => Self::discover(git, cwd),
+        }
+    }
+
+    /// `(work tree top, git dir)` from the hook environment, if recognisable.
+    fn hook_layout(git: &Git, cwd: &Path) -> Option<(PathBuf, PathBuf)> {
+        if let Some(dir) = git.env_var("GIT_DIR").filter(|v| !v.is_empty()) {
+            let git_dir = absolute(cwd, Path::new(&dir));
+            let root = git
+                .env_var("GIT_WORK_TREE")
+                .filter(|v| !v.is_empty())
+                .map_or_else(|| cwd.to_path_buf(), |w| absolute(cwd, Path::new(&w)));
+            return (git_dir.join("HEAD").is_file() && root.is_dir()).then_some((root, git_dir));
+        }
+        let dot_git = cwd.join(".git");
+        let meta = std::fs::metadata(&dot_git).ok()?;
+        let git_dir = if meta.is_dir() {
+            dot_git
+        } else {
+            // `gitdir: <path>` (relative paths are relative to the .git file).
+            let text = std::fs::read_to_string(&dot_git).ok()?;
+            let target = text.lines().next()?.strip_prefix("gitdir:")?.trim();
+            if target.is_empty() {
+                return None;
+            }
+            absolute(cwd, Path::new(target))
+        };
+        git_dir
+            .join("HEAD")
+            .is_file()
+            .then(|| (cwd.to_path_buf(), git_dir))
+    }
+
     pub fn git(&self) -> &Git {
         &self.git
     }
@@ -97,8 +161,33 @@ impl Repo {
         ConfigSnapshot::read(&self.git, &self.root)
     }
 
-    /// One spawn — see [`crate::identity::effective_identity`].
+    /// Up to two spawns (strict `git var`) — see [`crate::identity::effective_identity`].
     pub fn effective_identity(&self) -> Result<Option<EffectiveIdentity>> {
         crate::identity::effective_identity(&self.git, &self.root)
     }
+
+    /// One spawn, given a snapshot read from this repo — see
+    /// [`crate::identity::effective_identity_with`].
+    pub fn effective_identity_with(
+        &self,
+        snapshot: &ConfigSnapshot,
+    ) -> Result<Option<EffectiveIdentity>> {
+        crate::identity::effective_identity_with(&self.git, &self.root, snapshot)
+    }
+}
+
+/// `p` if absolute, else `base/p`.
+fn absolute(base: &Path, p: &Path) -> PathBuf {
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        base.join(p)
+    }
+}
+
+/// The `commondir` file of a linked worktree's git dir (relative to the git dir).
+fn read_commondir(git_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let rel = text.lines().next()?.trim();
+    (!rel.is_empty()).then(|| absolute(git_dir, Path::new(rel)))
 }

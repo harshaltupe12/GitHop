@@ -273,13 +273,13 @@ fn check_needs_a_valid_stage() {
 }
 
 #[test]
-fn fix_stub_exits_zero() {
+fn fix_outside_a_repo_is_a_usage_error() {
     let env = TestEnv::new();
     env.githop()
-        .arg("fix")
+        .args(["fix", "--dry-run"])
         .assert()
-        .code(0)
-        .stderr(contains("not implemented yet"));
+        .code(2)
+        .stderr(contains("not a git repo"));
 }
 
 #[test]

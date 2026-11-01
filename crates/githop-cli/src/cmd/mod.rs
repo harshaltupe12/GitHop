@@ -67,7 +67,7 @@ impl Ctx {
         if self.ui.json {
             return Err(usage_hint(
                 format!("--json isn't available for githop {command}."),
-                "JSON output: githop list, status, scan, doctor, test, check, hooks status, wipe",
+                "JSON output: githop list, status, scan, doctor, test, check, fix, hooks status, wipe",
             ));
         }
         Ok(())
@@ -93,7 +93,7 @@ pub fn run(ctx: &Ctx, command: Command) -> Result<Exit> {
         Command::Wipe(a) => wipe::run(ctx, a),
         Command::Check(a) => check::run(ctx, a),
         Command::Hooks(c) => hooks::run(ctx, c),
-        Command::Fix => fix::run(ctx),
+        Command::Fix(a) => fix::run(ctx, a),
     }
 }
 
@@ -286,12 +286,13 @@ pub struct SwitchOutcome {
 
 /// Make `id` the default profile (Plan §7.6): back up the global config, record
 /// the keys GitHop manages (saved *before* writing so `wipe` can always restore
-/// them), set global `user.name`/`user.email`/`core.sshCommand`, then save
-/// `profiles` with `default = id`.
+/// them), set global `user.name`/`user.email`/`core.sshCommand`, then set
+/// `default = id` (via `Store::update`, so concurrent edits aren't lost).
+/// `profiles` is only used to look the profile up.
 pub fn switch_default(
     ctx: &Ctx,
     store: &mut Store,
-    mut profiles: ProfileSet,
+    profiles: ProfileSet,
     id: &str,
 ) -> Result<SwitchOutcome> {
     let git = ctx.git()?;
@@ -305,22 +306,30 @@ pub fn switch_default(
         to_slash(&saved)
     ));
 
-    let mut settings = store.settings().clone();
-    let mut changed = false;
-    for key in MANAGED_GLOBAL_KEYS {
-        if !settings.managed_global_keys.iter().any(|k| k == key) {
-            settings.managed_global_keys.push(key.to_string());
-            changed = true;
-        }
-    }
-    if changed {
-        store.save_settings(&settings)?;
+    let missing = MANAGED_GLOBAL_KEYS.iter().any(|key| {
+        !store
+            .settings()
+            .managed_global_keys
+            .iter()
+            .any(|k| k == key)
+    });
+    if missing {
+        store.update_settings(|s| {
+            for key in MANAGED_GLOBAL_KEYS {
+                if !s.managed_global_keys.iter().any(|k| k == key) {
+                    s.managed_global_keys.push(key.to_string());
+                }
+            }
+            Ok(())
+        })?;
     }
 
     core_pin::set_default_profile_global(git, &profile)?;
 
-    profiles.default = Some(id.to_string());
-    store.save(&profiles, &settings)?;
+    store.update(|p, _| {
+        p.default = Some(id.to_string());
+        Ok(())
+    })?;
     Ok(SwitchOutcome { first_backup })
 }
 

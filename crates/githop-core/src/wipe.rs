@@ -187,11 +187,19 @@ fn load(paths: &Paths) -> Loaded {
 }
 
 /// Save progress (best effort: a broken store can't be written, and the steps
-/// are idempotent anyway).
+/// are idempotent anyway). Copies only the fields wipe changes onto the fresh
+/// settings (`Store::update_settings`), so a concurrent edit isn't lost.
 fn persist(store: &mut Option<Store>, settings: &Settings) {
     if let Some(store) = store.as_mut() {
         if store.paths().root().exists() {
-            let _ = store.save_settings(settings);
+            let _ = store.update_settings(|s| {
+                s.hooks_installed = settings.hooks_installed;
+                s.hook_hashes = settings.hook_hashes.clone();
+                s.previous_hooks_path = settings.previous_hooks_path.clone();
+                s.managed_global_keys = settings.managed_global_keys.clone();
+                s.pinned_repos = settings.pinned_repos.clone();
+                Ok(())
+            });
         }
     }
 }
@@ -222,22 +230,29 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
     if managed.is_empty() && store.is_none() && original.is_some() {
         managed = MANAGED_GLOBAL_KEYS.iter().map(|k| k.to_string()).collect();
     }
-    // (key, original value, needs write)
-    let mut identity_plan: Vec<(String, Option<String>)> = Vec::new();
+    // Keys whose current global values differ from the original (all values,
+    // so multi-valued keys compare exactly). Reads only.
+    let mut identity_plan: Vec<(String, Vec<String>)> = Vec::new();
     let mut identity_error: Option<String> = None;
     if let Some(orig) = &original {
+        let mut marker = orig.as_os_str().to_os_string();
+        marker.push(".absent");
+        let absent = Path::new(&marker).is_file();
+        let global = git.global_config_path();
         for key in &managed {
-            let want = match read_backup_value(git, orig, key) {
-                Ok(v) => v,
-                Err(e) => {
-                    identity_error = Some(e.to_string());
-                    break;
-                }
+            let want = if absent {
+                Ok(Vec::new())
+            } else {
+                gitconfig::get_all_file(git, orig, key)
             };
-            match gitconfig::get_global(git, key) {
-                Ok(now) if now == want => {}
-                Ok(_) => identity_plan.push((key.clone(), want)),
-                Err(e) => {
+            let now = global
+                .as_ref()
+                .map_err(|e| CoreError::BackupFailed(e.to_string()))
+                .and_then(|g| gitconfig::get_all_file(git, g, key));
+            match (want, now) {
+                (Ok(w), Ok(n)) if w == n => {}
+                (Ok(w), Ok(_)) => identity_plan.push((key.clone(), w)),
+                (Err(e), _) | (_, Err(e)) => {
                     identity_error = Some(e.to_string());
                     break;
                 }
@@ -372,23 +387,11 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
             "Skipped restoring your git settings, because the backup failed.",
         );
     } else {
-        let mut restored = Vec::new();
-        let mut failed = None;
-        for (key, want) in &identity_plan {
-            let res = match want {
-                Some(v) => gitconfig::set_global(git, key, v),
-                None => gitconfig::unset_global(git, key),
-            };
-            match res {
-                Ok(()) => restored.push(key.clone()),
-                Err(e) => {
-                    failed = Some(format!("{key}: {e}"));
-                    break;
-                }
-            }
-        }
-        match failed {
-            None => {
+        // Only the keys that differ; core restores every original value (multi-valued too).
+        let keys: Vec<String> = identity_plan.iter().map(|(k, _)| k.clone()).collect();
+        match backup::restore_managed_keys(paths, git, &keys) {
+            Ok(done) => {
+                let restored: Vec<String> = done.into_iter().map(|r| r.key).collect();
                 report.push(
                     STEP_IDENTITY,
                     true,
@@ -400,7 +403,7 @@ pub fn wipe(paths: &Paths, git: &Git, opts: &WipeOptions) -> Result<WipeReport> 
                 settings.managed_global_keys.clear();
                 persist(&mut store, &settings);
             }
-            Some(e) => {
+            Err(e) => {
                 critical_failed = true;
                 report.push(
                     STEP_IDENTITY,

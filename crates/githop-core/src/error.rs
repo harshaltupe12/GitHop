@@ -54,6 +54,12 @@ pub enum CoreError {
     #[error("GitHop data is in use by another GitHop window or command. Try again")]
     Locked,
 
+    /// A data file changed on disk since this `Store` loaded it (another GitHop
+    /// window, command or hook saved in between). Nothing was written; reload
+    /// (`Store::reload`) and apply the change again, or use `Store::update`.
+    #[error("{} was changed by another GitHop window or command. Nothing was saved. Try again", .path.display())]
+    Conflict { path: PathBuf },
+
     /// A backup couldn't be created or restored.
     #[error("backup failed: {0}")]
     BackupFailed(String),
@@ -61,6 +67,11 @@ pub enum CoreError {
     /// No data directory could be determined (no `GITHOP_HOME`, no `%APPDATA%`).
     #[error("couldn't find a folder for GitHop data. Set GITHOP_HOME")]
     NoDataDir,
+
+    /// `fix` (or its undo) won't run in the repo's current state. The text is a
+    /// complete, user-facing sentence with the next step (Design §9).
+    #[error("{0}")]
+    FixRefused(String),
 }
 
 impl CoreError {

@@ -32,6 +32,7 @@ param(
     [switch]$Check,
     [switch]$UpdateBaseline,
     [switch]$NoHyperfine,
+    [string]$Out,
     [string]$Baseline = (Join-Path $PSScriptRoot '..\perf-baseline.json')
 )
 
@@ -88,9 +89,9 @@ function Invoke-Native([string]$file, [string[]]$argv, [string]$cwd) {
     $ErrorActionPreference = 'Continue'
     Push-Location $cwd
     try {
-        $out = & $file @argv 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "$file $($argv -join ' ') failed: $out" }
-        return ($out | Out-String).Trim()
+        $output = & $file @argv 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "$file $($argv -join ' ') failed: $output" }
+        return ($output | Out-String).Trim()
     } finally { Pop-Location }
 }
 
@@ -131,7 +132,15 @@ function Measure-Case([string]$name, [string]$file, [string[]]$argv, [string]$cw
             & $hyperfine @hfArgs | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "hyperfine failed for $name" }
         } finally { Pop-Location }
-        $times = (Get-Content $json -Raw | ConvertFrom-Json).results[0].times | ForEach-Object { [double]$_ * 1000.0 }
+        $res = (Get-Content $json -Raw | ConvertFrom-Json).results[0]
+        if ($res.measurements) {
+            # hyperfine 2.x
+            $times = $res.measurements | ForEach-Object { [double]$_.time_wall_clock.value * 1000.0 }
+        } else {
+            # hyperfine 1.x
+            $times = $res.times | ForEach-Object { [double]$_ * 1000.0 }
+        }
+        if (-not $times) { throw "no timings for $name in $json" }
         return Get-Stats $times
     }
     $stdin = if ($stdinFile) { [IO.File]::ReadAllText($stdinFile) } else { $null }
@@ -264,6 +273,11 @@ if ($UpdateBaseline) {
     }
     [IO.File]::WriteAllText($Baseline, ($doc | ConvertTo-Json -Depth 5) + "`n", (New-Object System.Text.UTF8Encoding $false))
     Write-Host "Baseline written to $Baseline"
+}
+
+if ($Out) {
+    [IO.File]::WriteAllText($Out, ($results | ConvertTo-Json -Depth 5) + "`n", (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "Results written to $Out"
 }
 
 if ($failed -and $Check) { exit 1 }

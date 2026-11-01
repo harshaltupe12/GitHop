@@ -18,7 +18,10 @@ pub fn run_pin(ctx: &Ctx, args: PinArgs) -> Result<Exit> {
 
     let mut settings = store.settings().clone();
     if remember_repo(&mut settings.pinned_repos, repo.root()) {
-        store.save_settings(&settings)?;
+        store.update_settings(|s| {
+            remember_repo(&mut s.pinned_repos, repo.root());
+            Ok(())
+        })?;
     }
     ctx.ui.ok(&format!("Pinned to {}", profile.label));
     ctx.ui
@@ -35,7 +38,10 @@ pub fn run_unpin(ctx: &Ctx) -> Result<Exit> {
     let mut store = ctx.store()?;
     let mut settings = store.settings().clone();
     if forget_repo(&mut settings.pinned_repos, repo.root()) {
-        store.save_settings(&settings)?;
+        store.update_settings(|s| {
+            forget_repo(&mut s.pinned_repos, repo.root());
+            Ok(())
+        })?;
     }
     if removed {
         ctx.ui

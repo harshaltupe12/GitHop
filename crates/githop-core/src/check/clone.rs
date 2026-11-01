@@ -64,7 +64,8 @@ pub(crate) fn run(
     if !is_fresh_clone(args) {
         return Ok(result);
     }
-    let root = super::repo_root(ctx)?;
+    let repo = super::hook_repo(ctx)?;
+    let root = repo.root().to_path_buf();
     let snapshot = ConfigSnapshot::read(&ctx.git, &root)?;
     let mut store = super::open_store(ctx)?;
     let aliases = store.settings().github_host_aliases.clone();
@@ -75,7 +76,7 @@ pub(crate) fn run(
         CloneDecision::Pin { profile_id } => {
             result.profile_id = Some(profile_id.clone());
             if let Some(p) = store.profiles().get(&profile_id).cloned() {
-                match super::pin_and_record(ctx, &mut store, &root, &p) {
+                match super::pin_and_record(&mut store, &repo, &p) {
                     Ok(()) => {
                         result
                             .messages

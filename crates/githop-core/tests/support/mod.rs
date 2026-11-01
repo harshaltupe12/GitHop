@@ -73,6 +73,24 @@ impl TestEnv {
         self.home().join(".gitconfig")
     }
 
+    /// `XDG_CONFIG_HOME` for every spawned process (inside the temp dir, never
+    /// the developer's own).
+    pub fn xdg_config_home(&self) -> PathBuf {
+        self.root().join("xdg")
+    }
+
+    /// The XDG global config git would use when `GIT_CONFIG_GLOBAL` is unset.
+    pub fn xdg_global_config(&self) -> PathBuf {
+        self.xdg_config_home().join("git").join("config")
+    }
+
+    /// Like [`TestEnv::git_handle`] but without `GIT_CONFIG_GLOBAL`, so git picks
+    /// the global file itself (`~/.gitconfig` or the XDG file). HOME,
+    /// USERPROFILE and XDG_CONFIG_HOME still point into the temp dir.
+    pub fn git_handle_native_global(&self) -> Git {
+        self.git_handle().env_remove("GIT_CONFIG_GLOBAL")
+    }
+
     /// GitHop data dir for this test.
     pub fn paths(&self) -> Paths {
         Paths::at(self.appdata())
@@ -84,6 +102,7 @@ impl TestEnv {
             ("HOME", self.home()),
             ("USERPROFILE", self.home()),
             ("GIT_CONFIG_GLOBAL", self.global_config()),
+            ("XDG_CONFIG_HOME", self.xdg_config_home()),
             ("GITHOP_HOME", self.appdata()),
             ("APPDATA", self.appdata()),
         ]

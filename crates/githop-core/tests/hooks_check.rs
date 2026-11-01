@@ -746,3 +746,107 @@ fn uninstall_without_previous_unsets_hooks_path() {
     let out = env.git_output(&["config", "--global", "core.hooksPath"], &env.home());
     assert_eq!(out.status.code(), Some(1), "unset");
 }
+
+// ---------------------------------------------------------------------------
+// Review 2026-10-31 #8 — spawn budget (Plan §11): commit fast path = 1 spawn,
+// slow path = 2, push = 2. Counted with `Git::spawn_count`.
+
+/// Spawns made by one `run_check`.
+fn spawns_for(stage: Stage, c: &CheckContext, args: &[String], stdin: &str) -> (usize, Outcome) {
+    let before = c.git.spawn_count();
+    let r = check::run_check(stage, args, stdin, c);
+    (c.git.spawn_count() - before, r.outcome)
+}
+
+#[test]
+fn commit_check_spawn_budget() {
+    let env = TestEnv::new();
+    let repo = office_repo(&env);
+    // Unpinned, wrong identity: snapshot + git var, then the pin (1 local read
+    // + 4 writes). No `rev-parse` anywhere.
+    let (n, outcome) = spawns_for(Stage::Commit, &ctx(&env, &repo), &[], "");
+    assert!(matches!(outcome, Outcome::Mismatch { .. }), "{outcome:?}");
+    assert_eq!(n, 7);
+
+    // Pinned and matching: fast path, 1 spawn.
+    let (n, outcome) = spawns_for(Stage::Commit, &ctx(&env, &repo), &[], "");
+    assert_eq!(outcome, Outcome::Pass);
+    assert_eq!(n, 1, "fast path");
+
+    // Slow path (an env override forces `git var`): 2 spawns.
+    let mut c = ctx(&env, &repo);
+    c.git = c.git.env("GIT_COMMITTER_EMAIL", OFFICE);
+    let (n, outcome) = spawns_for(Stage::Commit, &c, &[], "");
+    assert_eq!(outcome, Outcome::Pass);
+    assert_eq!(n, 2, "slow path");
+}
+
+#[test]
+fn commit_check_in_linked_worktree_spawn_budget() {
+    let env = TestEnv::new();
+    let repo = office_repo(&env);
+    env.git(&["commit", "-q", "-m", "init"], &repo);
+    let wt = env.repos().join("wt");
+    env.git(&["worktree", "add", "-q", "-b", "wt", &slash(&wt)], &repo);
+    env.git(&["config", "--local", "githop.profile", "office"], &repo);
+    env.git(&["config", "--local", "user.email", OFFICE], &repo);
+
+    // Via the worktree's `.git` file.
+    let (n, outcome) = spawns_for(Stage::Commit, &ctx(&env, &wt), &[], "");
+    assert_eq!(outcome, Outcome::Pass);
+    assert_eq!(n, 1);
+
+    // As git runs the hook in a linked worktree: GIT_DIR exported.
+    let gitdir = env.git(&["rev-parse", "--absolute-git-dir"], &wt);
+    let mut c = ctx(&env, &wt);
+    c.git = c.git.env("GIT_DIR", &gitdir);
+    let (n, outcome) = spawns_for(Stage::Commit, &c, &[], "");
+    assert_eq!(outcome, Outcome::Pass);
+    assert_eq!(n, 1);
+
+    // Slow path in the worktree: 2.
+    c.git = c.git.env("GIT_AUTHOR_EMAIL", OFFICE);
+    let (n, outcome) = spawns_for(Stage::Commit, &c, &[], "");
+    assert_eq!(outcome, Outcome::Pass);
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn push_check_spawn_budget() {
+    let env = TestEnv::new();
+    let repo = office_repo(&env);
+    env.git(&["config", "--local", "githop.profile", "office"], &repo);
+    env.git(&["config", "--local", "user.email", OFFICE], &repo);
+    env.git(&["commit", "-q", "-m", "init"], &repo);
+    let head = env.git(&["rev-parse", "HEAD"], &repo);
+    let stdin = format!(
+        "refs/heads/main {head} refs/heads/main {}\n",
+        "0".repeat(40)
+    );
+    let args = vec![
+        "origin".to_string(),
+        "git@github.com:office-org/billing-api.git".to_string(),
+    ];
+    let (n, outcome) = spawns_for(Stage::Push, &ctx(&env, &repo), &args, &stdin);
+    assert_eq!(outcome, Outcome::Pass);
+    assert_eq!(n, 2);
+}
+
+/// Review #2: a hook recording a pin must not wipe a tray/CLI change that
+/// landed after the hook loaded the store (it uses `Store::update_settings`).
+#[test]
+fn hook_pin_record_keeps_concurrent_settings() {
+    let env = TestEnv::new();
+    let repo = office_repo(&env);
+    let mut tray = githop_core::Store::open_at(env.paths()).unwrap();
+    tray.update_settings(|s| {
+        s.previous_hooks_path = "C:/my hooks".into();
+        Ok(())
+    })
+    .unwrap();
+    let r = check::run_check(Stage::Commit, &[], "", &ctx(&env, &repo));
+    assert!(matches!(r.outcome, Outcome::Mismatch { .. }));
+    let s = githop_core::Store::open_at(env.paths()).unwrap();
+    assert_eq!(s.settings().previous_hooks_path, "C:/my hooks");
+    assert_eq!(s.settings().pinned_repos.len(), 1);
+}

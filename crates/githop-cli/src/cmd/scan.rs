@@ -159,7 +159,13 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
             }
         }
         if !applied.is_empty() {
-            store.save_settings(&settings)?;
+            let roots = settings.pinned_repos.clone();
+            store.update_settings(|s| {
+                for r in &roots {
+                    remember_repo(&mut s.pinned_repos, Path::new(r));
+                }
+                Ok(())
+            })?;
         }
     }
 
