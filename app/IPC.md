@@ -104,8 +104,18 @@ type ScanProgress = { folder: string; found: number; done: number };
 | `export_profiles` | `path: string, password: string, include_keys: boolean` | `void` | Password ≥ 12 chars |
 | `import_preview` | `path: string, password: string` | `ImportPreview` | |
 | `import_apply` | `path: string, password: string, resolutions: ImportResolution[]` | `ProfileSet` | |
-| `open_external` | `target: "ssh-keys" \| "releases"` | `void` | Opens the user's browser (opener plugin, scoped URLs) |
+| `open_external` | `target: "ssh-keys" \| "releases" \| "docs"` | `void` | Opens the user's browser (opener plugin, scoped URLs) |
 | `app_info` | — | `AppInfo` | About + licences |
+| `show_main` | — | `void` | Show + focus main window, hide tray window |
+| `quit_app` | — | `void` | Tray "Quit" |
+| `restore_profiles_backup` | — | `ProfileSet` | Design §8.7 "Restore last backup" (newest `backups/profiles.*.toml`) |
+| `cancel_scan` | — | `void` | Stops a running `scan` (results so far are dropped) |
+| `save_diagnostics` | `path: string` | `void` | Writes the doctor report (no paths/emails beyond what doctor shows) |
+
+`ScannedRepo` from `scan`/`pin`/`pin_all` carries an extra app-side field
+`unpushed_offenders: number` (count from `fix::plan`, 0 when unresolved or blocked),
+so the Repos screen doesn't call `fix_plan` per row. `OnboardingState` also carries
+`backup_dir: string`.
 
 ## Events (Rust → UI)
 
