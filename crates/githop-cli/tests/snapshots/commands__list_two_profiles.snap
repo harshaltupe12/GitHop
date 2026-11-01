@@ -1,0 +1,8 @@
+---
+source: crates/githop-cli/tests/commands.rs
+assertion_line: 766
+expression: out
+---
+   Id        Label     Email                              Owners
+●  office    Office    me@company.com                     office-org   default
+●  personal  Personal  12345+me@users.noreply.github.com  me-personal

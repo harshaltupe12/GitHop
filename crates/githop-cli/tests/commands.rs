@@ -31,7 +31,6 @@ fn setup_two_profiles(env: &TestEnv) {
 // ---------------------------------------------------------------- profiles
 
 #[test]
-#[ignore = "needs core merged"]
 fn add_list_edit_remove_round_trip() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -71,7 +70,6 @@ fn add_list_edit_remove_round_trip() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn list_with_no_profiles_points_to_init() {
     let env = TestEnv::new();
     env.githop()
@@ -83,7 +81,6 @@ fn list_with_no_profiles_points_to_init() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn add_duplicate_id_is_usage_error() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -95,7 +92,6 @@ fn add_duplicate_id_is_usage_error() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn add_invalid_profile_lists_issues_and_saves_nothing() {
     let env = TestEnv::new();
     env.githop()
@@ -116,7 +112,6 @@ fn add_invalid_profile_lists_issues_and_saves_nothing() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn add_derives_id_from_label() {
     let env = TestEnv::new();
     env.githop()
@@ -136,7 +131,6 @@ fn add_derives_id_from_label() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn edit_unknown_profile_is_usage_error() {
     let env = TestEnv::new();
     env.githop()
@@ -147,7 +141,6 @@ fn edit_unknown_profile_is_usage_error() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn edit_without_flags_and_tty_is_usage_error() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -159,7 +152,6 @@ fn edit_without_flags_and_tty_is_usage_error() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn edit_repin_updates_pinned_repos() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -180,7 +172,6 @@ fn edit_repin_updates_pinned_repos() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn remove_default_needs_a_new_default() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -206,7 +197,6 @@ fn remove_default_needs_a_new_default() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn remove_without_tty_needs_yes() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -220,7 +210,6 @@ fn remove_without_tty_needs_yes() {
 // ---------------------------------------------------------------- use / wipe
 
 #[test]
-#[ignore = "needs core merged"]
 fn use_sets_global_identity_and_backs_up_first() {
     let env = TestEnv::new();
     env.set_global("user.name", "Original Name");
@@ -262,7 +251,6 @@ fn use_sets_global_identity_and_backs_up_first() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn use_unknown_profile_is_usage_error() {
     let env = TestEnv::new();
     env.githop()
@@ -274,7 +262,6 @@ fn use_unknown_profile_is_usage_error() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn use_then_wipe_restores_original_global_identity_exactly() {
     let env = TestEnv::new();
     env.set_global("user.name", "Original Name");
@@ -307,7 +294,6 @@ fn use_then_wipe_restores_original_global_identity_exactly() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn wipe_restores_absence_of_identity() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -319,7 +305,6 @@ fn wipe_restores_absence_of_identity() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn wipe_unpins_repos_and_keeps_keys_by_default() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -337,7 +322,6 @@ fn wipe_unpins_repos_and_keeps_keys_by_default() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn wipe_delete_keys_only_removes_githop_keys() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -371,7 +355,6 @@ fn wipe_delete_keys_only_removes_githop_keys() {
 // ---------------------------------------------------------------- init
 
 #[test]
-#[ignore = "needs core merged"]
 fn init_creates_profile_from_global_identity_and_is_idempotent() {
     let env = TestEnv::new();
     env.set_global("user.name", "Harshal (Work)");
@@ -408,7 +391,6 @@ fn init_creates_profile_from_global_identity_and_is_idempotent() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn init_without_identity_or_tty_lists_missing_fields() {
     let env = TestEnv::new();
     env.githop()
@@ -423,7 +405,6 @@ fn init_without_identity_or_tty_lists_missing_fields() {
 // ---------------------------------------------------------------- status / pin
 
 #[test]
-#[ignore = "needs core merged"]
 fn status_explains_owner_resolution() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -444,7 +425,6 @@ fn status_explains_owner_resolution() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn status_flags_wrong_identity() {
     let env = TestEnv::new();
     env.set_global("user.name", "Me");
@@ -462,7 +442,6 @@ fn status_flags_wrong_identity() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn status_reports_local_hooks_path() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -479,7 +458,6 @@ fn status_reports_local_hooks_path() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn status_outside_a_repo_is_usage_error() {
     let env = TestEnv::new();
     env.githop()
@@ -490,7 +468,6 @@ fn status_outside_a_repo_is_usage_error() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn pin_and_unpin_current_repo() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -534,7 +511,6 @@ fn pin_and_unpin_current_repo() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn pin_unknown_profile_is_usage_error() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -550,7 +526,6 @@ fn pin_unknown_profile_is_usage_error() {
 // ---------------------------------------------------------------- scan
 
 #[test]
-#[ignore = "needs core merged"]
 fn scan_shows_and_apply_pins_owner_matched_repos() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -595,7 +570,6 @@ fn scan_shows_and_apply_pins_owner_matched_repos() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn scan_apply_skips_default_only_repos_unless_asked() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -624,7 +598,6 @@ fn scan_apply_skips_default_only_repos_unless_asked() {
 // ---------------------------------------------------------------- doctor
 
 #[test]
-#[ignore = "needs core merged"]
 fn doctor_detects_planted_github_identity_file() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -653,7 +626,6 @@ fn doctor_detects_planted_github_identity_file() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn doctor_warns_about_env_overrides() {
     let env = TestEnv::new();
     let out = env
@@ -671,7 +643,6 @@ fn doctor_warns_about_env_overrides() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn doctor_json_summary_and_exit_code() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -691,7 +662,6 @@ fn doctor_json_summary_and_exit_code() {
 // ---------------------------------------------------------------- keys
 
 #[test]
-#[ignore = "needs core merged"]
 fn keygen_creates_key_and_refuses_to_overwrite() {
     let env = TestEnv::new();
     env.add_profile("personal", "Me", PERSONAL_EMAIL, &[]);
@@ -714,7 +684,6 @@ fn keygen_creates_key_and_refuses_to_overwrite() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn test_without_key_points_to_keygen() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
@@ -728,7 +697,6 @@ fn test_without_key_points_to_keygen() {
 // ---------------------------------------------------------------- snapshots (Design §9.3)
 
 #[test]
-#[ignore = "needs core merged"]
 fn snapshot_use_output() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -741,7 +709,6 @@ fn snapshot_use_output() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn snapshot_pin_output() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -754,7 +721,6 @@ fn snapshot_pin_output() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn snapshot_list_output() {
     let env = TestEnv::new();
     setup_two_profiles(&env);
@@ -767,7 +733,6 @@ fn snapshot_list_output() {
 }
 
 #[test]
-#[ignore = "needs core merged"]
 fn snapshot_unknown_profile_error() {
     let env = TestEnv::new();
     setup_two_profiles(&env);

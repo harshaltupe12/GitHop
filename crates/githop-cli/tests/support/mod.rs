@@ -5,7 +5,7 @@
 //! `GIT_CONFIG_NOSYSTEM=1`, a temp `GITHOP_HOME`/`APPDATA`, `NO_COLOR=1`, and has
 //! the identity/ssh override variables cleared — tests never touch real config.
 
-#![allow(dead_code)]
+#![allow(dead_code, clippy::expect_used, clippy::unwrap_used)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
