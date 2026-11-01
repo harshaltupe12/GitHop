@@ -49,6 +49,7 @@ Run inside a repo (outside one → exit `2`).
   ssh_command: string | null;      // effective core.sshCommand
   ssh_key: string | null;          // key path parsed from it
   key_matches: boolean | null;
+  hooks_override: string | null;   // effective core.hooksPath here when it isn't GitHop's
   warnings: (ResolutionWarning & { message: string })[];
 }
 ```
@@ -113,9 +114,14 @@ type DoctorCheck = {
 
 Check ids: `git-found`, `git-version`, `ssh-found`, `ssh-keygen-found`,
 `store`, `profiles`, `profile-issue`, `default`, `key-file`, `key-pub`,
-`key-acl` (Unix only), `original`, `hooks-installed`, `hooks-path`,
-`hooks-files`, `hooks-stale`, `hooks-exe`, `hooks-previous`, `hooks-sh`,
+`key-acl` (Unix only), `original`, `hooks-installed`, `hooks-path`
+(also: an `[include]` read after GitHop's value overrides it),
+`hooks-files`, `hooks-stale` (also: rendered for another enforce mode),
+`hooks-exe`, `hooks-previous`, `hooks-sh`, `hooks-included` (note: GitHop chains
+to a hooksPath set by an `[include]`), `hooks-optional` (a pinned repo has a
+`reference-transaction`/`post-index-change` hook that isn't passed through),
 `local-hooks-path` (current repo sets its own `core.hooksPath`),
+`repo-hooks-path` (effective `core.hooksPath` in the current repo isn't GitHop's),
 `ssh-config`, `ssh-aliases`, `env`, `system-config`, `agent`.
 
 ## githop check --stage &lt;clone|commit|push&gt;
@@ -160,7 +166,8 @@ FixPlan                            // core `githop_core::fix::FixPlan` (app/IPC.
 // githop fix --yes
 {
   plan: FixPlan;
-  result: FixResult | null;        // { backup_ref, rewritten, undo_hint }; null when refused
+  result: FixResult | null;        // { backup_ref, rewritten, undo_hint, recreated,
+                                   //   old_head, new_head, fast_forward }; null when refused
 }
 
 // githop fix --undo [<backup ref>] --yes
@@ -188,6 +195,8 @@ Exit `1` when any hook check is a `problem`.
     previous_missing: boolean;
     sh_path: string | null;        // Git for Windows sh (native path, may use "\")
     config_error: string | null;
+    overridden_by: string[];       // [include]d hooksPath values read after GitHop's
+    included_hooks_paths: string[];// hooksPath values from [include]/[includeIf] (chained)
   };
   checks: DoctorCheck[];           // the hook checks doctor would show
 }

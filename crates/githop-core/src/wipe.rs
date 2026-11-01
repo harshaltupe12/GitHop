@@ -522,6 +522,8 @@ const DATA_FILES: &[&str] = &[
     "settings.toml",
     ".lock",
     crate::check::LAST_BLOCK_FILE,
+    // Include file for GitHop's core.hooksPath (written when an [include] sets one).
+    "hooks.gitconfig",
 ];
 
 /// Delete only what GitHop owns in the data dir — its files, its `hooks/`,

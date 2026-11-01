@@ -1407,9 +1407,14 @@ pub fn apply_bundle(
         }
         *profiles = normalized.clone();
         if let Some(s) = settings_patch {
+            let enforce_changed = settings.enforce != s.enforce;
             settings.enforce = s.enforce;
             settings.logging = s.logging;
             settings.log_retention_days = s.log_retention_days;
+            // The enforce mode is baked into the hook scripts (block-strict).
+            if enforce_changed {
+                crate::hooks::refresh_if_installed(paths, git, settings)?;
+            }
         }
         Ok(())
     })?;
