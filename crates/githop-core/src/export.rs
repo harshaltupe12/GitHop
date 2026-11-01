@@ -1360,17 +1360,19 @@ pub fn apply_bundle(
         .map_err(ExportError::InvalidProfiles)?;
 
     // 7. Settings: only on a machine with no profiles yet.
-    let mut settings: Settings = store.settings().clone();
-    if let (Some(s), true) = (bundle.settings, existing.profiles.is_empty()) {
-        if !report.imported.is_empty() {
-            settings.enforce = s.enforce;
-            settings.logging = s.logging;
-            settings.log_retention_days = s.log_retention_days;
-            report.settings_applied = true;
-        }
-    }
+    let settings_patch = bundle
+        .settings
+        .filter(|_| existing.profiles.is_empty() && !report.imported.is_empty());
+    report.settings_applied = settings_patch.is_some();
 
-    // 8. Keys, then profiles.
+    // 8. Keys, then profiles. Make sure nobody changed the profiles since we
+    // planned, before touching any key file.
+    if Store::open_at(paths.clone())?.profiles() != &existing {
+        return Err(CoreError::Conflict {
+            path: paths.profiles_file(),
+        }
+        .into());
+    }
     for (name, key_plan) in &key_plans {
         let Some(key) = bundle.key(name) else {
             continue;
@@ -1394,7 +1396,23 @@ pub fn apply_bundle(
         }
     }
 
-    store.save(&normalized, &settings)?;
+    // Fresh read under the lock: the plan only applies to the profiles it was
+    // made from; settings changed meanwhile by someone else are kept.
+    let profiles_path = paths.profiles_file();
+    store.update(|profiles, settings: &mut Settings| {
+        if *profiles != existing {
+            return Err(CoreError::Conflict {
+                path: profiles_path.clone(),
+            });
+        }
+        *profiles = normalized.clone();
+        if let Some(s) = settings_patch {
+            settings.enforce = s.enforce;
+            settings.logging = s.logging;
+            settings.log_retention_days = s.log_retention_days;
+        }
+        Ok(())
+    })?;
     report.profiles = store.profiles().clone();
     Ok(report)
 }
