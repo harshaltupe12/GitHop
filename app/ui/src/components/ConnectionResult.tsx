@@ -71,7 +71,10 @@ export function ConnectionResult({
   if (!entry) return null;
   if (entry.status === 'testing') {
     return showTesting ? (
-      <p role="status" className={cx('flex items-center gap-2 text-small text-ink-muted', className)}>
+      <p
+        role="status"
+        className={cx('flex items-center gap-2 text-small text-ink-muted', className)}
+      >
         <Spinner />
         {S.profiles.testing}
       </p>
@@ -139,14 +142,14 @@ function Result({
         <p className="font-medium">{S.connection.denied}</p>
         <p>{S.connection.deniedHelp(owners)}</p>
         {actions ? (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Button compact icon={Icons.copy} onClick={() => void copy()}>
-            {S.connection.copyKey}
-          </Button>
-          <Button compact icon={Icons.external} onClick={() => void ipc.openExternal('ssh-keys')}>
-            {S.connection.openGithub}
-          </Button>
-        </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button compact icon={Icons.copy} onClick={() => void copy()}>
+              {S.connection.copyKey}
+            </Button>
+            <Button compact icon={Icons.external} onClick={() => void ipc.openExternal('ssh-keys')}>
+              {S.connection.openGithub}
+            </Button>
+          </div>
         ) : null}
       </Banner>
     );

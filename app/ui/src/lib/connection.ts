@@ -6,8 +6,7 @@ import { createStore } from './query';
 import type { ConnectionTest, IpcError } from './types';
 
 export type ConnectionEntry =
-  | { status: 'testing' }
-  | { status: 'done'; result: ConnectionTest; at: number };
+  { status: 'testing' } | { status: 'done'; result: ConnectionTest; at: number };
 
 export const connectionStore = createStore<Record<string, ConnectionEntry>>({});
 

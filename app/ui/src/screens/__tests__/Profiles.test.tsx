@@ -117,9 +117,7 @@ describe('Profiles screen', () => {
       );
       await user.click(within(c).getByRole('button', { name: 'Try again' }));
       expect(m.testConnection).toHaveBeenCalledTimes(2);
-      expect(
-        await within(c).findByText('Connected to GitHub as office-org'),
-      ).toBeInTheDocument();
+      expect(await within(c).findByText('Connected to GitHub as office-org')).toBeInTheDocument();
     });
   });
 
@@ -129,7 +127,7 @@ describe('Profiles screen', () => {
     m.validateProfile.mockImplementation((p) =>
       Promise.resolve(
         p.id === 'office'
-          ? [{ profile_id: 'office', field: 'owners', severity: 'warning', message: msg }]
+          ? [{ profile_id: 'office', field: 'owners', severity: 'error', message: msg }]
           : [],
       ),
     );
@@ -141,6 +139,10 @@ describe('Profiles screen', () => {
     await user.click(within(c).getByRole('button', { name: 'Add owner to Office' }));
     expect(screen.getByRole('heading', { level: 1, name: 'Edit Office' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'GitHub owners' })).toHaveFocus();
+    // The core's message is right under Owns, live from validate_profile.
+    expect(
+      await within(screen.getByRole('region', { name: 'Owns' })).findByText(msg),
+    ).toBeInTheDocument();
     m.validateProfile.mockReset();
     m.validateProfile.mockResolvedValue([]);
   });

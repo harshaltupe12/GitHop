@@ -213,7 +213,12 @@ describe('Owners found panel', () => {
   const def = (root: string, owner: string) =>
     repo(root, { source: 'default', pinned: null, remote: remote(owner, root) });
   const byOwner = (root: string, owner: string) =>
-    repo(root, { profile_id: 'office', source: 'owner', pinned: null, remote: remote(owner, root) });
+    repo(root, {
+      profile_id: 'office',
+      source: 'owner',
+      pinned: null,
+      remote: remote(owner, root),
+    });
   const rows = [
     def('C:/Work/api', 'miraki-labs'),
     def('C:/Work/web', 'miraki-labs'),
@@ -221,7 +226,13 @@ describe('Owners found panel', () => {
     repo('C:/Personal/blog'),
   ];
   const seed = () =>
-    reposStore.set((s) => ({ ...s, repos: rows, scanned: true, autoScanned: true, folders: ['C:/'] }));
+    reposStore.set((s) => ({
+      ...s,
+      repos: rows,
+      scanned: true,
+      autoScanned: true,
+      folders: ['C:/'],
+    }));
   const panel = () =>
     screen.getByRole('region', { name: 'Choose a profile for these GitHub owners' });
 

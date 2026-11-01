@@ -40,6 +40,21 @@ describe('Onboarding', () => {
     expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('harshal@company.com');
     await expectNoA11yViolations(container);
 
+    // Owns comes straight after Identity, with the plain question.
+    expect(
+      screen.getByText(
+        'Which GitHub organisation or account owns this profile’s repos? For work, that’s your company’s org.',
+      ),
+    ).toBeInTheDocument();
+    // Left empty: the first Next stops once on Owns with the warning.
+    m.saveProfile.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText(/No owner yet, so GitHop can’t tell/)).toBeInTheDocument();
+    expect(screen.getByText(/Or click Next again to add one later\./)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'GitHub owners' })).toHaveFocus();
+    expect(m.saveProfile).not.toHaveBeenCalled();
+    await expectNoA11yViolations(container);
+
     m.saveProfile.mockResolvedValueOnce(profileSet({ default: null, profile: [office] }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() => expect(m.saveProfile).toHaveBeenCalled());
@@ -47,6 +62,50 @@ describe('Onboarding', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add another' }),
     ).toBeInTheDocument();
+  });
+
+  it('first profile with an owner saves on the first Next', async () => {
+    window.localStorage.setItem(KEYS.onboardingStep, '2');
+    m.saveProfile.mockClear();
+    m.saveProfile.mockResolvedValueOnce(profileSet({ default: null, profile: [office] }));
+    const { user } = renderWith(<Onboarding state={emptyState()} onFinish={vi.fn()} />);
+    await user.type(screen.getByRole('textbox', { name: 'GitHub owners' }), 'office-org{Enter}');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() =>
+      expect(m.saveProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'office', owners: ['office-org'] }),
+        undefined,
+      ),
+    );
+  });
+
+  it('add another: the first profile has no owner, so it can be given one right here', async () => {
+    window.localStorage.setItem(KEYS.onboardingStep, '3');
+    const officeU = { ...office, owners: [], folders: [] };
+    const st = appState({ profiles: profileSet({ default: 'office', profile: [officeU] }) });
+    m.listProfiles.mockResolvedValueOnce(st.profiles);
+    m.saveProfile.mockClear();
+    m.saveProfile.mockResolvedValueOnce(
+      profileSet({ default: 'office', profile: [{ ...officeU, owners: ['office-org'] }] }),
+    );
+    const { user, container } = renderWith(<Onboarding state={st} onFinish={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Add another profile' }));
+    expect(screen.getByText('Office needs a GitHub owner or folder too.')).toBeInTheDocument();
+    // Both profiles' Owns are required now: group hint + the marked heading.
+    expect(screen.getByText('Add at least one GitHub owner or folder.')).toBeInTheDocument();
+    await expectNoA11yViolations(container);
+
+    const field = screen.getByRole('textbox', { name: 'GitHub owner for Office' });
+    expect(field).toHaveAttribute('aria-required', 'true');
+    await user.type(field, 'Office-Org');
+    await user.click(screen.getByRole('button', { name: 'Add to Office' }));
+    await waitFor(() =>
+      expect(m.saveProfile).toHaveBeenCalledWith({ ...officeU, owners: ['office-org'] }, 'office'),
+    );
+    expect(await screen.findByText('office-org added to Office.')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText('Office needs a GitHub owner or folder too.')).toBeNull(),
+    );
   });
 
   it('resumes at a stored step; Back works', async () => {

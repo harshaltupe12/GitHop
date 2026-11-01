@@ -77,7 +77,6 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
     }
   };
 
-
   if (editing === 'new' || original) {
     return (
       <>
@@ -86,6 +85,7 @@ export function ProfilesScreen({ profiles }: { profiles: ProfileSet }) {
           profiles={profiles}
           original={original}
           focusField={focusOwners ? 'owners' : undefined}
+          onEditProfile={(id) => edit(id, true)}
           onCancel={() => setEditing(null)}
           onSaved={(set, saved) => {
             // A new key or id makes the last test result meaningless.

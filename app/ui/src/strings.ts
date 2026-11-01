@@ -187,6 +187,20 @@ export const S = {
     ownersEmpty:
       'No owner yet, so GitHop can’t tell which repos are this profile’s and they’d use your default profile. Add the organisation or account from your repo URLs.',
     ownersSkip: 'Or click Next again to add one later.',
+    // Required fields: `*` after the label, explained once at the top of the form.
+    requiredLegend: 'Required',
+    // Owns is required as a group (owner or folder) once there are two or more profiles.
+    ownsRequired: 'Add at least one GitHub owner or folder.',
+    ownersPlaceholderWork: 'your-company-org',
+    otherNeedsOwner: (label: string) => `${label} needs a GitHub owner or folder too.`,
+    otherNeedsOwnerWhy:
+      'With more than one profile, GitHop can only save when each one has a rule. Add the organisation or account that owns its repos, like your company’s org.',
+    otherOwnerLabel: (label: string) => `GitHub owner for ${label}`,
+    otherOwnerEmpty: 'Enter a GitHub owner, for example your company’s org.',
+    addToOther: (label: string) => `Add to ${label}`,
+    otherOwnerAdded: (owner: string, label: string) => `${owner} added to ${label}.`,
+    editOther: (label: string) => `Edit ${label}`,
+    otherIssuesTitle: 'Another profile needs a fix before this one can be saved:',
     foldersLabel: 'Folders',
     foldersHelp: 'Optional. Repos inside these folders use this profile.',
     addFolder: 'Add folder…',

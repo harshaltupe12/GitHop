@@ -8,7 +8,20 @@ export type ControlProps = {
   id: string;
   'aria-describedby'?: string;
   'aria-invalid'?: boolean;
+  'aria-required'?: boolean;
 };
+
+/**
+ * Visible "required" mark after a label: an asterisk explained by the form's
+ * "* Required" legend. Hidden from screen readers, which hear `aria-required`.
+ */
+export function RequiredMark() {
+  return (
+    <span aria-hidden="true" className="ml-0.5 font-normal text-ink-muted">
+      *
+    </span>
+  );
+}
 
 /**
  * Design §7.10 — label above (`body-strong`), helper below (`small`, muted),
@@ -22,6 +35,7 @@ export function Field({
   children,
   className,
   labelAs = 'label',
+  required = false,
 }: {
   label: ReactNode;
   helper?: ReactNode;
@@ -30,6 +44,8 @@ export function Field({
   className?: string;
   /** Use 'legend'-like text (no <label for>) when the control labels itself. */
   labelAs?: 'label' | 'div';
+  /** Required field: `*` after the label and `aria-required` on the control. */
+  required?: boolean;
 }) {
   const id = useId();
   const helpId = `${id}-help`;
@@ -46,11 +62,13 @@ export function Field({
         className="text-body font-medium text-ink"
       >
         {label}
+        {required ? <RequiredMark /> : null}
       </Label>
       {children({
         id,
         'aria-describedby': describedBy || undefined,
         'aria-invalid': hasError || undefined,
+        'aria-required': required || undefined,
       })}
       {helper ? (
         <div id={helpId} className="text-small text-ink-muted">

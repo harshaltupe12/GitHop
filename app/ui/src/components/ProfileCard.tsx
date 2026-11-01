@@ -99,7 +99,10 @@ export function ProfileCard({
           />
         </div>
       </div>
-      <p className={cx('mt-1 truncate font-mono text-mono text-ink-muted', pad)} title={profile.email}>
+      <p
+        className={cx('mt-1 truncate font-mono text-mono text-ink-muted', pad)}
+        title={profile.email}
+      >
         {profile.email}
       </p>
       {profile.owners.length || profile.folders.length || keyName ? (
@@ -126,7 +129,10 @@ export function ProfileCard({
         </ul>
       ) : null}
       {shown.length ? (
-        <ul className={cx('mt-2 flex flex-col gap-1.5', pad)} aria-label={S.profiles.warningsLabel(profile.label)}>
+        <ul
+          className={cx('mt-2 flex flex-col gap-1.5', pad)}
+          aria-label={S.profiles.warningsLabel(profile.label)}
+        >
           {shown.map((i, n) => (
             <li
               key={`${i.field}-${n}`}

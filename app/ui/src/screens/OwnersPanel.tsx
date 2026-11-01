@@ -86,7 +86,10 @@ export function OwnersPanel({
               </p>
             </div>
           </div>
-          <ul aria-label={S.repos.owners.listLabel} className="flex flex-col divide-y divide-line-row">
+          <ul
+            aria-label={S.repos.owners.listLabel}
+            className="flex flex-col divide-y divide-line-row"
+          >
             {shown.map((g) => (
               <OwnerRow
                 key={g.owner}
@@ -183,7 +186,10 @@ function OwnerRow({
           {chosen ? (
             <Avatar label={chosen.label} color={chosen.color} size={22} decorative />
           ) : (
-            <span aria-hidden="true" className="h-[1.5714rem] w-[1.5714rem] rounded-full border border-dashed border-line-input" />
+            <span
+              aria-hidden="true"
+              className="h-[1.5714rem] w-[1.5714rem] rounded-full border border-dashed border-line-input"
+            />
           )}
           <label htmlFor={selectId} className="sr-only">
             {S.repos.owners.profileFor(group.owner)}
@@ -222,7 +228,11 @@ function OwnerRow({
         </span>
       </div>
       {error ? (
-        <p id={errorId} role="alert" className="flex items-start gap-1 text-small text-blocked-text">
+        <p
+          id={errorId}
+          role="alert"
+          className="flex items-start gap-1 text-small text-blocked-text"
+        >
           <Ico icon={Icons.warning} className="mt-px" />
           {error}
         </p>
