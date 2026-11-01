@@ -6,6 +6,7 @@
 
 pub mod backup;
 pub mod check;
+pub mod doctor;
 pub mod error;
 pub mod git;
 pub mod gitconfig;
@@ -22,6 +23,7 @@ pub mod scan;
 pub mod settings;
 pub mod ssh;
 pub mod store;
+pub mod wipe;
 
 pub use error::{CoreError, Result};
 pub use git::Git;

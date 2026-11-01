@@ -609,10 +609,10 @@ fn doctor_detects_planted_github_identity_file() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|c| c["id"] == "ssh-config" && c["status"] == "warn")
+        .find(|c| c["id"] == "ssh-config" && c["status"] == "warning")
         .cloned();
     let hit = hit.unwrap_or_else(|| panic!("no ssh-config warning: {v}"));
-    assert!(hit["message"].as_str().unwrap().contains("line 4"));
+    assert!(hit["detail"].as_str().unwrap().contains("line 4"));
     assert!(hit["fix"]
         .as_str()
         .unwrap()
@@ -639,7 +639,7 @@ fn doctor_warns_about_env_overrides() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|c| c["id"] == "env" && c["message"].as_str().unwrap().contains("GIT_SSH_COMMAND")));
+        .any(|c| c["id"] == "env" && c["detail"].as_str().unwrap().contains("GIT_SSH_COMMAND")));
 }
 
 #[test]
@@ -647,7 +647,7 @@ fn doctor_json_summary_and_exit_code() {
     let env = TestEnv::new();
     env.add_profile("office", "Me", OFFICE_EMAIL, &[]);
     let (code, v) = json(&env, &env.home(), &["doctor"]);
-    for key in ["ok", "info", "warn", "problem"] {
+    for key in ["ok", "warning", "problem"] {
         assert!(v["summary"][key].is_u64(), "summary.{key} missing: {v}");
     }
     let problems = v["summary"]["problem"].as_u64().unwrap();

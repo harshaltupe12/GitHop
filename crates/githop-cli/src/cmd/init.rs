@@ -1,11 +1,14 @@
 //! `githop init` — detect the current global identity, back up the global git
-//! config, and create the first profile from it. Safe to run again (idempotent).
+//! config, create the first profile from it, then install the hooks (Phase 3
+//! §4.4). Safe to run again (idempotent): a rerun changes no profile and
+//! re-installs the hooks with the running `githop.exe`.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
-use githop_core::{backup, gitconfig, pin as core_pin, ssh, Profile, ProfileColor};
+use githop_core::{backup, gitconfig, pin as core_pin, ssh, Profile, ProfileColor, Store};
 
+use super::hooks::{install, print_install, Ask};
 use super::{key_display, label_from_id, looks_personal, profile_display, Ctx, NOREPLY_TIP};
 use crate::cli::InitArgs;
 use crate::exit::{missing_fields, Exit};
@@ -35,8 +38,8 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
                 set.profiles.len()
             )),
         }
+        install_hooks_step(ctx, &mut store, &args)?;
         ui.hint("Add another profile: githop add");
-        // Phase 3: hooks::install_hooks (re-check / repair hooks on rerun).
         return Ok(Exit::Ok);
     }
 
@@ -147,8 +150,6 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
     let settings = store.settings().clone();
     store.save(&set, &settings)?;
 
-    // Phase 3: hooks::install_hooks — set global core.hooksPath (record previous one).
-
     let saved = set.get(&id).cloned();
     if let Some(p) = &saved {
         ui.ok(&format!("Profile created: {}", profile_display(p)));
@@ -169,6 +170,30 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
     if identity_differs {
         ui.hint(&format!("Set it as your global identity: githop use {id}"));
     }
+    install_hooks_step(ctx, &mut store, &args)?;
     ui.hint("Next: add your other profile with githop add, then githop scan <folder>.");
     Ok(Exit::Ok)
+}
+
+/// Last step: install (or refresh) the hooks. Explain and ask the first time
+/// when there's a terminal; `--yes` skips the question, `--no-hooks` the step.
+fn install_hooks_step(ctx: &Ctx, store: &mut Store, args: &InitArgs) -> Result<()> {
+    if args.no_hooks {
+        if !store.settings().hooks_installed {
+            ctx.ui.hint(
+                "Hooks weren't installed, so commits and pushes aren't checked. \
+                 Install them: githop hooks install",
+            );
+        }
+        return Ok(());
+    }
+    let ask = if store.settings().hooks_installed || args.yes {
+        Ask::Quiet
+    } else {
+        Ask::Confirm
+    };
+    if let Some(report) = install(ctx, store, ask)? {
+        print_install(ctx, &report);
+    }
+    Ok(())
 }

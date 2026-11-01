@@ -116,6 +116,9 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
     }
     let git = ctx.git()?;
     let mut store = ctx.store()?;
+    // Cache SSH aliases for github.com (`ssh -G`) so owner rules work with them;
+    // hooks read the cache. Best effort.
+    let _ = githop_core::doctor::refresh_github_host_aliases(&mut store, git);
     let set = store.profiles().clone();
     let mut settings = store.settings().clone();
     let base = normalize_repo_root(&args.folder);

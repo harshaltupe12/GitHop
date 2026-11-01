@@ -5,6 +5,7 @@ pub mod check;
 pub mod doctor;
 pub mod edit;
 pub mod fix;
+pub mod hooks;
 pub mod init;
 pub mod keygen;
 pub mod list;
@@ -31,7 +32,7 @@ use crate::exit::{usage, usage_hint, Exit};
 use crate::ui::Ui;
 
 /// Global git keys `githop use` writes (and `wipe` restores).
-pub const MANAGED_GLOBAL_KEYS: [&str; 3] = ["user.name", "user.email", "core.sshCommand"];
+pub use githop_core::wipe::MANAGED_GLOBAL_KEYS;
 
 /// Per-invocation context: output handle plus a lazily located `git`.
 pub struct Ctx {
@@ -66,7 +67,7 @@ impl Ctx {
         if self.ui.json {
             return Err(usage_hint(
                 format!("--json isn't available for githop {command}."),
-                "JSON output: githop list, status, scan, doctor, test",
+                "JSON output: githop list, status, scan, doctor, test, check, hooks status, wipe",
             ));
         }
         Ok(())
@@ -91,6 +92,7 @@ pub fn run(ctx: &Ctx, command: Command) -> Result<Exit> {
         Command::Doctor => doctor::run(ctx),
         Command::Wipe(a) => wipe::run(ctx, a),
         Command::Check(a) => check::run(ctx, a),
+        Command::Hooks(c) => hooks::run(ctx, c),
         Command::Fix => fix::run(ctx),
     }
 }
@@ -254,7 +256,7 @@ pub fn describe_warning(w: &ResolutionWarning, set: &ProfileSet) -> String {
         }
         ResolutionWarning::LocalHooksPath { path } => format!(
             "This repo sets its own core.hooksPath ({path}), so GitHop's hooks don't run here. \
-             Call githop check from that hook."
+             Get the line to add to that hook: githop hooks snippet commit"
         ),
     }
 }

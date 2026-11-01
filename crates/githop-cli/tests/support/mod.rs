@@ -103,6 +103,9 @@ impl TestEnv {
         cmd.env("GIT_CONFIG_NOSYSTEM", "1");
         cmd.env("GIT_TERMINAL_PROMPT", "0");
         cmd.env("NO_COLOR", "1");
+        // Never touch the real Windows startup (Run) key from tests.
+        cmd.env("GITHOP_NO_REGISTRY", "1");
+        cmd.env_remove("GITHOP_AUTOSTART_KEY");
         for k in CLEARED_ENV {
             cmd.env_remove(k);
         }
@@ -188,6 +191,43 @@ impl TestEnv {
             &path,
         );
         path
+    }
+
+    /// Bare repo at `remotes/<owner>/<repo>.git` (branch `main`).
+    pub fn bare_remote(&self, owner_repo: &str) -> PathBuf {
+        let path = self.remotes().join(format!("{owner_repo}.git"));
+        std::fs::create_dir_all(&path).expect("create remote dir");
+        self.git(&["init", "-q", "--bare", "-b", "main"], &path);
+        path
+    }
+
+    /// Make `https://github.com/<owner>/<repo>.git` resolve to the local bare
+    /// remotes via `url.<base>.insteadOf` — GitHub-style URLs, no network.
+    pub fn redirect_github_to_local(&self) {
+        let base = format!("{}/", Self::slash(&self.remotes()));
+        self.set_global(&format!("url.{base}.insteadOf"), "https://github.com/");
+    }
+
+    /// Write a file and commit it with an explicit identity (hooks skipped:
+    /// this is test setup, not the behaviour under test). Returns the sha.
+    pub fn commit_as(&self, repo: &Path, file: &str, email: &str) -> String {
+        std::fs::write(repo.join(file), format!("{file}\n")).expect("write file");
+        self.git(&["add", file], repo);
+        self.git(
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                &format!("user.email={email}"),
+                "commit",
+                "-q",
+                "--no-verify",
+                "-m",
+                &format!("add {file}"),
+            ],
+            repo,
+        );
+        self.git(&["rev-parse", "HEAD"], repo)
     }
 
     /// Write `~/.ssh/config` in the temp home.

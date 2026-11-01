@@ -117,6 +117,11 @@ fn paint(text: &str, code: &str, color: bool) -> String {
     }
 }
 
+/// Dim text (hints), when `color`.
+pub fn paint_dim(text: &str, color: bool) -> String {
+    paint(text, DIM, color)
+}
+
 /// `<symbol> <message>`, symbol coloured when `color`.
 pub fn status_line(status: Status, msg: &str, color: bool, ascii: bool) -> String {
     let code = match status {
