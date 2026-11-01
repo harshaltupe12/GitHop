@@ -9,6 +9,7 @@ pub mod fix;
 pub mod hooks;
 pub mod import;
 pub mod init;
+pub mod installer;
 pub mod keygen;
 pub mod list;
 pub mod pin;
@@ -98,6 +99,7 @@ pub fn run(ctx: &Ctx, command: Command) -> Result<Exit> {
         Command::Check(a) => check::run(ctx, a),
         Command::Hooks(c) => hooks::run(ctx, c),
         Command::Fix(a) => fix::run(ctx, a),
+        Command::Installer(c) => installer::run(ctx, c),
     }
 }
 
