@@ -4,9 +4,9 @@
   "identifier": "dev.githop.app",
   "build": {
     "frontendDist": "../ui/dist",
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm --prefix ../ui run dev",
-    "beforeBuildCommand": "npm --prefix ../ui run build"
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": "npm --prefix ui run dev",
+    "beforeBuildCommand": "npm --prefix ui run build"
   },
   "app": {
     "withGlobalTauri": false,
