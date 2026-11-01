@@ -125,7 +125,9 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
     check.profiles.push(profile.clone());
     check.default = Some(id.clone());
     check.normalize();
-    check.validate().map_err(githop_core::CoreError::Validation)?;
+    check
+        .validate()
+        .map_err(githop_core::CoreError::Validation)?;
 
     if ui.interactive
         && !args.yes

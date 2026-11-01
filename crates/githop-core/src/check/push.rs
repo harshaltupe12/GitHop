@@ -1012,6 +1012,11 @@ mod tests {
         let w = mismatch_messages(owner, &s, &o, EnforceMode::Warn);
         assert_eq!(w[0].level, Level::Warning);
         assert!(w.iter().all(|m| m.level != Level::Blocked));
+        // Regression D9: no Fix advice for commits already on the remote.
+        assert_eq!(
+            w.last().unwrap().hint.as_deref(),
+            Some("They're on the remote now. GitHop never changes pushed commits.")
+        );
     }
 
     #[test]

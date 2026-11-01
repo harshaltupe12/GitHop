@@ -159,8 +159,10 @@ pub fn run(ctx: &Ctx) -> Result<Exit> {
             p.label
         ));
         ui.hint(&format!("Run: githop pin {}", p.id));
-    } else if let (Some(p), None) = (profile, &res.pinned) {
-        if id_matches == Some(true) {
+    }
+    if let (Some(p), None) = (profile, &res.pinned) {
+        let default_only = res.source == Some(ResolutionSource::Default);
+        if id_matches == Some(true) && (key_matches != Some(false) || default_only) {
             if res.source == Some(ResolutionSource::Default) {
                 // D21: a default-only pin is what ADR 0003 #6 avoids.
                 ui.hint(

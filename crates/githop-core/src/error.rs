@@ -93,3 +93,29 @@ impl CoreError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression D16: forward slashes and one line.
+    #[test]
+    fn messages_use_slashes_and_one_line() {
+        let e = CoreError::Toml {
+            path: PathBuf::from(r"C:\Users\me\githop\profiles.toml"),
+            message: "TOML parse error at line 1, column 9\n  |\n1 | x\n  |  ^\nexpected `=`\n"
+                .into(),
+        };
+        let s = e.to_string();
+        assert_eq!(
+            s,
+            "couldn't read C:/Users/me/githop/profiles.toml: TOML parse error at line 1, column 9"
+        );
+        let e = CoreError::io(r"C:\a\b", std::io::Error::other("x"));
+        assert!(e.to_string().starts_with("couldn't access C:/a/b:"), "{e}");
+        assert_eq!(
+            CoreError::Validation(Vec::new()).to_string(),
+            "profiles are not valid (0 issues)"
+        );
+    }
+}

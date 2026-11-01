@@ -30,9 +30,7 @@ pub struct Git {
 
 /// A graft file path that doesn't exist (a folder GitHop never creates).
 fn no_graft_file() -> PathBuf {
-    std::env::temp_dir()
-        .join("githop-no-grafts.d")
-        .join("none")
+    std::env::temp_dir().join("githop-no-grafts.d").join("none")
 }
 
 impl Git {

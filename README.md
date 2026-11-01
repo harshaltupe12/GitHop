@@ -38,14 +38,17 @@ githop scan C:\Code --apply
 ```
 
 Check any repo with `githop status`, and your setup with `githop doctor`.
-New clones of an owner's repos are pinned automatically.
+New clones (and submodules) of an owner's repos are pinned automatically; a repo
+only the default profile covers is not.
 
 ## How it works
 
 For every repo GitHop decides which profile owns it, in this order:
 
 1. **Pin** — the repo was pinned (`githop pin <id>`, `scan --apply`, or automatically on clone).
-2. **Owner** — the GitHub user/org in the `origin` URL (SSH host aliases for github.com work too).
+2. **Owner** — the GitHub user/org in the `origin` URL. SSH host aliases for github.com
+   (`Host gh-office` / `HostName github.com`) work too, from the moment they're in
+   `~/.ssh/config`.
 3. **Folder** — the longest matching folder rule of a profile.
 4. **Default profile** — what `githop use` set.
 
@@ -59,19 +62,23 @@ repo's own `.git/hooks/*` and any hooks folder you had before.
 
 | Layer | When | What happens |
 |---|---|---|
-| Auto-pin | `git clone` | The new repo is pinned to its owner's profile: `✓ GitHop: pinned to Personal` |
-| Block commit | `git commit` | A commit that would use another profile's email is **blocked**. If the repo wasn't pinned yet, GitHop pins it and asks you to run the commit again. |
+| Auto-pin | `git clone` | The new repo is pinned to its owner's (or folder's) profile: `✓ GitHop: pinned to Personal` |
+| Block commit | `git commit` | A commit that would use another profile's email is **blocked**. If the repo wasn't pinned yet and an owner or folder rule matches, GitHop pins it and asks you to run the commit again. When only the default profile matches, nothing is pinned. |
 | Block push | `git push` | A push containing any commit with the wrong author or committer email is **blocked**, listing those commits. |
 | Fix | `githop fix` | Re-stamps unpushed wrong-identity commits (never touches pushed ones, always keeps a backup ref). |
 
 If GitHop itself has a problem (bad settings file, crash), git **keeps working**:
 you see `! GitHop couldn't check this commit (it went through). Run: githop doctor`.
-Set `enforce = "block-strict"` in `settings.toml` to block instead. `GITHOP_DISABLE=1`
-turns the checks off for one command, like `--no-verify` for GitHop only.
+Set `enforce = "block-strict"` in `settings.toml` to block instead (it applies at
+once, nothing to reinstall). `GITHOP_DISABLE=1` turns the checks off for one
+command, like `--no-verify` for GitHop only; pushes made that way are still
+recorded, so `githop fix` never rewrites them.
 
 Repos that set their own `core.hooksPath` (husky, lefthook, pre-commit) skip
 global hooks. `githop doctor` and `githop status` point them out; add the line
-from `githop hooks snippet commit` to the top of that repo's pre-commit hook.
+from `githop hooks snippet commit` to the top of that repo's pre-commit hook, and
+the lines from `githop hooks snippet push` to its pre-push hook (they hand the
+ref list back to the rest of the hook, e.g. `git lfs pre-push`).
 
 ## Known limits
 
@@ -108,8 +115,10 @@ githop wipe
 Wipe removes GitHop's hooks (restoring your previous `core.hooksPath`), puts back
 the global `user.name`, `user.email` and `core.sshCommand` values from the backup
 taken before GitHop changed anything (other settings you changed since are kept),
-optionally unpins the repos GitHop pinned, removes the startup entry, and deletes
-`%APPDATA%\githop`. Your SSH keys are kept unless you add `--delete-keys`. If wipe
+optionally unpins the repos GitHop pinned (removing GitHop's Fix backups and push
+records in them), removes the startup entry, and deletes the files GitHop wrote in
+`%APPDATA%\githop` (your own files there are kept). Your SSH keys are kept unless
+you add `--delete-keys`. `--keep-pins` and `--keep-data` keep those. If wipe
 is interrupted, run it again — it picks up where it stopped. JSON output for every
 command that has it is described in [docs/cli-json.md](docs/cli-json.md).
 

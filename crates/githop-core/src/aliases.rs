@@ -165,6 +165,9 @@ mod tests {
         // Unchanged file: the cache is trusted as is.
         let mut cached = saved.clone();
         cached.github_host_aliases = vec!["from-cache".into()];
-        assert_eq!(current(&paths, &git, &cached), vec!["from-cache".to_string()]);
+        assert_eq!(
+            current(&paths, &git, &cached),
+            vec!["from-cache".to_string()]
+        );
     }
 }

@@ -164,7 +164,7 @@ fn edit_repin_updates_pinned_repos() {
         .args(["edit", "office", "--email", "new@company.com", "--repin"])
         .assert()
         .code(0)
-        .stdout(contains("Re-pinned 1 repo(s)"));
+        .stdout(contains("Re-pinned 1 repo to"));
     assert_eq!(
         env.get_local(&repo, "user.email").as_deref(),
         Some("new@company.com")

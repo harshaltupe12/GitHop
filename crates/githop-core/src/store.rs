@@ -180,9 +180,11 @@ impl Store {
 
     /// Read only `settings.toml` (defaults when missing). Never touches profiles.
     pub fn load_settings_at(paths: &Paths) -> Result<Settings> {
-        Ok(load_versioned::<Settings>(&paths.settings_file(), SETTINGS_VERSION)?
-            .0
-            .unwrap_or_default())
+        Ok(
+            load_versioned::<Settings>(&paths.settings_file(), SETTINGS_VERSION)?
+                .0
+                .unwrap_or_default(),
+        )
     }
 
     pub fn paths(&self) -> &Paths {
@@ -524,7 +526,7 @@ pub(crate) fn list_names(dir: &Path, keep: impl Fn(&str) -> bool) -> Result<Vec<
 }
 
 /// `profiles.<timestamp>.toml` (timestamp starts with a digit).
-fn is_profile_backup_name(name: &str) -> bool {
+pub(crate) fn is_profile_backup_name(name: &str) -> bool {
     name.strip_prefix(PROFILE_BACKUP_PREFIX)
         .and_then(|r| r.strip_suffix(PROFILE_BACKUP_SUFFIX))
         .is_some_and(|ts| ts.starts_with(|c: char| c.is_ascii_digit()))

@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use githop_core::doctor::{self, CheckStatus, DoctorCheck, DoctorOptions, DoctorReport};
+use githop_core::text::plural;
 use githop_core::Paths;
 use serde_json::json;
 
@@ -67,7 +68,8 @@ fn print_report(ctx: &Ctx, r: &DoctorReport) {
     let mut first = true;
     for (group, title) in groups {
         let items: Vec<&DoctorCheck> = r.checks.iter().filter(|c| group_of(c) == group).collect();
-        if items.is_empty() || (group == Group::Passing && ui.quiet) {
+        // -q: only warnings and problems (regression D12: no empty Notes header).
+        if items.is_empty() || (ui.quiet && matches!(group, Group::Passing | Group::Notes)) {
             continue;
         }
         if !first {
@@ -89,7 +91,8 @@ fn print_report(ctx: &Ctx, r: &DoctorReport) {
             }
             if group != Group::Passing {
                 if let Some(fix) = &c.fix {
-                    ui.hint(&format!("  Fix: {fix}"));
+                    // Each warning and problem keeps its one next step, even with -q.
+                    ui.fix_hint(&format!("  Fix: {fix}"));
                 }
             }
         }
@@ -100,7 +103,11 @@ fn print_report(ctx: &Ctx, r: &DoctorReport) {
     if problems == 0 && warnings == 0 {
         ui.ok("Everything looks good.");
     } else {
-        let text = format!("{problems} problem(s), {warnings} warning(s).");
+        let text = format!(
+            "{}, {}.",
+            plural(problems, "problem", "problems"),
+            plural(warnings, "warning", "warnings")
+        );
         if problems > 0 {
             ui.blocked(&text);
         } else {

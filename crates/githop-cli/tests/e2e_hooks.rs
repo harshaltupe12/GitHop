@@ -106,10 +106,18 @@ fn init_installs_hooks_with_the_built_binary() {
     .unwrap();
     let (code, out, _) = env.run(&env.home(), &["init", "--yes"]);
     assert_eq!(code, 0);
+    // Regression D11: say what install did.
     assert!(
-        out.contains("already set up") && out.contains("Hooks are up to date"),
+        out.contains("already set up") && out.contains("Hooks repaired: pre-commit."),
         "{out}"
     );
+    let (code, out, _) = env.run(&env.home(), &["hooks", "install"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Hooks are up to date."), "{out}");
+    env.run(&env.home(), &["hooks", "uninstall"]);
+    let (code, out, _) = env.run(&env.home(), &["hooks", "install", "--yes"]);
+    assert_eq!(code, 0);
+    assert!(out.contains("Hooks installed."), "{out}");
     let (code, _, _) = env.run(&env.home(), &["hooks", "status"]);
     assert_eq!(code, 0, "hooks healthy after rerun");
 }

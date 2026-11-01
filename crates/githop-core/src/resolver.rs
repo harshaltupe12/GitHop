@@ -210,7 +210,11 @@ pub fn resolve(
 fn owner_match<'a>(set: &'a ProfileSet, owner: &str) -> Option<&'a str> {
     set.profiles
         .iter()
-        .find(|p| p.owners.iter().any(|o| o.trim().eq_ignore_ascii_case(owner)))
+        .find(|p| {
+            p.owners
+                .iter()
+                .any(|o| o.trim().eq_ignore_ascii_case(owner))
+        })
         .map(|p| p.id.as_str())
 }
 

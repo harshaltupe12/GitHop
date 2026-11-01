@@ -23,7 +23,7 @@ pub const PASSWORD_ENV: &str = "GITHOP_EXPORT_PASSWORD";
 pub struct ExportArgs {
     /// File to write, e.g. profiles.githop
     pub file: PathBuf,
-    /// Also include your SSH private keys (they keep their own passphrase)
+    /// Also include your private SSH keys (passphrases stay on)
     #[arg(long)]
     pub include_keys: bool,
     /// Replace the file if it already exists, without asking

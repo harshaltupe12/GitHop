@@ -963,7 +963,7 @@ impl Rewrite<'_> {
         self.verify(&new_head)?;
 
         let msg = format!(
-            "githop fix: re-stamped {} commit(s), backup {}",
+            "githop fix: re-stamped {} commits, backup {}",
             map.len(),
             self.backup_ref
         );

@@ -5,6 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use githop_core::paths::normalize_repo_root;
 use githop_core::scan::{self, ScannedRepo};
+use githop_core::text::{plural, wrap};
 use githop_core::{pin as core_pin, ProfileSet, Repo, ResolutionSource};
 use serde_json::json;
 
@@ -242,7 +243,11 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
             ));
         }
         for w in &r.resolution.warnings {
-            ui.warn(&format!("{name}: {}", super::describe_warning(w, &set)));
+            ui.warn(&wrap(
+                &format!("{name}: {}", super::describe_warning(w, &set)),
+                crate::ui::MAX_WIDTH - 2,
+                "  ",
+            ));
         }
     }
     for (root, e) in &apply_errors {
@@ -251,8 +256,8 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
 
     let count = |want: &[RepoStatus]| statuses.iter().filter(|s| want.contains(s)).count();
     ui.line(&format!(
-        "{} repo(s): {} pinned, {} not pinned, {} unresolved.",
-        repos.len(),
+        "{}: {} pinned, {} not pinned, {} unresolved.",
+        plural(repos.len(), "repo", "repos"),
         count(&[RepoStatus::Pinned, RepoStatus::PinnedNow]),
         count(&[
             RepoStatus::NotPinned,
@@ -262,7 +267,10 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
         count(&[RepoStatus::Unresolved]),
     ));
     if args.apply {
-        ui.ok(&format!("Pinned {} repo(s).", applied.len()));
+        ui.ok(&format!(
+            "Pinned {}.",
+            plural(applied.len(), "repo", "repos")
+        ));
     }
     let waiting = repos
         .iter()
@@ -285,9 +293,19 @@ pub fn run(ctx: &Ctx, args: ScanArgs) -> Result<Exit> {
         ));
     }
     if default_only > 0 {
-        ui.hint(&format!(
-            "{default_only} repo(s) only matched the default profile and weren't pinned. \
-             Add owner or folder rules, or use --include-default."
+        ui.hint(&wrap(
+            &format!(
+                "{} only matched the default profile and {} pinned. \
+                 Add owner or folder rules, or use --include-default.",
+                plural(default_only, "repo", "repos"),
+                if default_only == 1 {
+                    "wasn't"
+                } else {
+                    "weren't"
+                }
+            ),
+            crate::ui::MAX_WIDTH,
+            "",
         ));
     }
     Ok(Exit::Ok)

@@ -148,7 +148,10 @@ pub fn status_line(status: Status, msg: &str, color: bool, ascii: bool) -> Strin
 pub fn safe(msg: &str, ascii: bool) -> String {
     let s = terminal_safe(msg);
     if ascii {
-        s.replace('—', "-").replace('…', "...").replace('•', "*").replace('→', "->")
+        s.replace('—', "-")
+            .replace('…', "...")
+            .replace('•', "*")
+            .replace('→', "->")
     } else {
         s.into_owned()
     }
@@ -528,7 +531,11 @@ mod tests {
     #[test]
     fn table_aligns_wide_characters() {
         let rows = vec![
-            vec!["work".to_string(), "Ünïcødé Wörk 日本".to_string(), "x".into()],
+            vec![
+                "work".to_string(),
+                "Ünïcødé Wörk 日本".to_string(),
+                "x".into(),
+            ],
             vec!["home".to_string(), "Home".to_string(), "y".into()],
         ];
         let t = render_table(&["Id", "Label", "End"], &rows, 80, false);

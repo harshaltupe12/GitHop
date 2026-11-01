@@ -10,6 +10,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[derive(Debug, Parser)]
 #[command(
     name = "githop",
+    bin_name = "githop",
     version,
     about = "Hop between git identities safely",
     long_about = "Give each git identity (Office, Personal, …) its own name, email and SSH key.\n\
@@ -29,7 +30,7 @@ pub struct Cli {
 /// Flags accepted by every command.
 #[derive(Debug, Clone, Default, Args)]
 pub struct GlobalArgs {
-    /// JSON output (list, status, scan, doctor, fix, …)
+    /// JSON output where available (list, status, fix, …)
     #[arg(long, global = true)]
     pub json: bool,
 
@@ -292,7 +293,7 @@ pub struct HooksInstallArgs {
     /// Don't ask for confirmation
     #[arg(short, long)]
     pub yes: bool,
-    /// Also pass through reference-transaction and post-index-change (slower commits)
+    /// Also pass through reference-transaction and post-index-change (slower)
     #[arg(long, conflicts_with = "common_stubs")]
     pub all_stubs: bool,
     /// Skip those two rarely used hooks again (the default)

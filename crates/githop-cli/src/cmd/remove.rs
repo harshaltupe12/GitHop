@@ -121,8 +121,13 @@ pub fn run(ctx: &Ctx, args: RemoveArgs) -> Result<Exit> {
     ));
     if stale > 0 {
         ui.warn(&format!(
-            "{stale} repo(s) are still pinned to {}. Commits there will be checked against \
+            "{} still pinned to {}. Commits there will be checked against \
              other rules until you pin them again.",
+            if stale == 1 {
+                "1 repo is".to_string()
+            } else {
+                format!("{stale} repos are")
+            },
             profile.label
         ));
         ui.hint("Pin each one: githop pin <profile>");

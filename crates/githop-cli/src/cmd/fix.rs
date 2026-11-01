@@ -15,6 +15,7 @@
 use anyhow::Result;
 use githop_core::check::OffendingCommit;
 use githop_core::fix::{self, FixPlan};
+use githop_core::text::wrap;
 use githop_core::{CoreError, Paths, Profile, ProfileSet, Store};
 use serde_json::json;
 
@@ -189,19 +190,29 @@ fn show_plan(ctx: &Ctx, plan: &FixPlan, profiles: &ProfileSet, owner: Option<&Pr
 
     if !plan.pushed_offenders.is_empty() {
         let n = plan.pushed_offenders.len();
-        ui.warn(&format!(
-            "{} already pushed {} another profile's email. GitHop never changes pushed commits.",
-            commits(n),
-            verb(n, "uses", "use")
+        // Security 9.7: a tagged commit counts as pushed, even when the tag
+        // is only local, so say so (the push check may still block it).
+        ui.warn(&wrap(
+            &format!(
+                "{} already pushed or tagged {} another profile's email. GitHop never \
+                 changes pushed commits, and treats tagged ones as pushed.",
+                commits(n),
+                verb(n, "uses", "use")
+            ),
+            crate::ui::MAX_WIDTH - 2,
+            "  ",
         ));
         ui.table(
             &["Commit", "Message", "Email"],
             &rows(&plan.pushed_offenders, None, arrow),
         );
-        ui.hint(
-            "To change them you'd have to rewrite shared history yourself (git rebase, then a \
-             force push). Check with your team first.",
-        );
+        ui.hint(&wrap(
+            "If a tag on them is only on this PC, delete it (git tag -d <tag>) and run \
+             githop fix again. Pushed ones you'd have to rewrite yourself (git rebase, then \
+             a force push). Check with your team first.",
+            crate::ui::MAX_WIDTH,
+            "",
+        ));
     }
 
     if !plan.offenders.is_empty() {

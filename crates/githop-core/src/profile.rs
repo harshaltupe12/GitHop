@@ -519,10 +519,18 @@ fn check_shape(out: &mut Issues, p: &Profile) {
             "The label can't contain line breaks, tabs or other control characters.".to_string(),
         );
     } else if p.label.chars().count() > MAX_NAME_LEN {
-        out.error(p, "label", format!("The label is too long (up to {MAX_NAME_LEN} characters)."));
+        out.error(
+            p,
+            "label",
+            format!("The label is too long (up to {MAX_NAME_LEN} characters)."),
+        );
     }
     if p.name.chars().count() > MAX_NAME_LEN {
-        out.error(p, "name", format!("The name is too long (up to {MAX_NAME_LEN} characters)."));
+        out.error(
+            p,
+            "name",
+            format!("The name is too long (up to {MAX_NAME_LEN} characters)."),
+        );
     }
     if p.email.chars().any(char::is_control) {
         out.error(
@@ -531,7 +539,11 @@ fn check_shape(out: &mut Issues, p: &Profile) {
             "The email can't contain line breaks or other control characters.".to_string(),
         );
     } else if p.email.trim().len() > MAX_EMAIL_LEN {
-        out.error(p, "email", format!("The email is too long (up to {MAX_EMAIL_LEN} characters)."));
+        out.error(
+            p,
+            "email",
+            format!("The email is too long (up to {MAX_EMAIL_LEN} characters)."),
+        );
     }
     let key = p.ssh_key.to_string_lossy();
     if key.chars().any(|c| c.is_control() || c == '"') {
@@ -543,14 +555,19 @@ fn check_shape(out: &mut Issues, p: &Profile) {
         );
     } else if key.len() > MAX_PATH_LEN {
         out.error(p, "ssh_key", "The key path is too long.".to_string());
-    } else if key
-        .split(['/', '\\'])
-        .any(|part| part.trim() == "..")
-    {
-        out.error(p, "ssh_key", "Key paths with \"..\" aren't allowed.".to_string());
+    } else if key.split(['/', '\\']).any(|part| part.trim() == "..") {
+        out.error(
+            p,
+            "ssh_key",
+            "Key paths with \"..\" aren't allowed.".to_string(),
+        );
     }
     if p.owners.len() > MAX_LIST_LEN {
-        out.error(p, "owners", format!("That's too many owners (up to {MAX_LIST_LEN})."));
+        out.error(
+            p,
+            "owners",
+            format!("That's too many owners (up to {MAX_LIST_LEN})."),
+        );
     } else if p
         .owners
         .iter()
@@ -559,7 +576,11 @@ fn check_shape(out: &mut Issues, p: &Profile) {
         out.error(p, "owners", "An owner name isn't valid.".to_string());
     }
     if p.folders.len() > MAX_LIST_LEN {
-        out.error(p, "folders", format!("That's too many folders (up to {MAX_LIST_LEN})."));
+        out.error(
+            p,
+            "folders",
+            format!("That's too many folders (up to {MAX_LIST_LEN})."),
+        );
     } else if p
         .folders
         .iter()

@@ -38,13 +38,21 @@ GitHop decides in this order and stops at the first match:
    repo's own `.git/config` as `githop.profile`.
 2. **Owner** — the GitHub user or organisation in the repo's `origin` URL
    (`git@github.com:office-org/app.git` → owner `office-org`). Every profile lists
-   the owners it covers. SSH host aliases that point at `github.com` work too.
+   the owners it covers. SSH host aliases that point at `github.com` work too
+   (`Host gh-office` + `HostName github.com` in `~/.ssh/config`, remote
+   `gh-office:office-org/app.git`): `init`, `add`, `edit`, `use` and
+   `hooks install` read them, and the hooks re-read `~/.ssh/config` whenever it
+   changes, so a new alias works on the next commit — no `scan` needed.
 3. **Folder** — the repo lives inside one of the profile's folders, e.g.
    `C:/Office/`. When folders nest, the longest match wins.
 4. **Default profile** — used when nothing above matches. Switch it any time with
    `githop use <profile>` (or from the tray).
 
 If the owner and the folder disagree, the owner wins and GitHop tells you once.
+If a repo is pinned to one profile but its owner or folder rule now names
+another (you added the owner later), the pin still wins, and `githop status`,
+`githop doctor` (run in the repo), `githop scan` and `githop edit` say so with
+the `githop pin` command that changes it.
 If nothing matches and there's no default profile, GitHop asks you to pin the repo:
 `githop pin <profile>`.
 
@@ -84,7 +92,12 @@ Tips:
   real email then never appears in public commits.
 - Give the key a passphrase (the default). Windows' OpenSSH agent can remember it
   for you — see [ssh-agent](#ssh-agent-keeps-asking-for-the-passphrase).
-- Cloning a repo pins it automatically: `✓ GitHop: pinned to Personal`.
+- Cloning a repo whose owner or folder rule matches pins it automatically:
+  `✓ GitHop: pinned to Personal`. So does checking out a submodule. A repo
+  that only the default profile covers isn't pinned (an owner rule added later
+  should still win); GitHop says so and how to pin it. Cloning an *empty* repo
+  runs no checkout, so it isn't pinned until its first commit with the wrong
+  identity, which is blocked and then pinned.
 
 `[screenshot: onboarding — Safety first step]`
 
@@ -107,8 +120,16 @@ Commit would use me@personal.example.
 Run: githop pin office
 ```
 
+Only an owner or folder match is pinned by a blocked commit ("Identity fixed
+for this repo: pinned to Office. Run the commit again."). When only the default
+profile matches, the commit is blocked but nothing is pinned and your own
+settings in the repo are left alone; pin the right profile yourself:
+`githop pin <profile>`.
+
 **What happens on a wrong identity** is a setting (`enforce` in
-`settings.toml`, or Settings in the app):
+`settings.toml`, or Settings in the app). A change takes effect at once, also
+when you edit `settings.toml` by hand: the hooks read the mode each time they
+need it, so there's nothing to reinstall.
 
 | Mode | Wrong identity | GitHop itself has a problem |
 |---|---|---|
@@ -127,7 +148,9 @@ your work isn't blocked by a GitHop bug.
 ## 4. Command reference
 
 Every command accepts `--no-color`, `-q/--quiet` and `-v/--verbose`.
-`--json` prints JSON for `list`, `status`, `scan`, `doctor` and `test`.
+`--json` prints JSON for `list`, `status`, `scan`, `doctor`, `test`, `check`,
+`fix`, `hooks status` and `wipe` (see [cli-json.md](cli-json.md)); the other
+commands refuse it (exit 2).
 Colours are off when `NO_COLOR` is set; `GITHOP_ASCII=1` uses `[ok]`,
 `[blocked]`, `[warn]` instead of symbols.
 
@@ -136,7 +159,7 @@ input, wrong password, bad file) · `3` internal error (hooks treat it as fail-o
 
 | Command | What it does |
 |---|---|
-| `githop init [--id --label --name --email --color --key] [-y]` | First-time setup: backs up your global git config, creates your first profile from your current identity, installs the hooks. |
+| `githop init [--id --label --name --email --color --key] [--no-hooks] [-y]` | First-time setup: backs up your global git config, creates your first profile from your current identity, installs the hooks. |
 | `githop add [--id --label --name --email --color --owner … --folder … --key]` | Add a profile. Asks for anything missing when run in a terminal. Default key path: `~/.ssh/githop_<id>`. |
 | `githop edit <id> [--label --name --email --color --owner … / --no-owners --folder … / --no-folders --key --repin]` | Change a profile. |
 | `githop remove <id> [-y] [--new-default <id>]` | Remove a profile. Its SSH key is kept. |
@@ -151,7 +174,8 @@ input, wrong password, bad file) · `3` internal error (hooks treat it as fail-o
 | `githop fix` | Re-stamp unpushed commits that used the wrong identity (backup ref first). |
 | `githop export <file> [--include-keys] [-y]` | Save your profiles to a password-protected file. See [§5](#5-moving-to-another-pc-export--import). |
 | `githop import <file> [--on-conflict skip\|replace\|rename] [-y]` | Add profiles from an export file. |
-| `githop wipe [-y] [--keep-keys \| --delete-keys]` | Remove GitHop and restore your original git settings. See [§7](#7-uninstall-and-wipe). |
+| `githop wipe [-y] [--keep-keys \| --delete-keys] [--keep-pins] [--keep-data] [--from-uninstaller]` | Remove GitHop and restore your original git settings. See [§7](#7-uninstall-and-wipe). |
+| `githop hooks install\|uninstall\|status\|snippet <stage>` | Install, remove or check the hooks; print the line for husky/lefthook. `install` works even when `profiles.toml` is damaged. |
 | `githop check --stage clone\|commit\|push` | Used by the hooks. You don't normally run it yourself. |
 
 ---
@@ -208,7 +232,7 @@ For each clashing profile you choose:
 |---|---|
 | `skip` | Keep yours, don't import this one (or its key). |
 | `replace` | Replace your clashing profile(s) with the one from the file. If its SSH key differs from the one on this PC, your old key file is **renamed** to `githop_<id>.replaced-<time>`, never deleted. |
-| `rename` | Import it under a new ID (`office-2` by default). Owners and folders that already belong to another profile are left out. Its key is saved as `githop_<new id>`. A profile with the same email can't be renamed — choose skip or replace. |
+| `rename` | Import it under a new ID (`office-2` by default). Owners and folders that already belong to another profile are left out. Its key is saved as `githop_<new id>`, unless this PC already has the very same key: then it uses that key file, and GitHop says so ("uses your existing key githop_office (same key)"). A profile with the same email can't be renamed — choose skip or replace. |
 
 A colour that's already taken is swapped for a free one automatically.
 
@@ -226,6 +250,11 @@ After importing:
   import never weakens an existing setup.
 - To make the imported default profile active for git everywhere:
   `githop use <id>`.
+- On a new PC, import doesn't turn the checks on: run `githop init` (or
+  `githop hooks install`) afterwards.
+- After a `replace` that changed a profile's email, name or key, GitHop lists
+  what still has the old details, like `githop edit` does: repos pinned to it
+  (`githop edit <id> --repin`) and your global identity (`githop use <id>`).
 
 GitHop checks every import file strictly: size limit (1 MiB), exact layout,
 no unknown fields, valid profiles, and key names of the form `githop_<id>` only
@@ -243,12 +272,23 @@ Start with `githop doctor`. It lists each problem with the step that fixes it.
 ### A repo uses husky, lefthook or pre-commit (local `core.hooksPath`)
 
 These tools set `core.hooksPath` inside the repo, which hides GitHop's global
-hooks there. `githop status` and `githop scan` warn about it. Add this line near
-the top of the repo's `pre-commit` hook (and the same with `--stage push` in
-`pre-push`):
+hooks there. `githop status` and `githop scan` warn about it. Add the line
+`githop hooks snippet commit` prints near the top of the repo's `pre-commit`
+hook:
 
 ```sh
 "C:/Users/you/AppData/Local/Programs/GitHop/githop.exe" check --stage commit -- "$@"; [ $? -ne 1 ] || exit 1
+```
+
+and the lines `githop hooks snippet push` prints near the top of `pre-push`.
+pre-push gets the list of refs on stdin, and the rest of the hook (for example
+`git lfs pre-push`) needs it too, so the push snippet reads it once and hands it
+back:
+
+```sh
+GITHOP_IN=$(cat); printf '%s\n' "$GITHOP_IN" | "C:/…/githop.exe" check --stage push -- "$@"; [ $? -ne 1 ] || exit 1; exec <<GITHOP_EOF
+$GITHOP_IN
+GITHOP_EOF
 ```
 
 It only stops the commit on a confirmed wrong identity; if GitHop itself has a
@@ -298,14 +338,29 @@ $env:GITHOP_DISABLE = "1"; git commit -m "…"; Remove-Item Env:GITHOP_DISABLE
 GITHOP_DISABLE=1 git commit -m "…"
 ```
 
-Only GitHop's check is skipped; your repo's own hooks still run.
+Only GitHop's check is skipped; your repo's own hooks still run. A push made
+this way is still *recorded* (GitHop only notes which commits it published,
+it checks nothing), so `githop fix` never rewrites those commits later.
 
 ### A commit was blocked but the identity looks right
 
 Run `githop status` in the repo. Common causes: the repo is pinned to another
 profile (`githop pin <profile>` to change it), the repo's own `.git/config`
 sets `user.email`, or `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` are set in your
-environment.
+environment. An `author.email` or `committer.email` in your global config (or a
+`git -c user.email=…`) beats the pin; the block message names it and the
+command that removes it, e.g. `git config --global --unset author.email`.
+
+### Commits feel slow
+
+Each `git commit` starts a few small hook scripts with Git for Windows' `sh`
+(`pre-commit`, then `prepare-commit-msg`, `commit-msg` and `post-commit`). On
+Windows each `sh` start costs roughly 30–60 ms, more on a busy machine; the
+GitHop check in `pre-commit` itself starts `githop.exe` and one `git config`
+read in a pinned repo. Only failures read `settings.toml` from the scripts, and
+only a changed `~/.ssh/config` is re-read by the check. `githop doctor` lists
+the rarely used pass-through hooks GitHop leaves out by default
+(`githop hooks install --all-stubs` adds them back).
 
 ### "Open a new terminal to use githop"
 
@@ -328,13 +383,21 @@ install don't see it yet.
 ```powershell
 githop wipe                 # asks you to type WIPE
 githop wipe --delete-keys   # also delete SSH keys GitHop created (~/.ssh/githop_*)
+githop wipe --keep-pins     # leave the repo pins in place
+githop wipe --keep-data     # keep profiles and settings (still restores git)
 ```
 
 Wipe, in order: removes GitHop's hooks (restores the global hooks path you had
 before, if any), restores the global git settings GitHop changed from the first
-backup, optionally unpins the repos GitHop pinned, removes the start-with-Windows
-entry, then deletes GitHop's data folder. SSH keys are kept unless you ask for
-them to be deleted. If wipe is interrupted, run it again to finish.
+backup, optionally unpins the repos GitHop pinned (and removes GitHop's Fix
+backups `refs/githop/…` and push record `.git/githop/pushed` in those repos;
+repos GitHop didn't pin keep theirs), removes the start-with-Windows entry, then
+deletes the files GitHop wrote in its data folder. Files you put there yourself,
+also inside `hooks\`, `backups\` and `logs\`, are kept. SSH keys are kept unless
+you ask for them to be deleted (`--delete-keys` also removes the
+`githop_<id>.replaced-<time>` copies an import moved aside). If wipe is
+interrupted, run it again to finish. `--from-uninstaller` never asks and always
+keeps keys (it can't be combined with `--delete-keys`).
 
 Uninstalling the app from Windows Settings runs the same wipe (keeping your SSH
 keys). Choose "keep my settings" in the uninstaller to keep your profiles but
@@ -376,7 +439,7 @@ GitHop is honest about what it can't do:
 | Profiles | `%APPDATA%\githop\profiles.toml` |
 | Settings | `%APPDATA%\githop\settings.toml` |
 | Hooks | `%APPDATA%\githop\hooks\` |
-| Backups (git config, profiles) | `%APPDATA%\githop\backups\` |
+| Backups (git config, profiles) | `%APPDATA%\githop\backups\` — `gitconfig.original` plus the newest 10 git config backups, and the newest 5 profile backups |
 | Activity log (off by default) | `%APPDATA%\githop\logs\` — never records code, file names, commit messages or repo URLs; deleted after 7 days |
 | SSH keys | `%USERPROFILE%\.ssh\githop_<id>` |
 | Per-repo pin | `<repo>\.git\config` (`githop.profile`) |

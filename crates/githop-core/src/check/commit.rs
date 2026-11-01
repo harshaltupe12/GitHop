@@ -207,7 +207,10 @@ impl IdentityOverride {
                 self.key
             ),
             _ if self.origin.is_empty() => {
-                format!("{} is set in your git config and overrides the pin.", self.key)
+                format!(
+                    "{} is set in your git config and overrides the pin.",
+                    self.key
+                )
             }
             _ => format!(
                 "{} is set in {} and overrides the pin.",

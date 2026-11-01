@@ -122,18 +122,17 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .unwrap_or_else(|| label_from_id(&id));
-    let color = match color.or_else(|| set.next_free_color()) {
-        Some(c) => c,
-        None => {
-            return Err(usage_hint(
+    let color =
+        match color.or_else(|| set.next_free_color()) {
+            Some(c) => c,
+            None => return Err(usage_hint(
                 format!(
-                    "All {} profile colours are taken, so there's no colour left for a new profile.",
-                    ProfileColor::ALL.len()
-                ),
+                "All {} profile colours are taken, so there's no colour left for a new profile.",
+                ProfileColor::ALL.len()
+            ),
                 "Each profile needs its own colour. Remove one you don't use: githop remove <id>",
-            ))
-        }
-    };
+            )),
+        };
     let ssh_key = match key {
         Some(k) => k,
         None => ssh::default_key_path(git, &id).ok_or_else(|| {

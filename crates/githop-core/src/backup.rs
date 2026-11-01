@@ -4,7 +4,8 @@
 //! Phase 1 "model & storage" task.
 //!
 //! Layout in `backups/`:
-//! - `gitconfig.<timestamp>`: one per [`backup_global_gitconfig`] call.
+//! - `gitconfig.<timestamp>`: one per [`backup_global_gitconfig`] call; only
+//!   the newest [`GITCONFIG_BACKUPS_KEPT`] are kept (regression D18).
 //! - `gitconfig.original`: copy of the first backup, never overwritten.
 //! - `<backup>.absent`: empty marker next to a backup taken when there was no
 //!   global config file. The backup itself is then empty, and restoring it
@@ -29,6 +30,9 @@ use crate::store::{atomic_write, list_names, write_new, write_timestamped};
 
 /// File name of the first-ever backup; never overwritten.
 pub const ORIGINAL_GITCONFIG: &str = "gitconfig.original";
+
+/// Timestamped global config backups kept (plus `gitconfig.original`).
+pub const GITCONFIG_BACKUPS_KEPT: usize = 10;
 
 /// Prefix of timestamped global config backups.
 const GITCONFIG_PREFIX: &str = "gitconfig.";
@@ -90,6 +94,9 @@ pub fn backup_global_gitconfig(paths: &Paths, git: &Git) -> Result<PathBuf> {
     if !existed {
         write_marker(&marker_for(&stamped))?;
     }
+
+    // Housekeeping: a failure here must not fail the backup itself.
+    let _ = prune_gitconfig_backups(&dir, GITCONFIG_BACKUPS_KEPT);
 
     let original = dir.join(ORIGINAL_GITCONFIG);
     match write_new(&original, &bytes) {
@@ -232,6 +239,20 @@ pub fn restore_managed_keys(paths: &Paths, git: &Git, keys: &[String]) -> Result
         }
     }
     Ok(plan)
+}
+
+/// Delete all but the newest `keep` `gitconfig.<timestamp>` backups (and
+/// their `.absent` markers). `gitconfig.original` is never touched.
+fn prune_gitconfig_backups(dir: &Path, keep: usize) -> Result<()> {
+    let mut names = list_names(dir, is_timestamped_gitconfig)?;
+    names.sort();
+    let drop = names.len().saturating_sub(keep);
+    for name in &names[..drop] {
+        let p = dir.join(name);
+        remove_if_exists(&p)?;
+        remove_if_exists(&marker_for(&p))?;
+    }
+    Ok(())
 }
 
 /// Newest `gitconfig.<timestamp>` in `dir` (not `.original`, not markers).
@@ -443,5 +464,23 @@ mod tests {
         assert!(!is_timestamped_gitconfig(
             "profiles.20261031T142233.123Z.toml"
         ));
+    }
+
+    /// Regression D18: 30 backups leave the original plus the newest 10.
+    #[test]
+    fn global_config_backups_are_capped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::at(tmp.path().join("data"));
+        let cfg = tmp.path().join("gitconfig");
+        std::fs::write(&cfg, "[user]\n\tname = x\n").unwrap();
+        let git = Git::with_exe("git").env("GIT_CONFIG_GLOBAL", &cfg);
+        let mut last = PathBuf::new();
+        for _ in 0..30 {
+            last = backup_global_gitconfig(&paths, &git).unwrap();
+        }
+        let names = list_names(&paths.backups_dir(), |n| n.starts_with("gitconfig.")).unwrap();
+        assert_eq!(names.len(), GITCONFIG_BACKUPS_KEPT + 1, "{names:?}");
+        assert!(names.iter().any(|n| n == ORIGINAL_GITCONFIG));
+        assert!(last.is_file(), "the newest is kept");
     }
 }

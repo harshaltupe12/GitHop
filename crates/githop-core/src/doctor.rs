@@ -154,6 +154,9 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
         let snapshot = ConfigSnapshot::read(git, &cwd);
         if opts.cwd.is_some() {
             check_repo_hooks_path(&mut r, snapshot.as_ref().ok(), &settings, opts, paths, git);
+            if let (Some(store), Ok(snap)) = (&store, &snapshot) {
+                check_pin_disagreement(&mut r, git, &cwd, snap, store);
+            }
         }
         check_ssh_config(&mut r, git);
         if opts.refresh_aliases {
@@ -166,6 +169,56 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
     }
     check_agent(&mut r);
     r
+}
+
+/// In a repo: the pin disagrees with the repo's owner or folder rule
+/// (regression D7). One extra spawn (`rev-parse`) to find the repo root.
+fn check_pin_disagreement(
+    r: &mut DoctorReport,
+    git: &Git,
+    cwd: &Path,
+    snapshot: &ConfigSnapshot,
+    store: &Store,
+) {
+    let Ok(repo) = crate::repo::Repo::discover(git, cwd) else {
+        return;
+    };
+    let aliases = crate::aliases::current(store.paths(), git, store.settings());
+    let res = crate::resolver::resolve(snapshot, repo.root(), store.profiles(), &aliases);
+    for w in &res.warnings {
+        if let crate::resolver::ResolutionWarning::PinOwnerDisagree {
+            pinned_profile,
+            rule_profile,
+            rule,
+            owner,
+        } = w
+        {
+            let label = |id: &str| {
+                store
+                    .profiles()
+                    .get(id)
+                    .map(|p| p.label.clone())
+                    .unwrap_or_else(|| id.to_string())
+            };
+            let why = match (rule, owner) {
+                (crate::resolver::ResolutionSource::Owner, Some(o)) => {
+                    format!("owner {o} belongs to")
+                }
+                _ => "its folder belongs to".to_string(),
+            };
+            r.add(
+                "pin-owner",
+                CheckStatus::Warning,
+                "This repo",
+                format!(
+                    "This repo is pinned to {}, but {why} {}. The pin wins.",
+                    label(pinned_profile),
+                    label(rule_profile)
+                ),
+                Some(&format!("Run: githop pin {rule_profile}")),
+            );
+        }
+    }
 }
 
 /// Pinned repos with their own `.git/hooks/<optional hook>` while GitHop skips
@@ -276,6 +329,7 @@ fn check_store(r: &mut DoctorReport, paths: &Paths) -> Option<Store> {
                 "store",
                 CheckStatus::Problem,
                 "Profiles",
+                // One sentence (D16): the full parser report is in `githop doctor -v`.
                 format!("GitHop data can't be read: {}", sentence(&e.to_string())),
                 Some("Restore the last good copy from the backups folder in GitHop's data folder."),
             );
@@ -526,7 +580,11 @@ fn check_hooks(
                 "hooks-files",
                 CheckStatus::Problem,
                 T,
-                format!("{} missing: {}", files_are(h.missing.len()), list(&h.missing)),
+                format!(
+                    "{} missing: {}",
+                    files_are(h.missing.len()),
+                    list(&h.missing)
+                ),
                 Some(REINSTALL),
             );
         }
@@ -538,7 +596,11 @@ fn check_hooks(
                 T,
                 format!(
                     "{} changed by hand: {}",
-                    if h.tampered.len() == 1 { "A hook file was" } else { "Hook files were" },
+                    if h.tampered.len() == 1 {
+                        "A hook file was"
+                    } else {
+                        "Hook files were"
+                    },
                     list(&h.tampered)
                 ),
                 Some("Run: githop hooks install (it writes them again)"),
@@ -566,15 +628,31 @@ fn check_hooks(
                 T,
                 format!(
                     "GitHop didn't write {} in its hooks folder, and git may run {}: {}",
-                    if h.unexpected.len() == 1 { "this file" } else { "these files" },
-                    if h.unexpected.len() == 1 { "it" } else { "them" },
+                    if h.unexpected.len() == 1 {
+                        "this file"
+                    } else {
+                        "these files"
+                    },
+                    if h.unexpected.len() == 1 {
+                        "it"
+                    } else {
+                        "them"
+                    },
                     list(&h.unexpected)
                 ),
                 Some(&format!(
                     "Delete {} from {} unless you put {} there on purpose.",
-                    if h.unexpected.len() == 1 { "it" } else { "them" },
+                    if h.unexpected.len() == 1 {
+                        "it"
+                    } else {
+                        "them"
+                    },
                     h.hooks_dir,
-                    if h.unexpected.len() == 1 { "it" } else { "them" }
+                    if h.unexpected.len() == 1 {
+                        "it"
+                    } else {
+                        "them"
+                    }
                 )),
             );
         }

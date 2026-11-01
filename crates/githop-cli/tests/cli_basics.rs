@@ -9,7 +9,7 @@ use support::TestEnv;
 
 const SUBCOMMANDS: &[&str] = &[
     "init", "add", "edit", "remove", "list", "use", "status", "pin", "unpin", "scan", "keygen",
-    "test", "doctor", "wipe", "check", "hooks", "fix",
+    "test", "doctor", "wipe", "check", "hooks", "fix", "export", "import",
 ];
 
 /// Words Design §9.2 says to avoid (matched as whole words, case-insensitive).
@@ -89,6 +89,8 @@ fn every_subcommand_has_help() {
             );
         }
         assert_fits_80(&text, &format!("githop {cmd} --help"));
+        // Regression D14: the usage line names githop, not githop.exe.
+        assert!(!text.contains("githop.exe"), "githop {cmd} --help: {text}");
     }
 }
 

@@ -1374,10 +1374,7 @@ fn enforce_change_leaves_hooks_current() {
     let h = hooks::verify_hooks(&paths, &git, &settings);
     assert!(h.stale.is_empty() && h.tampered.is_empty(), "{h:?}");
     let pre_commit = std::fs::read_to_string(paths.hooks_dir().join("pre-commit")).unwrap();
-    assert!(pre_commit.contains(&format!(
-        "SETTINGS=\"{}\"\n",
-        slash(&paths.settings_file())
-    )));
+    assert!(pre_commit.contains(&format!("SETTINGS=\"{}\"\n", slash(&paths.settings_file()))));
     assert!(!pre_commit.contains("STRICT="));
     assert_eq!(
         std::fs::read(env.global_config()).unwrap(),
@@ -1440,7 +1437,11 @@ fn block_strict_is_read_at_run_time() {
     // The user switches back by hand.
     std::fs::write(&h.settings, "version = 1\nenforce = \"block\"\n").unwrap();
     let out = h.commit(&repo, "b.txt", &[]);
-    assert!(out.status.success(), "block mode fails open: {}", stderr(&out));
+    assert!(
+        out.status.success(),
+        "block mode fails open: {}",
+        stderr(&out)
+    );
     assert!(!stderr(&out).contains("blocked"), "{}", stderr(&out));
     // ...and to strict again, CRLF and indentation as an editor may leave it.
     std::fs::write(
@@ -1468,11 +1469,18 @@ fn hook_script_messages_honour_ascii_mode() {
     let repo = h.env.init_repo("r");
     let out = h.commit(&repo, "a.txt", &[("GITHOP_ASCII", "1")]);
     let err = stderr(&out);
-    assert!(err.contains("[blocked] GitHop isn't installed correctly"), "{err}");
+    assert!(
+        err.contains("[blocked] GitHop isn't installed correctly"),
+        "{err}"
+    );
     assert!(!err.contains('✗'), "{err}");
     std::fs::write(&h.settings, "version = 1\n").unwrap();
     let out = h.commit(&repo, "b.txt", &[("GITHOP_ASCII", "1")]);
-    assert!(stderr(&out).contains("[warn] GitHop couldn't check this commit"), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("[warn] GitHop couldn't check this commit"),
+        "{}",
+        stderr(&out)
+    );
 }
 
 /// Regression D4: with GITHOP_DISABLE=1 the pre-push hook still hands the
@@ -1487,7 +1495,11 @@ fn disabled_push_still_calls_githop_to_record() {
         &repo,
         &[("GITHOP_DISABLE", "1"), ("STUB_RC", "1")],
     );
-    assert!(out.status.success(), "disabled push goes through: {}", stderr(&out));
+    assert!(
+        out.status.success(),
+        "disabled push goes through: {}",
+        stderr(&out)
+    );
     let calls = h.calls();
     assert!(calls.contains("githop check --stage push --"), "{calls}");
     assert!(calls.contains("githop-stdin refs/heads/main"), "{calls}");
@@ -1522,8 +1534,16 @@ fn prepare_commit_msg_checks_merge_source_from_the_sequencer() {
         let out = c.output().unwrap();
         (out.status.code(), githop_commit_checks(&h.calls()))
     };
-    assert_eq!(run(None), (Some(1), 1), "sequencer commit checked and blocked");
+    assert_eq!(
+        run(None),
+        (Some(1), 1),
+        "sequencer commit checked and blocked"
+    );
     assert_eq!(run(Some("revert")), (Some(1), 1));
-    assert_eq!(run(Some("merge feat")).1, 0, "git merge: checked in pre-merge-commit");
+    assert_eq!(
+        run(Some("merge feat")).1,
+        0,
+        "git merge: checked in pre-merge-commit"
+    );
     assert_eq!(run(Some("pull")).1, 0);
 }

@@ -236,6 +236,26 @@ fn lf(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// `/c/Users/me/hooks` (MSYS style, which Git for Windows' sh understands) →
+/// `C:/Users/me/hooks`. Other paths are returned as they are.
+pub fn msys_to_windows(path: &str) -> String {
+    let b = path.as_bytes();
+    if cfg!(windows)
+        && b.len() >= 2
+        && b[0] == b'/'
+        && b[1].is_ascii_alphabetic()
+        && (b.len() == 2 || b[2] == b'/')
+    {
+        format!(
+            "{}:/{}",
+            (b[1] as char).to_ascii_uppercase(),
+            path.get(3..).unwrap_or("")
+        )
+    } else {
+        path.to_string()
+    }
+}
+
 /// Expand a leading `~/` in a hooks path like git does (using `home`).
 pub fn expand_home(path: &str, home: Option<&Path>) -> String {
     match (
@@ -1194,7 +1214,8 @@ pub fn verify_hooks(paths: &Paths, git: &Git, settings: &Settings) -> HookHealth
     };
     h.exe_missing = settings.githop_exe.is_empty() || !Path::new(&settings.githop_exe).is_file();
     let home = git.home_dir();
-    let prev_expanded = expand_home(&settings.previous_hooks_path, home.as_deref());
+    let prev_expanded =
+        msys_to_windows(&expand_home(&settings.previous_hooks_path, home.as_deref()));
     h.previous_missing = !settings.previous_hooks_path.is_empty()
         && paths::is_absolute_str(&prev_expanded)
         && !Path::new(&prev_expanded).is_dir();
@@ -1557,6 +1578,17 @@ mod tests {
     fn previous_trailing_slash_trimmed() {
         let s = render_hook("pre-commit", EXE, "C:/hooks/").unwrap();
         assert!(s.contains("PREV=\"C:/hooks\"\n"));
+    }
+
+    /// Security regression 9.4: an MSYS-style previous hooks path exists.
+    #[test]
+    fn msys_paths_become_windows_paths() {
+        if cfg!(windows) {
+            assert_eq!(msys_to_windows("/c/Users/me/hooks"), "C:/Users/me/hooks");
+            assert_eq!(msys_to_windows("/d"), "D:/");
+        }
+        assert_eq!(msys_to_windows("/usr/share"), "/usr/share");
+        assert_eq!(msys_to_windows("C:/x"), "C:/x");
     }
 
     #[test]
