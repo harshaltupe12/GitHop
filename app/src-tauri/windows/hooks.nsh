@@ -176,7 +176,15 @@ FunctionEnd
     DetailPrint "Updating GitHop. Your profiles, hooks and git settings are kept."
   ${Else}
     ; F7: close the app before touching its setup, so it can't re-install
-    ; the hooks, and so cancelling here changes nothing.
+    ; the hooks, and so cancelling here changes nothing. The tray app hides
+    ; instead of quitting, so Restart Manager (inside CheckIfAppIsRunning) can't
+    ; close it and the uninstall would abort: end it (and its WebView2
+    ; children) first. Fixed image name, no user input on the command line.
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM "${MAINBINARYNAME}.exe"'
+    Pop $0
+    ${If} $0 = 0
+      Sleep 1500
+    ${EndIf}
     !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
     ; F5: silent/passive uninstalls keep data unless /DELETEAPPDATA is given.
@@ -215,5 +223,8 @@ FunctionEnd
   ${If} $GitHopKeepSetup <> 1
     DeleteRegKey HKCU "${MANUPRODUCTKEY}"
     DeleteRegKey /ifempty HKCU "${MANUKEY}"
+    ; WebView2 browser cache the app creates next to its exe (no user data).
+    RMDir /r "$INSTDIR\${MAINBINARYNAME}.exe.WebView2"
+    RMDir "$INSTDIR"
   ${EndIf}
 !macroend
