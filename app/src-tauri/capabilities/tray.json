@@ -6,7 +6,6 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-hide",
-    "core:window:allow-set-size",
     "allow-list-profiles",
     "allow-set-default",
     "allow-show-main",

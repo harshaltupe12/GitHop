@@ -360,6 +360,10 @@ fn create_menu_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWi
             .shadow(false)
             .visible(false)
             .focused(true)
+            // Design §0: light mode only, whatever the Windows theme.
+            .theme(Some(tauri::Theme::Light))
+            // Must equal the main window's args (one WebView2 environment).
+            .additional_browser_args(crate::WEBVIEW_BROWSER_ARGS)
             .build()?;
     let handle = window.clone();
     window.on_window_event(move |event| {
