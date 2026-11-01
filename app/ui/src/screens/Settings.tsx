@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Banner } from '../components/Banner';
+import { BrandLockup } from '../components/Brand';
 import { Button } from '../components/Button';
 import { ConfirmDialog, Dialog } from '../components/Dialog';
 import { Checkbox } from '../components/Field';
@@ -289,6 +290,8 @@ function AboutDialog({
       }
     >
       <div className="flex flex-col gap-3">
+        {/* The dialog title already names the app, so the lockup is decorative. */}
+        <BrandLockup height={48} decorative className="mb-1" />
         {version ? <p>{S.about.version(version)}</p> : null}
         {error ? <Banner kind="blocked">{error}</Banner> : null}
         <h3 className="text-body font-medium">{S.about.licences}</h3>

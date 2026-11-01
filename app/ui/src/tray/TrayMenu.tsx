@@ -1,5 +1,6 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { Avatar } from '../components/Avatar';
+import { BrandTile } from '../components/Brand';
 import { Ico, Icons } from '../components/icons';
 import { cx } from '../lib/cx';
 import { sortProfiles } from '../lib/format';
@@ -89,7 +90,14 @@ export function TrayMenu() {
       onKeyDown={onKey}
       className="gh-menu flex w-full flex-col rounded-lg border border-line bg-surface p-1 shadow-float"
     >
-      <div className="px-2 pb-1 pt-1.5 text-small text-ink-muted" aria-hidden="true">
+      <div
+        className="flex items-center gap-2 px-2 pb-1 pt-1.5 text-small text-ink-muted"
+        aria-hidden="true"
+      >
+        {/* Avatar-wide slot: the tile centres over the avatars, the text lines up with labels. */}
+        <span className="flex w-[1.5714rem] shrink-0 justify-center">
+          <BrandTile size={16} />
+        </span>
         {S.tray.heading}
       </div>
       {error ? (

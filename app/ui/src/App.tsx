@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Banner } from './components/Banner';
+import { BrandLockup } from './components/Brand';
 import { Button } from './components/Button';
 import { DefaultPanel } from './components/DefaultPanel';
 import { Icons } from './components/icons';
@@ -186,7 +187,12 @@ function Layout({
         {S.app.skipToContent}
       </a>
       <aside className="flex w-sidebar shrink-0 flex-col justify-between border-r border-line bg-surface p-2">
-        <nav aria-label={S.app.mainNav}>
+        {/* Left edge lines up with the nav icons, centre with the screen title row;
+            ≥ ¼-tile clear space all round (brand/README.md). */}
+        <div className="p-3 pt-4">
+          <BrandLockup height={32} />
+        </div>
+        <nav aria-label={S.app.mainNav} className="flex-1">
           <ul className="flex flex-col gap-0.5">
             {SCREENS.map((s, i) => (
               <li key={s.id}>
