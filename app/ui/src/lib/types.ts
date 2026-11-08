@@ -123,6 +123,15 @@ export type PassphraseState =
 export type RememberOutcome =
   'remembered' | 'no-passphrase' | 'agent-off' | 'cancelled' | 'not-added';
 
+/** Result of Generate key (works before the profile is saved). */
+export type GeneratedKey = {
+  public_key: string;
+  /** Private key path; saved with the profile. */
+  path: string;
+  /** An existing GitHop key at `path` was used instead of a new one. */
+  reused: boolean;
+};
+
 export type ConnectionTest =
   { kind: 'connected'; user: string } | { kind: 'denied' } | { kind: 'failed'; reason: string };
 

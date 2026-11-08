@@ -22,7 +22,7 @@ import { useToast } from '../components/Toast';
 import { applyProfiles } from '../lib/appState';
 import { useConnectionEntry } from '../lib/connection';
 import { cx } from '../lib/cx';
-import { NOREPLY_TEMPLATE, nextColor, normalizePath, slugify } from '../lib/format';
+import { NOREPLY_TEMPLATE, fileName, nextColor, normalizePath, slugify } from '../lib/format';
 import * as ipc from '../lib/ipc';
 import type { IpcError, Profile, ProfileColor, ProfileSet, ValidationIssue } from '../lib/types';
 import { S } from '../strings';
@@ -105,6 +105,7 @@ export function ProfileForm({
   const [noPassphrase, setNoPassphrase] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
+  const [keyReused, setKeyReused] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [ownersNudged, setOwnersNudged] = useState(false);
   // The set as saved most recently from this form (an inline owner fix for
@@ -304,10 +305,12 @@ export function ProfileForm({
     setKeyError(null);
     setGenerating(true);
     try {
-      const pub = await ipc.generateKey(draft.id, noPassphrase);
-      setPublicKey(pub.trim());
-      if (suggested) set('ssh_key', suggested);
-      toast({ message: S.form.keyCreated });
+      // Works before the profile is saved; the key path is saved with it.
+      const res = await ipc.generateKey(draft.id, draft.email, noPassphrase);
+      setPublicKey(res.public_key.trim());
+      setKeyReused(res.reused);
+      set('ssh_key', normalizePath(res.path));
+      toast({ message: res.reused ? S.form.keyReused(fileName(res.path)) : S.form.keyCreated });
     } catch (err) {
       setKeyError((err as IpcError).message);
     } finally {
@@ -330,6 +333,15 @@ export function ProfileForm({
     try {
       await ipc.copyText(publicKey);
       toast({ message: S.form.keyCopied });
+    } catch (err) {
+      toast({ kind: 'error', message: (err as Error).message || String(err) });
+    }
+  };
+
+  const copyTitle = async () => {
+    try {
+      await ipc.copyText(S.form.ghSteps.keyTitle(draft.label || draft.id));
+      toast({ message: S.form.ghSteps.titleCopied });
     } catch (err) {
       toast({ kind: 'error', message: (err as Error).message || String(err) });
     }
@@ -690,29 +702,79 @@ export function ProfileForm({
 
           {publicKey ? (
             <div className="flex flex-col gap-2">
-              <Field label={S.form.publicKey}>
-                {(p) => (
-                  <textarea
-                    {...p}
-                    readOnly
-                    value={publicKey}
-                    rows={3}
-                    className="gh-input w-full resize-none break-all rounded-md border border-line-input bg-bg px-2.5 py-1.5 font-mono text-mono-small text-ink"
-                  />
-                )}
-              </Field>
-              <div className="flex flex-wrap gap-2">
-                <Button icon={Icons.copy} onClick={copyKey}>
-                  {S.form.copyKey}
-                </Button>
-                <Button icon={Icons.external} onClick={() => void ipc.openExternal('ssh-keys')}>
-                  {S.form.openGithub}
-                </Button>
-                <Button icon={Icons.test} onClick={test} loading={testing} disabled={!original}>
-                  {testing ? S.form.testing : S.form.testConnection}
-                </Button>
-              </div>
-              {!original ? <p className="text-small text-ink-muted">{S.form.saveFirst}</p> : null}
+              {/* Guided: how to add this key on GitHub, step by step, in the app. */}
+              <section
+                aria-labelledby={`${formId}-gh-steps`}
+                className="flex flex-col gap-3 rounded-lg border border-line bg-surface px-4 py-3"
+              >
+                <h3 id={`${formId}-gh-steps`} className="text-body font-medium text-ink">
+                  {S.form.ghSteps.title}
+                </h3>
+                <p className="-mt-2 text-small text-ink-muted">
+                  {keyReused ? S.form.ghSteps.introReused : S.form.ghSteps.intro}
+                </p>
+                <ol className="flex list-decimal flex-col gap-4 pl-5 marker:text-ink-muted">
+                  <li className="flex flex-col gap-2">
+                    <span>{S.form.ghSteps.copy}</span>
+                    <Field label={S.form.publicKey}>
+                      {(p) => (
+                        <textarea
+                          {...p}
+                          readOnly
+                          value={publicKey}
+                          rows={3}
+                          className="gh-input w-full resize-none break-all rounded-md border border-line-input bg-bg px-2.5 py-1.5 font-mono text-mono-small text-ink"
+                        />
+                      )}
+                    </Field>
+                    <div>
+                      <Button icon={Icons.copy} onClick={copyKey}>
+                        {S.form.copyKey}
+                      </Button>
+                    </div>
+                  </li>
+                  <li className="flex flex-col gap-2">
+                    <span>{S.form.ghSteps.open(draft.owners.filter((o) => o.trim()))}</span>
+                    <div>
+                      <Button
+                        icon={Icons.external}
+                        onClick={() => void ipc.openExternal('ssh-keys')}
+                      >
+                        {S.form.openGithub}
+                      </Button>
+                    </div>
+                  </li>
+                  <li className="flex flex-col gap-2">
+                    <span>{S.form.ghSteps.fill}</span>
+                    <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1 text-small">
+                      <dt className="text-ink-muted">{S.form.ghSteps.titleLabel}</dt>
+                      <dd className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-mono-small text-ink">
+                          {S.form.ghSteps.keyTitle(draft.label || draft.id)}
+                        </span>
+                        <Button compact icon={Icons.copy} onClick={() => void copyTitle()}>
+                          {S.form.ghSteps.copyTitle}
+                        </Button>
+                      </dd>
+                      <dt className="text-ink-muted">{S.form.ghSteps.typeLabel}</dt>
+                      <dd className="text-ink">{S.form.ghSteps.typeValue}</dd>
+                      <dt className="text-ink-muted">{S.form.ghSteps.keyLabel}</dt>
+                      <dd className="text-ink">{S.form.ghSteps.keyValue}</dd>
+                    </dl>
+                    <span>{S.form.ghSteps.add}</span>
+                  </li>
+                  <li className="flex flex-col gap-2">
+                    <span>{original ? S.form.ghSteps.test : S.form.ghSteps.testAfterSave}</span>
+                    {original ? (
+                      <div>
+                        <Button icon={Icons.test} onClick={test} loading={testing}>
+                          {testing ? S.form.testing : S.form.testConnection}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </li>
+                </ol>
+              </section>
               {original ? (
                 <ConnectionResult
                   profile={{ id: original.id, owners: draft.owners }}

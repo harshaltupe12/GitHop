@@ -225,6 +225,33 @@ export const S = {
       'A console window opens so you can type a passphrase (recommended). GitHop never sees or stores it.',
     noPassphrase: 'Create the key without a passphrase (not recommended)',
     keyCreated: 'Key created.',
+    keyReused: (file: string) => `Using your existing key ${file}.`,
+    // After Generate key: adding it on GitHub, step by step (no terminal needed).
+    ghSteps: {
+      title: 'Add this key to GitHub',
+      intro:
+        'GitHub needs this public key before you can push with this profile. It takes a minute.',
+      introReused:
+        'This key was already on this PC, so it may already be on GitHub. If you’re not sure, follow these steps; Test connection tells you.',
+      copy: 'Copy your public key.',
+      open: (owners: string[]) =>
+        owners.length
+          ? `Open GitHub, signed in as the account that works with ${owners.join(', ')}. Check the avatar at the top right.`
+          : 'Open GitHub, signed in as the account for this profile. Check the avatar at the top right.',
+      fill: 'On GitHub’s “Add new SSH key” page, fill in:',
+      titleLabel: 'Title',
+      keyTitle: (label: string) => `GitHop (${label})`,
+      copyTitle: 'Copy',
+      titleCopied: 'Title copied.',
+      typeLabel: 'Key type',
+      typeValue: 'Authentication Key',
+      keyLabel: 'Key',
+      keyValue: 'Paste your public key (Ctrl+V).',
+      add: 'Click Add SSH key. GitHub may ask for your password or a 2FA code.',
+      test: 'Come back here and click Test connection.',
+      testAfterSave:
+        'Save this profile, then click Test connection on its card to check GitHub accepts the key.',
+    },
     keyNotCreated:
       'No key yet. Click Generate key, or the profile is saved without a working SSH key.',
     publicKey: 'Public key',

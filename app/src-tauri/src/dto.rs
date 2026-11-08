@@ -191,6 +191,17 @@ pub struct SettingsPatch {
     pub remote_https_policy: Option<RemoteHttpsPolicy>,
 }
 
+/// Result of "Generate key".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeneratedKey {
+    /// One-line OpenSSH public key, ready to paste on GitHub.
+    pub public_key: String,
+    /// Private key path (forward slashes); the form saves it with the profile.
+    pub path: String,
+    /// A GitHop key already existed at `path` and is used instead of a new one.
+    pub reused: bool,
+}
+
 /// About box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppInfo {

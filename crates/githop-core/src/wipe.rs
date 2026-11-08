@@ -556,6 +556,26 @@ fn remove_repo_data(git: &Git, repo: &Repo) {
             );
         }
     }
+    // The HTTPS→SSH undo notes (`githop.saved-remote-url-<remote>`). The remote
+    // itself stays on SSH; only GitHop's note goes.
+    if let Ok(keys) = git.run_text(
+        repo.root(),
+        &[
+            "config",
+            "--local",
+            "--name-only",
+            "--get-regexp",
+            r"^githop\.saved-remote-url-",
+        ],
+    ) {
+        for key in keys
+            .lines()
+            .map(str::trim)
+            .filter(|k| k.starts_with(crate::remote_ssh::SAVED_URL_PREFIX))
+        {
+            let _ = git.run_text(repo.root(), &["config", "--local", "--unset-all", key]);
+        }
+    }
     let dir = repo.common_dir().join("githop");
     let _ = std::fs::remove_file(dir.join("pushed"));
     let _ = std::fs::remove_dir(&dir);

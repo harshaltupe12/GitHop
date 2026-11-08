@@ -405,9 +405,21 @@ fn wipe_unpins_repos_and_keeps_keys_by_default() {
         .assert()
         .code(0);
 
+    // An HTTPS→SSH undo note left by `githop remote ssh`.
+    env.git(
+        &[
+            "config",
+            "--local",
+            "githop.saved-remote-url-origin",
+            "https://github.com/acme-corp/api.git",
+        ],
+        &repo,
+    );
+
     env.githop().args(["wipe", "--yes"]).assert().code(0);
     assert_eq!(env.get_local(&repo, "githop.profile"), None);
     assert_eq!(env.get_local(&repo, "user.email"), None);
+    assert_eq!(env.get_local(&repo, "githop.saved-remote-url-origin"), None);
     assert!(key.is_file());
 }
 

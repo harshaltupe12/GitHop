@@ -14,6 +14,7 @@ import type {
   ExternalTarget,
   FixPlan,
   FixResult,
+  GeneratedKey,
   HookHealth,
   HookStage,
   ImportPreview,
@@ -88,8 +89,8 @@ export const setDefault = (id: string) => call<ProfileSet>('set_default', { id }
 // ---- Keys --------------------------------------------------------------------
 
 export const suggestKeyPath = (id: string) => call<string>('suggest_key_path', { id });
-export const generateKey = (id: string, noPassphrase: boolean) =>
-  call<string>('generate_key', { id, noPassphrase });
+export const generateKey = (id: string, email: string, noPassphrase: boolean) =>
+  call<GeneratedKey>('generate_key', { id, email, noPassphrase });
 export const readPublicKey = (id: string) => call<string>('read_public_key', { id });
 /** Network (ssh -T) — only ever called from a user click. */
 export const testConnection = (id: string) => call<ConnectionTest>('test_connection', { id });

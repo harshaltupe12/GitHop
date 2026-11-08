@@ -12,7 +12,7 @@ use crate::dto::{AppInfo, AppState, IpcError, IpcResult, OnboardingState};
 use crate::ops::{self, blocking};
 
 /// GitHub's SSH keys settings page (opened in the user's browser).
-pub const SSH_KEYS_URL: &str = "https://github.com/settings/keys";
+pub const SSH_KEYS_URL: &str = "https://github.com/settings/ssh/new";
 /// Release downloads page. Placeholder owner until the repo is published.
 pub const RELEASES_URL: &str = "https://github.com/githop-placeholder/githop/releases";
 /// User guide. Placeholder owner until the repo is published.

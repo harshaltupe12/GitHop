@@ -76,6 +76,11 @@ export function initial(label: string): string {
   return ch ? ch.toUpperCase() : '?';
 }
 
+/** `C:/Users/jane/.ssh/githop_work` → `githop_work`. */
+export function fileName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
 /**
  * Onboarding: a label suggestion for the git identity already on the PC, always
  * editable. `jane@acmelabs.com` → `Acmelabs`; free-mail or GitHub noreply →

@@ -167,13 +167,26 @@ describe('ProfileForm', () => {
     expect(document.querySelector('input[type="password"]')).toBeNull();
     await user.type(screen.getByRole('textbox', { name: 'Label' }), 'Work');
     await user.click(screen.getByRole('button', { name: 'Generate key' }));
-    await waitFor(() => expect(m.generateKey).toHaveBeenCalledWith('work', false));
+    await waitFor(() =>
+      expect(m.generateKey).toHaveBeenCalledWith('work', expect.any(String), false),
+    );
     expect(await screen.findByRole('textbox', { name: 'Public key' })).toHaveValue(
       'ssh-ed25519 AAAAC3Nza githop',
     );
-    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+    // Works before the profile is saved; the generated path is used.
+    expect(m.generateKey).toHaveBeenCalledWith('work', expect.any(String), false);
     expect(screen.queryByText(/No key yet/)).toBeNull();
-    expect(screen.getByText('Save the profile first to test the connection.')).toBeInTheDocument();
+    // Guided steps for adding the key on GitHub, in the app.
+    const steps = screen.getByRole('region', { name: 'Add this key to GitHub' });
+    expect(within(steps).getByText('GitHop (Work)')).toBeInTheDocument();
+    expect(within(steps).getByText('Authentication Key')).toBeInTheDocument();
+    await user.click(within(steps).getByRole('button', { name: 'Copy' }));
+    expect(m.copyText).toHaveBeenCalledWith('GitHop (Work)');
+    // Not saved yet: no Test connection button, a pointer to the card instead.
+    expect(within(steps).queryByRole('button', { name: 'Test connection' })).toBeNull();
+    expect(
+      within(steps).getByText(/Save this profile, then click Test connection/),
+    ).toBeInTheDocument();
   });
 
   it('edit: key panel with copy, GitHub settings, test connection; danger zone', async () => {
@@ -257,9 +270,7 @@ describe('ProfileForm required fields', () => {
     await waitFor(() => expect(m.validateProfile).toHaveBeenCalled());
     expect(screen.queryByText('Add a label for this profile, like Work.')).toBeNull();
     await user.tab(); // blur
-    expect(
-      await screen.findByText('Add a label for this profile, like Work.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Add a label for this profile, like Work.')).toBeInTheDocument();
     expect(label).toHaveAttribute('aria-invalid', 'true');
     m.saveProfile.mockClear();
     const save = screen.getByRole('button', { name: 'Save profile' });

@@ -16,7 +16,13 @@ export async function createIpcMock() {
     deleteProfile: vi.fn(() => Promise.resolve(profileSet())),
     setDefault: vi.fn((id: string) => Promise.resolve(profileSet({ default: id }))),
     suggestKeyPath: vi.fn((id: string) => Promise.resolve(`C:/Users/jane/.ssh/githop_${id}`)),
-    generateKey: vi.fn(() => Promise.resolve('ssh-ed25519 AAAAC3Nza githop')),
+    generateKey: vi.fn((id: string) =>
+      Promise.resolve({
+        public_key: 'ssh-ed25519 AAAAC3Nza githop',
+        path: `C:/Users/jane/.ssh/githop_${id}`,
+        reused: false,
+      }),
+    ),
     readPublicKey: vi.fn(() =>
       Promise.reject({ code: 'not_found', message: 'No public key.', issues: [] }),
     ),

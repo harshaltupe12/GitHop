@@ -10,7 +10,7 @@ use githop_core::ssh::{self, ConnectionTest, PassphraseState, RememberOutcome, W
 use githop_core::{CoreError, Profile};
 use tauri::{AppHandle, Runtime};
 
-use crate::dto::{IpcError, IpcResult};
+use crate::dto::{GeneratedKey, IpcError, IpcResult};
 use crate::events;
 use crate::ops::{self, blocking};
 use crate::validate;
@@ -30,6 +30,12 @@ pub async fn suggest_key_path(id: String) -> IpcResult<String> {
 
 /// Create an ed25519 key for profile `id` and return its public key.
 ///
+/// Works for a profile that isn't saved yet (onboarding, Add profile): the key
+/// goes to `~/.ssh/githop_<id>` with `email` as its comment, and the form
+/// saves that path with the profile. When a complete key pair is already at
+/// the target path (for example kept from an earlier install), it is used
+/// instead of failing.
+///
 /// The passphrase is typed by the user into a separate console window that
 /// `ssh-keygen` opens itself — it never passes through GitHop or the WebView.
 /// With `no_passphrase` the key is created silently with `-N ""`.
@@ -37,12 +43,14 @@ pub async fn suggest_key_path(id: String) -> IpcResult<String> {
 pub async fn generate_key<R: Runtime>(
     app: AppHandle<R>,
     id: String,
+    email: Option<String>,
     no_passphrase: bool,
-) -> IpcResult<String> {
+) -> IpcResult<GeneratedKey> {
     validate::profile_id(&id)?;
-    let public = blocking(move || generate_key_blocking(&id, no_passphrase)).await?;
+    let generated =
+        blocking(move || generate_key_blocking(&id, email.as_deref(), no_passphrase)).await?;
     events::data_changed(&app);
-    Ok(public)
+    Ok(generated)
 }
 
 #[tauri::command]
@@ -180,30 +188,43 @@ fn refresh_ssh_commands(profile: &Profile) {
     }
 }
 
-fn generate_key_blocking(id: &str, no_passphrase: bool) -> IpcResult<String> {
+fn generate_key_blocking(
+    id: &str,
+    email: Option<&str>,
+    no_passphrase: bool,
+) -> IpcResult<GeneratedKey> {
     let git = ops::git()?;
-    let profile: Profile = {
+    // A profile still being filled in (not saved yet) is fine.
+    let saved: Option<Profile> = {
         let store = ops::store()?;
-        ops::profile(store.profiles(), id)?.clone()
+        store
+            .profiles()
+            .profiles
+            .iter()
+            .find(|p| p.id == id)
+            .cloned()
     };
-    let key = if profile.ssh_key.as_os_str().is_empty() {
-        ssh::default_key_path(&git, &profile.id)
-            .ok_or_else(|| IpcError::not_found("GitHop couldn't find your home folder."))?
-    } else {
-        profile.ssh_key.clone()
+    let key = match saved.as_ref().filter(|p| !p.ssh_key.as_os_str().is_empty()) {
+        Some(p) => p.ssh_key.clone(),
+        None => ssh::default_key_path(&git, id)
+            .ok_or_else(|| IpcError::not_found("GitHop couldn't find your home folder."))?,
     };
+    let comment = key_comment(saved.as_ref().map(|p| p.email.as_str()).or(email), id);
 
-    // INTEGRATE: replace with a core call that can open a console, e.g.
-    // `ssh::keygen_with(&key, &profile.email, no_passphrase, ssh::Console::New)`.
-    // Core's `ssh::keygen` inherits stdio, which has no console in the tray app.
-    keygen_in_console(&key, &profile.email, no_passphrase)?;
+    let reused = key_pair_exists(&key);
+    if !reused {
+        // INTEGRATE: replace with a core call that can open a console, e.g.
+        // `ssh::keygen_with(&key, &comment, no_passphrase, ssh::Console::New)`.
+        // Core's `ssh::keygen` inherits stdio, which has no console in the tray app.
+        keygen_in_console(&key, &comment, no_passphrase)?;
+    }
     ssh::restrict_key_acl(&key)?;
     {
         let store = ops::store()?;
         ssh::ensure_github_known_hosts_best_effort(&git, store.paths());
     }
 
-    if profile.ssh_key != key {
+    if let Some(profile) = saved.filter(|p| p.ssh_key != key) {
         let _guard = ops::write_lock();
         let mut store = ops::store()?;
         store.update(|set, _| {
@@ -213,7 +234,25 @@ fn generate_key_blocking(id: &str, no_passphrase: bool) -> IpcResult<String> {
             Ok(())
         })?;
     }
-    Ok(ssh::read_public_key(&key)?)
+    Ok(GeneratedKey {
+        public_key: ssh::read_public_key(&key)?.trim().to_string(),
+        path: to_slash(&key),
+        reused,
+    })
+}
+
+/// Both halves of a key pair are already on disk (an earlier install kept them).
+fn key_pair_exists(key: &Path) -> bool {
+    key.is_file() && pub_path(key).is_file()
+}
+
+/// The key's comment: the profile's email, else `githop-<id>`. Never empty and
+/// never control characters (it ends up in the public key line).
+fn key_comment(email: Option<&str>, id: &str) -> String {
+    match email.map(str::trim) {
+        Some(e) if !e.is_empty() && !e.chars().any(char::is_control) => e.to_string(),
+        _ => format!("githop-{id}"),
+    }
 }
 
 /// Windows process creation flags.
@@ -319,6 +358,28 @@ mod tests {
             pub_path(Path::new("C:/k/githop_a.b")),
             PathBuf::from("C:/k/githop_a.b.pub")
         );
+    }
+
+    #[test]
+    fn existing_pair_is_reused_but_half_a_pair_is_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let key = tmp.path().join("githop_work");
+        assert!(!key_pair_exists(&key));
+        std::fs::write(&key, "private").unwrap();
+        assert!(!key_pair_exists(&key), "no .pub: still refused by keygen");
+        std::fs::write(pub_path(&key), "ssh-ed25519 AAAA x").unwrap();
+        assert!(key_pair_exists(&key));
+    }
+
+    #[test]
+    fn key_comment_uses_the_email_or_a_safe_fallback() {
+        assert_eq!(
+            key_comment(Some(" jane@acme.example "), "work"),
+            "jane@acme.example"
+        );
+        assert_eq!(key_comment(Some(""), "work"), "githop-work");
+        assert_eq!(key_comment(None, "work"), "githop-work");
+        assert_eq!(key_comment(Some("a\nb"), "work"), "githop-work");
     }
 
     #[test]
