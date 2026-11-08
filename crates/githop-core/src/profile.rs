@@ -182,13 +182,67 @@ impl Profile {
             label
         }
     }
+}
 
-    /// Looks like a personal identity (label or id mentions "personal"/"home").
-    fn looks_personal(&self) -> bool {
-        [self.id.to_lowercase(), self.label.to_lowercase()]
-            .iter()
-            .any(|s| s.contains("personal") || s.contains("home"))
+/// Free-mail providers (first label of the email domain): an address there is
+/// someone's own, and public once it's in a commit.
+const PUBLIC_MAIL_PROVIDERS: [&str; 16] = [
+    "gmail",
+    "googlemail",
+    "outlook",
+    "hotmail",
+    "live",
+    "yahoo",
+    "icloud",
+    "me",
+    "proton",
+    "protonmail",
+    "pm",
+    "gmx",
+    "aol",
+    "yandex",
+    "zoho",
+    "fastmail",
+];
+
+fn email_domain(email: &str) -> Option<String> {
+    let domain = email.trim().rsplit_once('@')?.1.to_ascii_lowercase();
+    (!domain.is_empty()).then_some(domain)
+}
+
+/// A free-mail address (`…@gmail.com`, `…@outlook.com`, …), whatever the
+/// profile is called. Not the GitHub noreply address.
+pub fn is_public_mail(email: &str) -> bool {
+    email_domain(email).is_some_and(|d| {
+        d.split('.')
+            .next()
+            .is_some_and(|first| PUBLIC_MAIL_PROVIDERS.contains(&first))
+    })
+}
+
+/// A profile id suggestion for an identity, never applied on its own:
+/// `jane@mail.acme-corp.co.uk` → `acmecorp`; free-mail or GitHub noreply →
+/// `personal`; `None` when the email says nothing useful.
+pub fn suggest_id(email: &str) -> Option<String> {
+    let domain = email_domain(email)?;
+    if is_public_mail(email) || email.trim().to_ascii_lowercase().ends_with(NOREPLY_SUFFIX) {
+        return Some("personal".to_string());
     }
+    let parts: Vec<&str> = domain.split('.').filter(|p| !p.is_empty()).collect();
+    let labels = if parts.len() > 1 {
+        &parts[..parts.len() - 1]
+    } else {
+        &parts[..]
+    };
+    let stem = labels
+        .iter()
+        .filter(|l| !["co", "com", "org", "net", "ac", "gov", "mail"].contains(l))
+        .max_by_key(|l| l.len())?
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(ID_MAX_LEN)
+        .collect::<String>();
+    (stem.len() >= 3).then_some(stem)
 }
 
 fn trim_in_place(s: &mut String) {
@@ -436,7 +490,7 @@ fn profile_ref(p: &Profile) -> String {
 fn check_id(out: &mut Issues, p: &Profile, earlier: &[Profile]) {
     let id = p.id.trim();
     if id.is_empty() {
-        out.error(p, "id", "Add a profile ID, like office.".to_string());
+        out.error(p, "id", "Add a profile ID, like work.".to_string());
     } else if !is_valid_id(id) {
         out.error(
             p,
@@ -461,7 +515,7 @@ fn check_text(out: &mut Issues, p: &Profile) {
         out.error(
             p,
             "label",
-            "Add a label for this profile, like Office.".to_string(),
+            "Add a label for this profile, like Work.".to_string(),
         );
     }
     let name = p.name.trim();
@@ -505,13 +559,13 @@ fn check_email(out: &mut Issues, p: &Profile, earlier: &[Profile]) {
             ),
         );
     }
-    if p.looks_personal() && !email.to_lowercase().ends_with(NOREPLY_SUFFIX) {
+    if is_public_mail(email) {
         out.push(
             Some(p),
             "email",
             Severity::Warning,
-            "This looks like a personal profile. Consider your GitHub noreply email \
-             (…@users.noreply.github.com) so your real email stays private."
+            "This is a public email address and commit emails are public. Consider your \
+             GitHub noreply email (…@users.noreply.github.com) so your real email stays private."
                 .to_string(),
         );
     }
@@ -530,7 +584,7 @@ fn check_ssh_key(out: &mut Issues, p: &Profile) {
         out.error(
             p,
             "ssh_key",
-            format!("SSH key \"{key}\" must be a full path, like C:/Users/you/.ssh/githop_office."),
+            format!("SSH key \"{key}\" must be a full path, like C:/Users/you/.ssh/githop_work."),
         );
     }
     // ssh expands `%` tokens and `${VAR}` in identity paths (review #6). GitHop
@@ -713,7 +767,7 @@ fn check_folders(out: &mut Issues, p: &Profile, earlier: &[Profile]) {
             out.error(
                 p,
                 "folders",
-                format!("Folder \"{trimmed}\" must be a full path, like C:/Office/."),
+                format!("Folder \"{trimmed}\" must be a full path, like C:/Work/."),
             );
             continue;
         };
@@ -957,7 +1011,7 @@ mod tests {
     }
 
     #[test]
-    fn personal_without_noreply_is_warning_only() {
+    fn public_mail_is_warning_only_whatever_the_label() {
         let mut s = office_personal();
         s.profiles[1].email = "me@gmail.com".into();
         let issues = s.issues();
@@ -968,15 +1022,39 @@ mod tests {
         assert_sentence(&issues[0].message);
         assert!(s.validate().is_ok());
 
-        // "home" in the label counts too; the noreply check ignores case.
+        // The label doesn't matter: a "Client" profile on Outlook gets the tip,
+        // a "Home" profile on a company or noreply address doesn't.
         let mut s = office_personal();
-        s.profiles[0].label = "Home stuff".into();
+        s.profiles[0].label = "Client".into();
+        s.profiles[0].email = "Jane@Outlook.com".into();
         assert_eq!(
             find(&s.issues(), Some("office"), "email", Severity::Warning).len(),
             1
         );
+        s.profiles[0].label = "Home".into();
+        s.profiles[0].email = "jane@acme.example".into();
+        assert!(s.issues().is_empty());
         s.profiles[0].email = "1+x@USERS.NOREPLY.GITHUB.COM".into();
         assert!(s.issues().is_empty());
+    }
+
+    #[test]
+    fn id_suggestions_come_from_the_email_domain() {
+        assert_eq!(suggest_id("jane@acme.example").as_deref(), Some("acme"));
+        assert_eq!(
+            suggest_id("jane@mail.acme-corp.co.uk").as_deref(),
+            Some("acmecorp")
+        );
+        assert_eq!(suggest_id("jane@gmail.com").as_deref(), Some("personal"));
+        assert_eq!(
+            suggest_id("1+jane@users.noreply.github.com").as_deref(),
+            Some("personal")
+        );
+        assert_eq!(suggest_id("jane@io.co"), None);
+        assert_eq!(suggest_id("no-at-sign"), None);
+        assert!(is_public_mail("x@proton.me"));
+        assert!(!is_public_mail("x@acme.example"));
+        assert!(!is_public_mail("1+x@users.noreply.github.com"));
     }
 
     #[test]

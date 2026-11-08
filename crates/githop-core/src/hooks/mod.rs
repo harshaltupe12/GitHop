@@ -1365,7 +1365,7 @@ pub fn find_sh(git: &Git) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    const EXE: &str = r"C:\Users\Harshal\AppData\Local\Programs\GitHop\githop.exe";
+    const EXE: &str = r"C:\Users\Jane\AppData\Local\Programs\GitHop\githop.exe";
 
     #[test]
     fn names_are_unique_and_complete() {
@@ -1402,7 +1402,7 @@ mod tests {
 
     #[test]
     fn rendered_scripts_are_lf_no_bom_with_shebang() {
-        for (name, body) in render_all(EXE, "C:/Users/Harshal/.git-hooks").unwrap() {
+        for (name, body) in render_all(EXE, "C:/Users/Jane/.git-hooks").unwrap() {
             assert!(body.starts_with("#!/bin/sh\n"), "{name}");
             assert!(!body.contains('\r'), "{name} has CR");
             assert!(!body.contains('\u{feff}'), "{name} has BOM");
@@ -1413,7 +1413,7 @@ mod tests {
             );
             assert!(body.contains(&format!("HOOK={name}\n")), "{name}");
             assert!(
-                body.contains("PREV=\"C:/Users/Harshal/.git-hooks\"\n"),
+                body.contains("PREV=\"C:/Users/Jane/.git-hooks\"\n"),
                 "{name}"
             );
             assert!(body.contains("git rev-parse --git-common-dir"), "{name}");
@@ -1423,9 +1423,7 @@ mod tests {
     #[test]
     fn pre_commit_golden_lines() {
         let s = render_hook("pre-commit", EXE, "").unwrap();
-        assert!(
-            s.contains("GITHOP=\"C:/Users/Harshal/AppData/Local/Programs/GitHop/githop.exe\"\n")
-        );
+        assert!(s.contains("GITHOP=\"C:/Users/Jane/AppData/Local/Programs/GitHop/githop.exe\"\n"));
         assert!(s.contains("PREV=\"\"\n"));
         assert!(s.contains("\"$GITHOP\" check --stage commit -- \"$@\"\n"));
         assert!(s.contains("if [ $rc -eq 1 ]; then exit 1; fi"));
@@ -1620,7 +1618,7 @@ mod tests {
         let s = snippet("commit", EXE).unwrap();
         assert_eq!(
             s,
-            "\"C:/Users/Harshal/AppData/Local/Programs/GitHop/githop.exe\" check --stage commit -- \"$@\"; [ $? -ne 1 ] || exit 1"
+            "\"C:/Users/Jane/AppData/Local/Programs/GitHop/githop.exe\" check --stage commit -- \"$@\"; [ $? -ne 1 ] || exit 1"
         );
         assert!(snippet("nope", EXE).is_err());
         // Regression D6: the push snippet hands stdin back to the hook.

@@ -17,8 +17,8 @@ use std::process::{Command, Output};
 
 use support::TestEnv;
 
-const OFFICE: &str = "harshal@office.example";
-const PERSONAL: &str = "12345+harshal@users.noreply.github.com";
+const OFFICE: &str = "jane@office.example";
+const PERSONAL: &str = "12345+jane@users.noreply.github.com";
 const PASSWORD: &str = "correct horse battery staple";
 
 fn stderr(o: &Output) -> String {
@@ -44,7 +44,7 @@ fn git_env(env: &TestEnv, args: &[&str], cwd: &Path, vars: &[(&str, &str)]) -> O
 /// `office-org`. Hooks installed by `githop init`.
 fn setup_with(before_init: impl FnOnce(&TestEnv)) -> TestEnv {
     let env = TestEnv::new();
-    env.set_global("user.name", "Harshal");
+    env.set_global("user.name", "Jane");
     env.set_global("user.email", PERSONAL);
     before_init(&env);
     let (code, out, err) = env.run(
@@ -52,7 +52,7 @@ fn setup_with(before_init: impl FnOnce(&TestEnv)) -> TestEnv {
         &["init", "--id", "personal", "--label", "Personal", "--yes"],
     );
     assert_eq!(code, 0, "init failed:\n{out}\n{err}");
-    env.add_profile("office", "Harshal Office", OFFICE, &["office-org"]);
+    env.add_profile("office", "Jane Office", OFFICE, &["office-org"]);
     env
 }
 

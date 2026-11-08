@@ -50,7 +50,7 @@ describe('Fix screen', () => {
     );
     const table = screen.getByRole('table', { name: 'Commits to fix' });
     expect(within(table).getByText('a1b2c3d')).toBeInTheDocument();
-    expect(within(table).getAllByText('harshal@company.com')[0]).toHaveClass('text-blocked-text');
+    expect(within(table).getAllByText('jane@company.com')[0]).toHaveClass('text-blocked-text');
     expect(
       screen.getByText(
         'Only unpushed commits are changed. A backup is saved first, so you can undo.',

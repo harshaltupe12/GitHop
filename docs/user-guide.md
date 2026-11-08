@@ -1,7 +1,7 @@
 # GitHop user guide
 
 GitHop keeps your git identities apart on one Windows PC. Each **profile**
-(Office, Personal, …) has its own name, email and SSH key. GitHop picks the right
+(work, personal, clients, open source, …) has its own name, email and SSH key. GitHop picks the right
 profile for every repo and **blocks** commits and pushes made with the wrong one,
 before they leave your machine.
 
@@ -37,14 +37,14 @@ GitHop decides in this order and stops at the first match:
 1. **Pin** — you (or GitHop on clone) fixed this repo to a profile. Stored in the
    repo's own `.git/config` as `githop.profile`.
 2. **Owner** — the GitHub user or organisation in the repo's `origin` URL
-   (`git@github.com:office-org/app.git` → owner `office-org`). Every profile lists
+   (`git@github.com:work-org/app.git` → owner `work-org`). Every profile lists
    the owners it covers. SSH host aliases that point at `github.com` work too
-   (`Host gh-office` + `HostName github.com` in `~/.ssh/config`, remote
-   `gh-office:office-org/app.git`): `init`, `add`, `edit`, `use` and
+   (`Host gh-work` + `HostName github.com` in `~/.ssh/config`, remote
+   `gh-work:work-org/app.git`): `init`, `add`, `edit`, `use` and
    `hooks install` read them, and the hooks re-read `~/.ssh/config` whenever it
    changes, so a new alias works on the next commit — no `scan` needed.
 3. **Folder** — the repo lives inside one of the profile's folders, e.g.
-   `C:/Office/`. When folders nest, the longest match wins.
+   `C:/Work/`. When folders nest, the longest match wins.
 4. **Default profile** — used when nothing above matches. Switch it any time with
    `githop use <profile>` (or from the tray).
 
@@ -70,7 +70,7 @@ If nothing matches and there's no default profile, GitHop asks you to pin the re
 GitHop never edits system-level git config, and never stores passwords, tokens
 or key passphrases — only paths to your SSH keys.
 
-`[screenshot: Profiles screen with Office and Personal]`
+`[screenshot: Profiles screen with Work and Personal]`
 
 ---
 
@@ -87,7 +87,7 @@ githop status                    # inside a repo: which profile, and why
 
 Tips:
 
-- For a personal profile, use your GitHub **noreply** email
+- For any profile with a personal or free-mail address (Gmail, Outlook…), use your GitHub **noreply** email
   (`12345+you@users.noreply.github.com`, from GitHub → Settings → Emails). Your
   real email then never appears in public commits.
 - Give the key a passphrase (the default). Windows' OpenSSH agent can remember it
@@ -115,13 +115,13 @@ Example — commit blocked:
 
 ```
 ✗ GitHop: commit blocked
-This repo belongs to Office.
+This repo belongs to Work.
 Commit would use me@personal.example.
-Run: githop pin office
+Run: githop pin work
 ```
 
 Only an owner or folder match is pinned by a blocked commit ("Identity fixed
-for this repo: pinned to Office. Run the commit again."). When only the default
+for this repo: pinned to Work. Run the commit again."). When only the default
 profile matches, the commit is blocked but nothing is pinned and your own
 settings in the repo are left alone; pin the right profile yourself:
 `githop pin <profile>`.
@@ -221,12 +221,12 @@ before changing anything:
 ```
 This file has 2 profiles (exported 2026-10-31):
 Id        Label     Email                              SSH key
-office    Office    me@company.com                     included
+work      Work      me@company.com                     included
 personal  Personal  12345+me@users.noreply.github.com  not included
-! Office (office) clashes with your profiles:
-  • same ID as your profile office
-  • same email as your profile office
-What should GitHop do with Office? skip, replace or rename [skip]:
+! Work (work) clashes with your profiles:
+  • same ID as your profile work
+  • same email as your profile work
+What should GitHop do with Work? skip, replace or rename [skip]:
 ```
 
 For each clashing profile you choose:
@@ -235,7 +235,7 @@ For each clashing profile you choose:
 |---|---|
 | `skip` | Keep yours, don't import this one (or its key). |
 | `replace` | Replace your clashing profile(s) with the one from the file. If its SSH key differs from the one on this PC, your old key file is **renamed** to `githop_<id>.replaced-<time>`, never deleted. |
-| `rename` | Import it under a new ID (`office-2` by default). Owners and folders that already belong to another profile are left out. Its key is saved as `githop_<new id>`, unless this PC already has the very same key: then it uses that key file, and GitHop says so ("uses your existing key githop_office (same key)"). A profile with the same email can't be renamed — choose skip or replace. |
+| `rename` | Import it under a new ID (`work-2` by default). Owners and folders that already belong to another profile are left out. Its key is saved as `githop_<new id>`, unless this PC already has the very same key: then it uses that key file, and GitHop says so ("uses your existing key githop_office (same key)"). A profile with the same email can't be renamed — choose skip or replace. |
 
 A colour that's already taken is swapped for a free one automatically.
 
@@ -317,7 +317,7 @@ applies to SSH remotes — see the next section for HTTPS.)
 
 A pin gives the repo the profile's SSH key, but a remote like
 `https://github.com/you/repo.git` doesn't use SSH: Windows signs in with the
-GitHub account it saved (Git Credential Manager). If that's your office
+GitHub account it saved (Git Credential Manager). If that's your work
 account, a push to a personal repo fails with 403 — or goes out as the wrong
 account.
 

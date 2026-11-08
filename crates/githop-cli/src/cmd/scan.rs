@@ -581,7 +581,7 @@ mod tests {
             default: Some("personal".into()),
             profiles: vec![
                 profile("office", "Office", &[]),
-                profile("personal", "Personal", &["harshaltupe12"]),
+                profile("personal", "Personal", &["janedoe"]),
             ],
         }
     }
@@ -614,12 +614,12 @@ mod tests {
     #[test]
     fn summary_groups_default_only_repos_by_owner() {
         let set = office_unrouted();
-        let mut pinned = default_repo("miraki-labs");
+        let mut pinned = default_repo("acme-labs");
         pinned.resolution.source = Some(ResolutionSource::Pin);
         let repos = vec![
-            default_repo("miraki-labs"),
-            default_repo("Miraki-Labs"),
-            default_repo("harshal-miraki"),
+            default_repo("acme-labs"),
+            default_repo("Acme-Labs"),
+            default_repo("jane-acme"),
             pinned,
         ];
         let statuses: Vec<RepoStatus> = repos.iter().map(|r| classify(r, &set)).collect();
@@ -628,10 +628,10 @@ mod tests {
             vec![
                 "! 3 repos matched no owner rule, so they use the default profile. \
                  By GitHub owner:",
-                "    harshal-miraki  1 repo",
-                "    miraki-labs     2 repos",
+                "    acme-labs  2 repos",
+                "    jane-acme  1 repo",
                 "Office has no owners yet. Add the ones that are Office's:",
-                "  githop edit office --owner harshal-miraki --owner miraki-labs",
+                "  githop edit office --owner acme-labs --owner jane-acme",
             ]
         );
     }
@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn summary_quiet_when_every_profile_has_owners() {
         let mut routed = office_unrouted();
-        routed.profiles[0].owners = vec!["miraki-labs".into()];
+        routed.profiles[0].owners = vec!["acme-labs".into()];
         let repos = vec![default_repo("someone-else")];
         let statuses = vec![RepoStatus::NotPinned];
         assert!(owner_summary(&repos, &statuses, &routed).is_empty());

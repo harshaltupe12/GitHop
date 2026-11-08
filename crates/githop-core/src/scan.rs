@@ -315,7 +315,7 @@ mod tests {
                 "{name} deeper down is a normal folder"
             );
         }
-        for name in ["Users", "Projects", "my$repo", "app-data", "Harshal"] {
+        for name in ["Users", "Projects", "my$repo", "app-data", "Jane"] {
             assert!(!skip_dir(name, true), "{name}");
             assert!(!skip_dir(name, false), "{name}");
         }

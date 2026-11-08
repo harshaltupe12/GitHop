@@ -47,7 +47,7 @@ export function ownerGroups(rows: RepoRow[], set: ProfileSet): OwnerGroup[] {
 const GENERIC_DOMAIN =
   /^(users\.noreply\.github\.com|gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|proton|protonmail|pm|gmx|aol|yandex|zoho|fastmail)(\.|$)/i;
 
-/** `harshal@mirakilabs.com` → `mirakilabs`; `null` for free-mail and noreply. */
+/** `jane@acmelabs.com` → `acmelabs`; `null` for free-mail and noreply. */
 export function domainStem(email: string): string | null {
   const domain = email.trim().toLowerCase().split('@')[1];
   if (!domain || GENERIC_DOMAIN.test(domain)) return null;
@@ -62,7 +62,7 @@ export function domainStem(email: string): string | null {
 
 /**
  * A suggestion only, never applied on its own: the profile whose email domain
- * matches the owner (`miraki-labs` / `harshal-miraki` ↔ `@mirakilabs.com`).
+ * matches the owner (`acme-labs` / `jane-acme` ↔ `@acmelabs.com`).
  * A word of 4+ letters in the owner that appears in the stem (or the reverse) counts.
  */
 export function suggestProfile(owner: string, set: ProfileSet): Profile | undefined {

@@ -1591,8 +1591,8 @@ mod tests {
 
     #[test]
     fn ident_parsing() {
-        let i = parse_ident("Harshal \"O'B\" <me@x.com> 1700000000 +0530");
-        assert_eq!(i.name, "Harshal \"O'B\"");
+        let i = parse_ident("Jane \"O'B\" <me@x.com> 1700000000 +0530");
+        assert_eq!(i.name, "Jane \"O'B\"");
         assert_eq!(i.email, "me@x.com");
         assert_eq!(i.date.as_deref(), Some("@1700000000 +0530"));
         let i = parse_ident(" <e@x> ");

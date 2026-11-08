@@ -311,7 +311,7 @@ mod tests {
         Profile {
             id: id.into(),
             label: "Office".into(),
-            name: "Harshal".into(),
+            name: "Jane".into(),
             email: "h@company.com".into(),
             color: ProfileColor::Blue,
             ssh_key: PathBuf::from("C:/Users/h/.ssh/githop_office"),
@@ -509,7 +509,7 @@ mod tests {
         assert!(profile_shape(&profile("office")).is_empty());
 
         let mut p = profile("office");
-        p.name = "Harshal\n[core]\n\thooksPath = /tmp".into();
+        p.name = "Jane\n[core]\n\thooksPath = /tmp".into();
         let issues = profile_shape(&p);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].field, "name");

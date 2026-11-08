@@ -449,22 +449,22 @@ fn wipe_delete_keys_only_removes_githop_keys() {
 #[test]
 fn init_creates_profile_from_global_identity_and_is_idempotent() {
     let env = TestEnv::new();
-    env.set_global("user.name", "Harshal (Work)");
-    env.set_global("user.email", "harshal@company.com");
+    env.set_global("user.name", "Jane (Work)");
+    env.set_global("user.email", "jane@company.com");
 
     env.githop()
         .args(["init", "--id", "office", "--yes"])
         .assert()
         .code(0)
         .stdout(contains("Backup saved"))
-        .stdout(contains("Profile created: Office (harshal@company.com)"));
+        .stdout(contains("Profile created: Office (jane@company.com)"));
 
     let profiles = env.appdata().join("profiles.toml");
     let original = env.appdata().join("backups").join("gitconfig.original");
     assert!(original.is_file());
     let (_, v) = json(&env, &env.home(), &["list"]);
     assert_eq!(v["default"], "office");
-    assert_eq!(v["profiles"][0]["name"], "Harshal (Work)");
+    assert_eq!(v["profiles"][0]["name"], "Jane (Work)");
 
     let profiles_before = std::fs::read(&profiles).unwrap();
     let original_before = std::fs::read(&original).unwrap();
@@ -478,7 +478,7 @@ fn init_creates_profile_from_global_identity_and_is_idempotent() {
     // init never rewrites the global identity.
     assert_eq!(
         env.get_global("user.email").as_deref(),
-        Some("harshal@company.com")
+        Some("jane@company.com")
     );
 }
 

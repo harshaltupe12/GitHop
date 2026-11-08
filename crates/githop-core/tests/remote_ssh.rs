@@ -31,7 +31,7 @@ fn switch_and_undo_round_trip() {
             "remote",
             "add",
             "origin",
-            "https://me:ghp_secret@github.com/harshaltupe12/GitHop.git",
+            "https://me:ghp_secret@github.com/janedoe/GitHop.git",
         ],
         &dir,
     );
@@ -44,7 +44,7 @@ fn switch_and_undo_round_trip() {
             "config",
             "--local",
             "remote.origin.pushurl",
-            "https://github.com/harshaltupe12/GitHop",
+            "https://github.com/janedoe/GitHop",
         ],
         &dir,
     );
@@ -53,21 +53,18 @@ fn switch_and_undo_round_trip() {
     let found = remote_ssh::https_remotes(&repo.config_snapshot().unwrap());
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].name, "origin");
-    assert_eq!(
-        found[0].url,
-        "https://me@github.com/harshaltupe12/GitHop.git"
-    );
-    assert_eq!(found[0].ssh_url, "git@github.com:harshaltupe12/GitHop.git");
+    assert_eq!(found[0].url, "https://me@github.com/janedoe/GitHop.git");
+    assert_eq!(found[0].ssh_url, "git@github.com:janedoe/GitHop.git");
 
     let switched = remote_ssh::switch_all_to_ssh(&repo).unwrap();
     assert_eq!(switched.len(), 1);
     assert_eq!(
         local(&env, &dir, "remote.origin.url").as_deref(),
-        Some("git@github.com:harshaltupe12/GitHop.git")
+        Some("git@github.com:janedoe/GitHop.git")
     );
     assert_eq!(
         local(&env, &dir, "remote.origin.pushurl").as_deref(),
-        Some("git@github.com:harshaltupe12/GitHop.git")
+        Some("git@github.com:janedoe/GitHop.git")
     );
     // Non-GitHub remote untouched.
     assert_eq!(
@@ -76,7 +73,7 @@ fn switch_and_undo_round_trip() {
     );
     // Saved for undo, without the token (CLAUDE.md rule 8).
     let saved = local(&env, &dir, "githop.saved-remote-url-origin").unwrap();
-    assert_eq!(saved, "https://me@github.com/harshaltupe12/GitHop.git");
+    assert_eq!(saved, "https://me@github.com/janedoe/GitHop.git");
     let config = std::fs::read_to_string(dir.join(".git").join("config")).unwrap();
     assert!(!config.contains("ghp_secret"), "{config}");
 
@@ -93,11 +90,11 @@ fn switch_and_undo_round_trip() {
     );
     assert_eq!(
         local(&env, &dir, "remote.origin.url").as_deref(),
-        Some("https://me@github.com/harshaltupe12/GitHop.git")
+        Some("https://me@github.com/janedoe/GitHop.git")
     );
     assert_eq!(
         local(&env, &dir, "remote.origin.pushurl").as_deref(),
-        Some("https://github.com/harshaltupe12/GitHop")
+        Some("https://github.com/janedoe/GitHop")
     );
     assert_eq!(local(&env, &dir, "githop.saved-remote-url-origin"), None);
     assert_eq!(
@@ -213,7 +210,7 @@ fn pinned_ssh_command_runs_under_gits_sh() {
         email: "me@users.noreply.github.com".into(),
         color: ProfileColor::Violet,
         ssh_key: key.clone(),
-        owners: vec!["harshaltupe12".into()],
+        owners: vec!["janedoe".into()],
         folders: vec![],
     };
     let repo = Repo::discover(&git, &dir).unwrap();

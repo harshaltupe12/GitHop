@@ -129,7 +129,7 @@ pub fn icon_spec(m: &TrayModel, blocked: bool) -> IconSpec {
     }
 }
 
-/// Tooltip, e.g. `GitHop — Personal (12345+harshal@users.noreply.github.com)`.
+/// Tooltip, e.g. `GitHop — Personal (12345+jane@users.noreply.github.com)`.
 pub fn tooltip(m: &TrayModel, blocked: bool) -> String {
     let text = match &m.kind {
         TrayKind::Normal => {

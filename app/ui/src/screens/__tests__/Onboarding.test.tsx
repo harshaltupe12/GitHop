@@ -26,7 +26,7 @@ describe('Onboarding', () => {
 
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByRole('heading', { level: 1, name: 'Safety first' })).toBeInTheDocument();
-    expect(screen.getByText('harshal@company.com')).toBeInTheDocument();
+    expect(screen.getByText('jane@company.com')).toBeInTheDocument();
     expect(JSON.parse(window.localStorage.getItem(KEYS.onboardingStep)!)).toBe(1);
 
     await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -34,10 +34,11 @@ describe('Onboarding', () => {
       screen.getByRole('heading', { level: 1, name: 'Your first profile' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Looks like your Office identity. Check the details below.'),
+      screen.getByText('Looks like your Company identity. Check the details below.'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('Office');
-    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('harshal@company.com');
+    // Suggested from the email domain (jane@company.com), not a fixed Office/Personal.
+    expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('Company');
+    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('jane@company.com');
     await expectNoA11yViolations(container);
 
     // Owns comes straight after Identity, with the plain question.
@@ -58,7 +59,7 @@ describe('Onboarding', () => {
     m.saveProfile.mockResolvedValueOnce(profileSet({ default: null, profile: [office] }));
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() => expect(m.saveProfile).toHaveBeenCalled());
-    await waitFor(() => expect(m.setDefault).toHaveBeenCalledWith('office'));
+    await waitFor(() => expect(m.setDefault).toHaveBeenCalledWith('company'));
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add another' }),
     ).toBeInTheDocument();
@@ -73,7 +74,7 @@ describe('Onboarding', () => {
     await user.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() =>
       expect(m.saveProfile).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'office', owners: ['office-org'] }),
+        expect.objectContaining({ id: 'company', owners: ['office-org'] }),
         undefined,
       ),
     );
@@ -187,9 +188,10 @@ describe('Onboarding', () => {
     const { user } = renderWith(<Onboarding state={st} onFinish={vi.fn()} />);
     expect(screen.getByRole('heading', { level: 1, name: 'Add another' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Add another profile' }));
-    expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('Personal');
+    // No fixed label: the user names the second identity.
+    expect(screen.getByRole('textbox', { name: 'Label' })).toHaveValue('');
     // Focus moves into the new form (its heading), not left on <body>.
-    expect(screen.getByRole('heading', { level: 2, name: 'Personal' })).toHaveFocus();
+    expect(screen.getByRole('heading', { level: 2, name: 'Add profile' })).toHaveFocus();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     // …and back to the step heading when the form closes.
     expect(screen.getByRole('heading', { level: 1, name: 'Add another' })).toHaveFocus();

@@ -201,9 +201,9 @@ describe('Repos screen', () => {
 });
 
 // The owner's real setup: Office has no owners, Personal is the default, so every
-// office repo (owners miraki-labs, harshal-miraki) silently used Personal.
+// office repo (owners acme-labs, jane-acme) silently used Personal.
 describe('Owners found panel', () => {
-  const officeU = { ...office, email: 'harshal@mirakilabs.com', owners: [], folders: [] };
+  const officeU = { ...office, email: 'jane@acmelabs.com', owners: [], folders: [] };
   const ps = profileSet({ profile: [officeU, personal] });
   const remote = (owner: string, root: string) => ({
     host: 'github.com',
@@ -220,9 +220,9 @@ describe('Owners found panel', () => {
       remote: remote(owner, root),
     });
   const rows = [
-    def('C:/Work/api', 'miraki-labs'),
-    def('C:/Work/web', 'miraki-labs'),
-    def('C:/Work/tool', 'harshal-miraki'),
+    def('C:/Work/api', 'acme-labs'),
+    def('C:/Work/web', 'acme-labs'),
+    def('C:/Work/tool', 'jane-acme'),
     repo('C:/Personal/blog'),
   ];
   const seed = () =>
@@ -248,12 +248,12 @@ describe('Owners found panel', () => {
     const items = within(within(p).getByRole('list', { name: 'GitHub owners without a profile' }))
       .getAllByRole('listitem')
       .map((li) => li.textContent);
-    expect(items[0]).toContain('miraki-labs');
+    expect(items[0]).toContain('acme-labs');
     expect(items[0]).toContain('2 repos');
-    expect(items[1]).toContain('harshal-miraki');
+    expect(items[1]).toContain('jane-acme');
     expect(items[1]).toContain('1 repo');
-    // Suggested from Office's email domain (mirakilabs.com), never applied on its own.
-    const pick = within(p).getByRole('combobox', { name: 'Profile for miraki-labs' });
+    // Suggested from Office's email domain (acmelabs.com), never applied on its own.
+    const pick = within(p).getByRole('combobox', { name: 'Profile for acme-labs' });
     expect(pick).toHaveValue('office');
     expect(within(pick).getByRole('option', { name: 'Office (suggested)' })).toBeInTheDocument();
     expect(m.saveProfile).not.toHaveBeenCalled();
@@ -264,7 +264,7 @@ describe('Owners found panel', () => {
     expect(
       within(table).getByRole('button', { name: 'Why api uses the default profile' }),
     ).toHaveAccessibleDescription(
-      'No profile owns miraki-labs, and no folder rule matched, so this repo uses your default profile (Personal). Add miraki-labs to the profile it belongs to, or pin the repo.',
+      'No profile owns acme-labs, and no folder rule matched, so this repo uses your default profile (Personal). Add acme-labs to the profile it belongs to, or pin the repo.',
     );
     // Default-only repos are never bulk-pinned (that would make the guess permanent).
     expect(screen.queryByRole('button', { name: 'Pin all' })).toBeNull();
@@ -275,30 +275,30 @@ describe('Owners found panel', () => {
     seed();
     m.saveProfile.mockClear();
     m.listProfiles.mockResolvedValueOnce(ps);
-    const saved = profileSet({ profile: [{ ...officeU, owners: ['miraki-labs'] }, personal] });
+    const saved = profileSet({ profile: [{ ...officeU, owners: ['acme-labs'] }, personal] });
     m.saveProfile.mockResolvedValueOnce(saved);
     m.scan.mockResolvedValueOnce([
-      byOwner('C:/Work/api', 'miraki-labs'),
-      byOwner('C:/Work/web', 'miraki-labs'),
+      byOwner('C:/Work/api', 'acme-labs'),
+      byOwner('C:/Work/web', 'acme-labs'),
       rows[2]!,
       rows[3]!,
     ]);
     m.pinAll.mockResolvedValueOnce([]);
     const { user, container } = renderWith(<ReposScreen profiles={ps} />);
-    await user.click(within(panel()).getByRole('button', { name: 'Add to profile: miraki-labs' }));
+    await user.click(within(panel()).getByRole('button', { name: 'Add to profile: acme-labs' }));
     await waitFor(() =>
-      expect(m.saveProfile).toHaveBeenCalledWith({ ...officeU, owners: ['miraki-labs'] }, 'office'),
+      expect(m.saveProfile).toHaveBeenCalledWith({ ...officeU, owners: ['acme-labs'] }, 'office'),
     );
     expect(m.listProfiles).toHaveBeenCalled();
-    expect(await screen.findByText('miraki-labs added to Office.')).toBeInTheDocument();
+    expect(await screen.findByText('acme-labs added to Office.')).toBeInTheDocument();
     await waitFor(() => expect(m.scan).toHaveBeenCalledWith('C:/'));
     const p = panel();
     expect(
-      within(p).getByText('miraki-labs now belongs to Office. Its repos use Office from now on.'),
+      within(p).getByText('acme-labs now belongs to Office. Its repos use Office from now on.'),
     ).toBeInTheDocument();
-    expect(within(p).queryByRole('combobox', { name: 'Profile for miraki-labs' })).toBeNull();
+    expect(within(p).queryByRole('combobox', { name: 'Profile for acme-labs' })).toBeNull();
     expect(
-      within(p).getByRole('combobox', { name: 'Profile for harshal-miraki' }),
+      within(p).getByRole('combobox', { name: 'Profile for jane-acme' }),
     ).toBeInTheDocument();
     const pinAll = await within(p).findByRole('button', { name: 'Pin all' });
     await expectNoA11yViolations(container);
@@ -317,19 +317,19 @@ describe('Owners found panel', () => {
           profile_id: 'office',
           field: 'owners',
           severity: 'error',
-          message: 'Owner harshal-miraki already belongs to Personal.',
+          message: 'Owner jane-acme already belongs to Personal.',
         },
       ],
     });
     const { user } = renderWith(<ReposScreen profiles={ps} />);
     await user.click(
-      within(panel()).getByRole('button', { name: 'Add to profile: harshal-miraki' }),
+      within(panel()).getByRole('button', { name: 'Add to profile: jane-acme' }),
     );
     expect(await within(panel()).findByRole('alert')).toHaveTextContent(
-      'Owner harshal-miraki already belongs to Personal.',
+      'Owner jane-acme already belongs to Personal.',
     );
     expect(
-      within(panel()).getByRole('combobox', { name: 'Profile for harshal-miraki' }),
+      within(panel()).getByRole('combobox', { name: 'Profile for jane-acme' }),
     ).toHaveAttribute('aria-invalid', 'true');
   });
 
@@ -354,14 +354,14 @@ describe('Owners found panel', () => {
   it('hidden when every owner has a profile', () => {
     reposStore.set((s) => ({
       ...s,
-      repos: [def('C:/Work/api', 'miraki-labs')],
+      repos: [def('C:/Work/api', 'acme-labs')],
       scanned: true,
       autoScanned: true,
       folders: ['C:/'],
     }));
     renderWith(
       <ReposScreen
-        profiles={profileSet({ profile: [{ ...officeU, owners: ['miraki-labs'] }, personal] })}
+        profiles={profileSet({ profile: [{ ...officeU, owners: ['acme-labs'] }, personal] })}
       />,
     );
     expect(

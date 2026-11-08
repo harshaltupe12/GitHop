@@ -11,7 +11,7 @@ const PERSONAL_EMAIL: &str = "12345+me@users.noreply.github.com";
 
 fn setup(env: &TestEnv) {
     env.add_profile("office", "Me (Work)", OFFICE_EMAIL, &["office-org"]);
-    env.add_profile("personal", "Me", PERSONAL_EMAIL, &["harshaltupe12"]);
+    env.add_profile("personal", "Me", PERSONAL_EMAIL, &["janedoe"]);
 }
 
 fn known_hosts(env: &TestEnv) -> String {
@@ -22,7 +22,7 @@ fn known_hosts(env: &TestEnv) -> String {
 fn pin_under_ask_without_a_terminal_warns_and_keeps_https() {
     let env = TestEnv::new();
     setup(&env);
-    let repo = env.repo_with_origin("GitHop", "harshaltupe12");
+    let repo = env.repo_with_origin("GitHop", "janedoe");
     env.githop_in(&repo)
         .args(["pin", "personal"])
         .assert()
@@ -32,7 +32,7 @@ fn pin_under_ask_without_a_terminal_warns_and_keeps_https() {
         .stdout(contains("Run: githop remote ssh"));
     assert_eq!(
         env.get_local(&repo, "remote.origin.url").as_deref(),
-        Some("https://github.com/harshaltupe12/GitHop.git")
+        Some("https://github.com/janedoe/GitHop.git")
     );
     // Host keys are trusted in the temp home right away.
     assert!(githop_core::ssh::known_hosts_trusts_github(&known_hosts(
@@ -56,18 +56,18 @@ fn pin_under_auto_switches_and_undo_restores() {
         .assert()
         .code(0)
         .stdout(contains("switch GitHub HTTPS remotes to SSH when pinning"));
-    let repo = env.repo_with_origin("GitHop", "harshaltupe12");
+    let repo = env.repo_with_origin("GitHop", "janedoe");
     env.githop_in(&repo)
         .args(["pin", "personal"])
         .assert()
         .code(0)
         .stdout(contains(
-            "Switched origin to SSH: git@github.com:harshaltupe12/GitHop.git",
+            "Switched origin to SSH: git@github.com:janedoe/GitHop.git",
         ))
         .stdout(contains("Pushes now use Personal's SSH key."));
     assert_eq!(
         env.get_local(&repo, "remote.origin.url").as_deref(),
-        Some("git@github.com:harshaltupe12/GitHop.git")
+        Some("git@github.com:janedoe/GitHop.git")
     );
     env.githop_in(&repo)
         .args(["remote", "undo"])
@@ -76,7 +76,7 @@ fn pin_under_auto_switches_and_undo_restores() {
         .stdout(contains("origin uses its HTTPS URL again"));
     assert_eq!(
         env.get_local(&repo, "remote.origin.url").as_deref(),
-        Some("https://github.com/harshaltupe12/GitHop.git")
+        Some("https://github.com/janedoe/GitHop.git")
     );
     env.githop_in(&repo)
         .args(["remote", "undo"])
@@ -90,7 +90,7 @@ fn remote_ssh_in_a_repo_and_all_in_a_folder() {
     let env = TestEnv::new();
     setup(&env);
     let a = env.repo_with_origin("api", "office-org");
-    let b = env.repo_with_origin("site", "harshaltupe12");
+    let b = env.repo_with_origin("site", "janedoe");
     let lab = env.init_repo("lab");
     env.git(
         &["remote", "add", "origin", "https://gitlab.com/me/lab.git"],
@@ -116,7 +116,7 @@ fn remote_ssh_in_a_repo_and_all_in_a_folder() {
         .stdout(contains("site: switched origin to SSH"));
     assert_eq!(
         env.get_local(&b, "remote.origin.url").as_deref(),
-        Some("git@github.com:harshaltupe12/site.git")
+        Some("git@github.com:janedoe/site.git")
     );
     // Non-GitHub remotes are never touched.
     assert_eq!(
@@ -184,7 +184,7 @@ fn policy_shows_and_rejects_unknown_values() {
         .args(["remote", "policy", "never"])
         .assert()
         .code(0);
-    let repo = env.repo_with_origin("GitHop", "harshaltupe12");
+    let repo = env.repo_with_origin("GitHop", "janedoe");
     env.githop_in(&repo)
         .args(["pin", "personal"])
         .assert()
@@ -192,6 +192,6 @@ fn policy_shows_and_rejects_unknown_values() {
         .stdout(contains("Uses HTTPS"));
     assert_eq!(
         env.get_local(&repo, "remote.origin.url").as_deref(),
-        Some("https://github.com/harshaltupe12/GitHop.git")
+        Some("https://github.com/janedoe/GitHop.git")
     );
 }

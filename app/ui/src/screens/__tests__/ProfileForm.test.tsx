@@ -29,7 +29,7 @@ describe('ProfileForm', () => {
     expect(screen.getByRole('textbox', { name: 'Profile ID' })).toHaveValue('free-lance');
     await waitFor(() =>
       expect(
-        screen.getByText(/Creates C:\/Users\/harshal\/\.ssh\/githop_free-lance/),
+        screen.getByText(/Creates C:\/Users\/jane\/\.ssh\/githop_free-lance/),
       ).toBeInTheDocument(),
     );
     await expectNoA11yViolations(container);
@@ -39,10 +39,10 @@ describe('ProfileForm', () => {
 
   it('noreply helper fills the GitHub noreply format from the first owner', async () => {
     const { user } = renderWith(<ProfileForm profiles={profileSet()} onSaved={vi.fn()} />);
-    await user.type(screen.getByRole('textbox', { name: 'GitHub owners' }), 'harshal{Enter}');
+    await user.type(screen.getByRole('textbox', { name: 'GitHub owners' }), 'jane{Enter}');
     await user.click(screen.getByRole('button', { name: 'Use noreply' }));
     expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue(
-      'ID+harshal@users.noreply.github.com',
+      'ID+jane@users.noreply.github.com',
     );
     expect(screen.getByText(/Replace ID and the user name/)).toBeInTheDocument();
   });
@@ -101,7 +101,7 @@ describe('ProfileForm', () => {
     const onSaved = vi.fn();
     const { user } = renderWith(<ProfileForm profiles={profileSet()} onSaved={onSaved} />);
     await user.type(screen.getByRole('textbox', { name: 'Label' }), 'Freelance');
-    await user.type(screen.getByRole('textbox', { name: 'Display name' }), 'Harshal F');
+    await user.type(screen.getByRole('textbox', { name: 'Display name' }), 'Jane F');
     await user.type(screen.getByRole('textbox', { name: 'Email' }), 'h@freelance.dev');
     await waitFor(() => expect(m.suggestKeyPath).toHaveBeenCalledWith('freelance'));
     await user.click(screen.getByRole('button', { name: 'Save profile' }));
@@ -112,7 +112,7 @@ describe('ProfileForm', () => {
       label: 'Freelance',
       email: 'h@freelance.dev',
       color: 'pink',
-      ssh_key: 'C:/Users/harshal/.ssh/githop_freelance',
+      ssh_key: 'C:/Users/jane/.ssh/githop_freelance',
     });
     expect(original).toBeUndefined();
     expect(onSaved).toHaveBeenCalledWith(saved, expect.anything());
@@ -197,7 +197,7 @@ describe('ProfileForm', () => {
     expect(m.openExternal).toHaveBeenCalledWith('ssh-keys');
     await user.click(screen.getByRole('button', { name: 'Test connection' }));
     expect(m.testConnection).toHaveBeenCalledWith('personal');
-    expect(await screen.findByText('Connected to GitHub as harshal.')).toBeInTheDocument();
+    expect(await screen.findByText('Connected to GitHub as jane.')).toBeInTheDocument();
     const danger = screen.getByRole('region', { name: 'Danger zone' });
     await user.click(within(danger).getByRole('button', { name: 'Delete profile' }));
     expect(onDelete).toHaveBeenCalled();
@@ -247,7 +247,7 @@ describe('ProfileForm required fields', () => {
           profile_id: '',
           field: 'label',
           severity: 'error',
-          message: 'Add a label for this profile, like Office.',
+          message: 'Add a label for this profile, like Work.',
         },
       ]),
     );
@@ -255,10 +255,10 @@ describe('ProfileForm required fields', () => {
     const label = screen.getByRole('textbox', { name: 'Label' });
     await user.click(label);
     await waitFor(() => expect(m.validateProfile).toHaveBeenCalled());
-    expect(screen.queryByText('Add a label for this profile, like Office.')).toBeNull();
+    expect(screen.queryByText('Add a label for this profile, like Work.')).toBeNull();
     await user.tab(); // blur
     expect(
-      await screen.findByText('Add a label for this profile, like Office.'),
+      await screen.findByText('Add a label for this profile, like Work.'),
     ).toBeInTheDocument();
     expect(label).toHaveAttribute('aria-invalid', 'true');
     m.saveProfile.mockClear();

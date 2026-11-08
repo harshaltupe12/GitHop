@@ -134,14 +134,14 @@ mod tests {
         let msgs = vec![
             Message::blocked("GitHop: commit blocked"),
             Message::info("This repo belongs to Office."),
-            Message::info("Commit would use harshal@personal.").hint("Run: githop pin office"),
+            Message::info("Commit would use jane@personal.").hint("Run: githop pin office"),
         ];
         assert_eq!(
             render_lines(&msgs, false, false),
             vec![
                 "✗ GitHop: commit blocked",
                 "This repo belongs to Office.",
-                "Commit would use harshal@personal.",
+                "Commit would use jane@personal.",
                 "Run: githop pin office",
             ]
         );

@@ -22,8 +22,8 @@ use std::process::{Command, Output};
 use serde_json::Value;
 use support::TestEnv;
 
-const OFFICE: &str = "harshal@office.example";
-const PERSONAL: &str = "harshal@personal.example";
+const OFFICE: &str = "jane@office.example";
+const PERSONAL: &str = "jane@personal.example";
 
 fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
@@ -52,7 +52,7 @@ fn built_githop() -> String {
 /// `office-org`. Hooks installed by `githop init` with the built binary.
 fn setup() -> TestEnv {
     let env = TestEnv::new();
-    env.set_global("user.name", "Harshal");
+    env.set_global("user.name", "Jane");
     env.set_global("user.email", PERSONAL);
     let (code, out, err) = env.run(
         &env.home(),
@@ -60,7 +60,7 @@ fn setup() -> TestEnv {
     );
     assert_eq!(code, 0, "init failed:\n{out}\n{err}");
     assert!(out.contains("Hooks installed"), "{out}");
-    env.add_profile("office", "Harshal Office", OFFICE, &["office-org"]);
+    env.add_profile("office", "Jane Office", OFFICE, &["office-org"]);
     env
 }
 
@@ -464,7 +464,7 @@ fn wipe_keep_data_keeps_settings_but_removes_hooks() {
 #[test]
 fn wipe_with_broken_settings_still_restores_previous_hooks_path() {
     let env = TestEnv::new();
-    env.set_global("user.name", "Harshal");
+    env.set_global("user.name", "Jane");
     env.set_global("user.email", PERSONAL);
     env.set_global("core.hooksPath", "C:/old-hooks");
     env.githop()
@@ -830,7 +830,7 @@ fn office_repo_in(env: &TestEnv, dir: &Path) -> std::path::PathBuf {
 #[test]
 fn include_if_company_hooks_path_does_not_turn_githop_off() {
     let env = TestEnv::new();
-    env.set_global("user.name", "Harshal");
+    env.set_global("user.name", "Jane");
     env.set_global("user.email", PERSONAL);
     env.set_global("core.autocrlf", "false");
     let work = add_corp_include_if(&env);
@@ -843,7 +843,7 @@ fn include_if_company_hooks_path_does_not_turn_githop_off() {
         format!("{out}{err}").contains("for repos matching gitdir/i:"),
         "{out}\n{err}"
     );
-    env.add_profile("office", "Harshal Office", OFFICE, &["office-org"]);
+    env.add_profile("office", "Jane Office", OFFICE, &["office-org"]);
     let repo = office_repo_in(&env, &work);
     env.githop_in(&repo)
         .args(["pin", "office"])

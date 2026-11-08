@@ -4,7 +4,7 @@ Date: 2026-11-01 · Status: accepted (pending owner review)
 
 ## Context
 
-Real use on the owner's PC: the personal repo `harshaltupe12/GitHop` was
+Real use on the owner's PC: the personal repo `janedoe/GitHop` was
 pinned to Personal, but its remote was `https://github.com/…`. A pin sets
 `core.sshCommand`, which HTTPS ignores, so `git push` signed in with the
 account Git Credential Manager had saved (the Office account) and got a 403.

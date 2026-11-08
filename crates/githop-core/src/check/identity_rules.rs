@@ -271,7 +271,7 @@ mod tests {
                 "me@personal.example",
                 "old@home.example",
             ],
-            Some("Harshal"),
+            Some("Jane"),
             Some("DESKTOP-7"),
         )
     }
@@ -314,15 +314,15 @@ mod tests {
     #[test]
     fn auto_detected_idents_are_the_users() {
         let r = rules();
-        assert!(r.author_wrong("harshal@desktop-7"));
-        assert!(r.author_wrong("Harshal@DESKTOP-7.corp.example"));
-        assert!(r.author_wrong("harshal@desktop-7.(none)"));
+        assert!(r.author_wrong("jane@desktop-7"));
+        assert!(r.author_wrong("Jane@DESKTOP-7.corp.example"));
+        assert!(r.author_wrong("jane@desktop-7.(none)"));
         assert!(r.author_wrong("someone@(none)"));
-        assert!(!r.author_wrong("harshal@desktop-77"));
+        assert!(!r.author_wrong("jane@desktop-77"));
         assert!(!r.author_wrong("other@desktop-7"));
         // Without a login/host only `(none)` counts.
         let bare = IdentityRules::new("me@office.example", [], None, None);
-        assert!(!bare.author_wrong("harshal@desktop-7"));
+        assert!(!bare.author_wrong("jane@desktop-7"));
         assert!(bare.author_wrong("x@y.(none)"));
     }
 
@@ -396,7 +396,7 @@ mod tests {
         ]);
         let git = Git::with_exe("git")
             .env("EMAIL", "env@me.example")
-            .env("USERNAME", "harshal")
+            .env("USERNAME", "jane")
             .env("COMPUTERNAME", "BOX");
         let r = IdentityRules::for_repo(&git, &paths, &set, &set.profiles[0], &snap);
         for e in [
@@ -404,7 +404,7 @@ mod tests {
             "global@me.example",
             "before@githop.example",
             "env@me.example",
-            "harshal@box",
+            "jane@box",
         ] {
             assert!(r.author_wrong(e), "{e}");
         }

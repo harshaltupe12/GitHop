@@ -354,14 +354,14 @@ mod tests {
         }
     }
 
-    /// office: owner acme, folder C:/Office/ · personal: owner harshal, folder C:/Personal/
+    /// office: owner acme, folder C:/Office/ · personal: owner jane, folder C:/Personal/
     fn two() -> ProfileSet {
         ProfileSet {
             version: 1,
             default: Some("personal".into()),
             profiles: vec![
                 profile("office", &["acme"], &["C:/Office/"]),
-                profile("personal", &["harshal"], &["C:/Personal/"]),
+                profile("personal", &["jane"], &["C:/Personal/"]),
             ],
         }
     }
@@ -528,7 +528,7 @@ mod tests {
     fn stale_pin_warns_and_continues() {
         let s = snap(vec![
             local("githop.profile", "deleted"),
-            origin("git@github.com:harshal/x.git"),
+            origin("git@github.com:jane/x.git"),
         ]);
         let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
         assert_eq!(r.pinned.as_deref(), Some("deleted"));
@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn owner_folder_disagree_owner_wins() {
-        let s = snap(vec![origin("git@github.com:harshal/x.git")]);
+        let s = snap(vec![origin("git@github.com:jane/x.git")]);
         let r = resolve(&s, Path::new("C:/Office/x"), &two(), &[]);
         assert_eq!(id(&r), Some("personal"));
         assert_eq!(r.source, Some(ResolutionSource::Owner));
@@ -627,7 +627,7 @@ mod tests {
     #[test]
     fn githop_remote_override() {
         let s = snap(vec![
-            origin("git@github.com:harshal/fork.git"),
+            origin("git@github.com:jane/fork.git"),
             local("remote.upstream.url", "git@github.com:acme/x.git"),
             local("githop.remote", "upstream"),
         ]);
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn githop_remote_missing_falls_back_to_origin() {
         let s = snap(vec![
-            origin("git@github.com:harshal/fork.git"),
+            origin("git@github.com:jane/fork.git"),
             local("githop.remote", "gone"),
         ]);
         let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
@@ -652,7 +652,7 @@ mod tests {
     fn origin_preferred_over_other_remotes() {
         let s = snap(vec![
             local("remote.aaa.url", "git@github.com:acme/x.git"),
-            origin("git@github.com:harshal/x.git"),
+            origin("git@github.com:jane/x.git"),
         ]);
         let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
         assert_eq!(r.remote_name.as_deref(), Some("origin"));
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn origin_missing_uses_alphabetical_first() {
         let s = snap(vec![
-            local("remote.zeta.url", "git@github.com:harshal/x.git"),
+            local("remote.zeta.url", "git@github.com:jane/x.git"),
             local("remote.beta.url", "git@github.com:acme/x.git"),
         ]);
         let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
@@ -782,7 +782,7 @@ mod tests {
         let s = snap(vec![
             local("core.hooksPath", ".husky"),
             local("githop.profile", "gone"),
-            origin("git@github.com:harshal/x.git"),
+            origin("git@github.com:jane/x.git"),
         ]);
         let r = resolve(&s, Path::new("C:/Office/x"), &two(), &[]);
         assert_eq!(id(&r), Some("personal"));
@@ -803,7 +803,7 @@ mod tests {
     fn first_remote_url_decides_owner() {
         let s = snap(vec![
             origin("git@github.com:acme/x.git"),
-            origin("git@github.com:harshal/x.git"),
+            origin("git@github.com:jane/x.git"),
         ]);
         let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
         assert_eq!(id(&r), Some("office"));
@@ -838,7 +838,7 @@ mod tests {
                 "url.C:/mirror/.insteadOf",
                 "https://github.com/",
             ),
-            origin("https://github.com/harshal/x.git"),
+            origin("https://github.com/jane/x.git"),
         ]);
         let r = resolve(&s, Path::new("D:/x"), &two(), &[]);
         assert_eq!(id(&r), Some("personal"));

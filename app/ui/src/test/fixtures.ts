@@ -12,10 +12,10 @@ import type {
 export const office: Profile = {
   id: 'office',
   label: 'Office',
-  name: 'Harshal Office',
-  email: 'harshal@company.com',
+  name: 'Jane Office',
+  email: 'jane@company.com',
   color: 'blue',
-  ssh_key: 'C:/Users/harshal/.ssh/githop_office',
+  ssh_key: 'C:/Users/jane/.ssh/githop_office',
   owners: ['office-org'],
   folders: ['C:/Office/'],
 };
@@ -23,11 +23,11 @@ export const office: Profile = {
 export const personal: Profile = {
   id: 'personal',
   label: 'Personal',
-  name: 'Harshal',
-  email: '12345+harshal@users.noreply.github.com',
+  name: 'Jane',
+  email: '12345+jane@users.noreply.github.com',
   color: 'violet',
-  ssh_key: 'C:/Users/harshal/.ssh/githop_personal',
-  owners: ['harshal-personal'],
+  ssh_key: 'C:/Users/jane/.ssh/githop_personal',
+  owners: ['jane-personal'],
   folders: [],
 };
 
@@ -58,8 +58,8 @@ export const settings = (over: Partial<Settings> = {}): Settings => ({
 
 export const hooks = (over: Partial<HookHealth> = {}): HookHealth => ({
   installed: true,
-  hooks_dir: 'C:/Users/harshal/AppData/Roaming/githop/hooks',
-  global_hooks_path: 'C:/Users/harshal/AppData/Roaming/githop/hooks',
+  hooks_dir: 'C:/Users/jane/AppData/Roaming/githop/hooks',
+  global_hooks_path: 'C:/Users/jane/AppData/Roaming/githop/hooks',
   points_to_us: true,
   overridden_by: [],
   included_hooks_paths: [],
@@ -82,9 +82,9 @@ export const appState = (over: Partial<AppState> = {}): AppState => ({
   onboarding: {
     has_profiles: true,
     hooks_installed: true,
-    global_identity: { name: 'Harshal', email: 'harshal@company.com' },
+    global_identity: { name: 'Jane', email: 'jane@company.com' },
     step_hint: 'done',
-    backup_dir: 'C:/Users/harshal/AppData/Roaming/githop/backups',
+    backup_dir: 'C:/Users/jane/AppData/Roaming/githop/backups',
   },
   autostart: true,
   ...over,
@@ -98,9 +98,9 @@ export const emptyState = (): AppState =>
     onboarding: {
       has_profiles: false,
       hooks_installed: false,
-      global_identity: { name: 'Harshal', email: 'harshal@company.com' },
+      global_identity: { name: 'Jane', email: 'jane@company.com' },
       step_hint: 'welcome',
-      backup_dir: 'C:/Users/harshal/AppData/Roaming/githop/backups',
+      backup_dir: 'C:/Users/jane/AppData/Roaming/githop/backups',
     },
   });
 
@@ -114,14 +114,14 @@ export const repo = (
     profile_id: 'personal',
     source: 'pin',
     remote_name: 'origin',
-    remote: { host: 'github.com', owner: 'harshal-personal', repo: root.split('/').pop() ?? 'r' },
+    remote: { host: 'github.com', owner: 'jane-personal', repo: root.split('/').pop() ?? 'r' },
     pinned: 'personal',
     warnings: [],
     ...over,
   },
   identity: {
-    author: { name: 'Harshal', email: personal.email },
-    committer: { name: 'Harshal', email: personal.email },
+    author: { name: 'Jane', email: personal.email },
+    committer: { name: 'Jane', email: personal.email },
   },
   error: null,
   unpushed_offenders: 0,

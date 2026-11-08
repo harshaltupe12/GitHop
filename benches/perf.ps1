@@ -171,14 +171,14 @@ function Measure-Case([string]$name, [string]$file, [string[]]$argv, [string]$cw
 $results = [ordered]@{}
 try {
     Set-Iso
-    $office = 'harshal@office.example'
-    $personal = 'harshal@personal.example'
+    $office = 'jane@office.example'
+    $personal = 'jane@personal.example'
     $ssh = (Join-Path $homeDir '.ssh') -replace '\\', '/'
-    Invoke-Native $gitExe @('config', '--global', 'user.name', 'Harshal') $homeDir | Out-Null
+    Invoke-Native $gitExe @('config', '--global', 'user.name', 'Jane') $homeDir | Out-Null
     Invoke-Native $gitExe @('config', '--global', 'user.email', $personal) $homeDir | Out-Null
     Invoke-Native $exe @('init', '--id', 'personal', '--label', 'Personal', '--yes') $homeDir | Out-Null
-    Invoke-Native $exe @('edit', 'personal', '--owner', 'harshal-personal') $homeDir | Out-Null
-    Invoke-Native $exe @('add', '--id', 'office', '--name', 'Harshal Office', '--email', $office,
+    Invoke-Native $exe @('edit', 'personal', '--owner', 'jane-personal') $homeDir | Out-Null
+    Invoke-Native $exe @('add', '--id', 'office', '--name', 'Jane Office', '--email', $office,
         '--owner', 'office-org', '--key', "$ssh/githop_office") $homeDir | Out-Null
 
     # Pinned office repo.
@@ -193,7 +193,7 @@ try {
     $unpinned = Join-Path $reposDir 'side'
     New-Item -ItemType Directory $unpinned | Out-Null
     Invoke-Native $gitExe @('init', '-q', '-b', 'main') $unpinned | Out-Null
-    Invoke-Native $gitExe @('remote', 'add', 'origin', 'https://github.com/harshal-personal/side.git') $unpinned | Out-Null
+    Invoke-Native $gitExe @('remote', 'add', 'origin', 'https://github.com/jane-personal/side.git') $unpinned | Out-Null
 
     # Push repo: 100 new office commits on top of a base the remote has.
     $push = Join-Path $reposDir 'push-100'
@@ -217,7 +217,7 @@ try {
         $env:GITHOP_DEBUG_TIMING = '1'
         $cases = @(
             @('commit-pinned', $pinned, @('check', '--stage', 'commit'), $null, @{}),
-            @('commit-pinned-hook', $pinned, @('check', '--stage', 'commit'), $null, @{ GIT_AUTHOR_EMAIL = $office; GIT_AUTHOR_NAME = 'Harshal Office' }),
+            @('commit-pinned-hook', $pinned, @('check', '--stage', 'commit'), $null, @{ GIT_AUTHOR_EMAIL = $office; GIT_AUTHOR_NAME = 'Jane Office' }),
             @('commit-unpinned', $unpinned, @('check', '--stage', 'commit'), $null, @{}),
             @('push-100', $push, @('check', '--stage', 'push', '--', 'origin', 'git@github.com:office-org/push-100.git'), $stdinFile, @{})
         )
@@ -254,7 +254,7 @@ try {
     $sh = Join-Path (Split-Path (Split-Path $gitExe)) 'bin\sh.exe'
     if (Test-Path $sh) { $results['floor-sh'] = Measure-Case 'floor-sh' $sh @('-c', 'exit') $pinned $null }
     $results['commit-pinned'] = Measure-Case 'commit-pinned' $exe @('check', '--stage', 'commit') $pinned $null
-    $env:GIT_AUTHOR_NAME = 'Harshal Office'
+    $env:GIT_AUTHOR_NAME = 'Jane Office'
     $env:GIT_AUTHOR_EMAIL = $office
     $results['commit-pinned-hook'] = Measure-Case 'commit-pinned-hook' $exe @('check', '--stage', 'commit') $pinned $null
     Remove-Item Env:GIT_AUTHOR_NAME, Env:GIT_AUTHOR_EMAIL

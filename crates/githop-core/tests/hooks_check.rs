@@ -644,8 +644,8 @@ fn block_strict_blocks_when_githop_is_missing_or_crashes() {
 // ---------------------------------------------------------------------------
 // Part 2 — needs Phase 1 (gitconfig, resolver, store, pin, identity, repo)
 
-const OFFICE: &str = "harshal@office.example";
-const PERSONAL: &str = "harshal@personal.example";
+const OFFICE: &str = "jane@office.example";
+const PERSONAL: &str = "jane@personal.example";
 
 fn write_profiles(env: &TestEnv) {
     let paths = env.paths();
@@ -655,8 +655,8 @@ fn write_profiles(env: &TestEnv) {
         paths.profiles_file(),
         format!(
             "version = 1\ndefault = \"personal\"\n\n\
-             [[profile]]\nid = \"office\"\nlabel = \"Office\"\nname = \"Harshal Office\"\nemail = \"{OFFICE}\"\ncolor = \"blue\"\nssh_key = \"{}\"\nowners = [\"office-org\"]\n\n\
-             [[profile]]\nid = \"personal\"\nlabel = \"Personal\"\nname = \"Harshal\"\nemail = \"{PERSONAL}\"\ncolor = \"violet\"\nssh_key = \"{}\"\nowners = [\"harshal\"]\n",
+             [[profile]]\nid = \"office\"\nlabel = \"Office\"\nname = \"Jane Office\"\nemail = \"{OFFICE}\"\ncolor = \"blue\"\nssh_key = \"{}\"\nowners = [\"office-org\"]\n\n\
+             [[profile]]\nid = \"personal\"\nlabel = \"Personal\"\nname = \"Jane\"\nemail = \"{PERSONAL}\"\ncolor = \"violet\"\nssh_key = \"{}\"\nowners = [\"jane\"]\n",
             key("office"),
             key("personal")
         ),
@@ -674,7 +674,7 @@ fn ctx(env: &TestEnv, cwd: &Path) -> CheckContext {
 
 /// Default = Personal globally; repo with an office-org origin.
 fn office_repo(env: &TestEnv) -> PathBuf {
-    env.set_global("user.name", "Harshal");
+    env.set_global("user.name", "Jane");
     env.set_global("user.email", PERSONAL);
     write_profiles(env);
     let repo = env.init_repo("billing-api");

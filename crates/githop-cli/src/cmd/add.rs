@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use githop_core::{ssh, Profile, ProfileColor, ProfileSet, Severity};
 
-use super::{label_from_id, looks_personal, profile_display, slug, split_list, Ctx, NOREPLY_TIP};
+use super::{label_from_id, profile_display, slug, split_list, Ctx, NOREPLY_TIP};
 use crate::cli::AddArgs;
 use crate::exit::{missing_fields, usage, usage_hint, validation_refused, Exit};
 
@@ -50,7 +50,7 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
 
     if ui.interactive {
         if id.is_none() {
-            id = Some(ui.prompt("Profile id (e.g. office, personal)", None)?);
+            id = Some(ui.prompt("Profile id (e.g. work, personal, client)", None)?);
         }
         let id_now = id.clone().unwrap_or_default();
         if label.is_none() {
@@ -60,9 +60,7 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
             name = Some(ui.prompt("Name for commits (git user.name)", None)?);
         }
         if email.is_none() {
-            if looks_personal(&id_now, label.as_deref().unwrap_or("")) {
-                ui.hint(NOREPLY_TIP);
-            }
+            ui.hint(NOREPLY_TIP);
             email = Some(ui.prompt("Email for commits (git user.email)", None)?);
         }
         if color.is_none() {

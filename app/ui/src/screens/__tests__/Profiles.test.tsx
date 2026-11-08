@@ -74,12 +74,12 @@ describe('Profiles screen', () => {
     });
 
     it('connected as an account the profile doesn’t own: warns', async () => {
-      m.testConnection.mockResolvedValueOnce({ kind: 'connected', user: 'harshal-miraki' });
+      m.testConnection.mockResolvedValueOnce({ kind: 'connected', user: 'jane-acme' });
       const { user } = renderWith(<ProfilesScreen profiles={profileSet()} />);
       await testFrom(user, 'Personal');
       expect(
         await within(card('Personal')).findByText(
-          'This key belongs to harshal-miraki, but this profile owns harshal-personal.',
+          'This key belongs to jane-acme, but this profile owns jane-personal.',
         ),
       ).toBeInTheDocument();
     });

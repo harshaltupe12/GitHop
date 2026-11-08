@@ -6,10 +6,11 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use githop_core::profile::{is_public_mail, suggest_id};
 use githop_core::{backup, gitconfig, pin as core_pin, ssh, Profile, ProfileColor, Store};
 
 use super::hooks::{install, print_install, Ask};
-use super::{key_display, label_from_id, looks_personal, profile_display, Ctx, NOREPLY_TIP};
+use super::{key_display, label_from_id, profile_display, Ctx, NOREPLY_TIP};
 use crate::cli::InitArgs;
 use crate::exit::{missing_fields, Exit};
 
@@ -59,9 +60,10 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
     let mut label = args.label.clone();
     if ui.interactive {
         if id.is_none() {
+            let suggested = current_email.as_deref().and_then(suggest_id);
             id = Some(ui.prompt(
-                "Profile id for this identity (e.g. office, personal)",
-                Some("office"),
+                "Profile id for this identity (e.g. work, personal, client)",
+                suggested.as_deref(),
             )?);
         }
         let id_now = id.clone().unwrap_or_default();
@@ -72,7 +74,7 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
             name = Some(ui.prompt("Name for commits", current_name.as_deref())?);
         }
         if args.email.is_none() {
-            if looks_personal(&id_now, label.as_deref().unwrap_or("")) {
+            if current_email.as_deref().is_none_or(is_public_mail) {
                 ui.hint(NOREPLY_TIP);
             }
             email = Some(ui.prompt("Email for commits", current_email.as_deref())?);

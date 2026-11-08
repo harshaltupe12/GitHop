@@ -1376,9 +1376,9 @@ mod tests {
     fn connection_output_table() {
         let cases: &[(&str, Option<i32>, ConnectionTest)] = &[
             (
-                "Hi harshal-personal! You've successfully authenticated, but GitHub does not provide shell access.\n",
+                "Hi jane-personal! You've successfully authenticated, but GitHub does not provide shell access.\n",
                 Some(1),
-                ConnectionTest::Connected { user: "harshal-personal".into() },
+                ConnectionTest::Connected { user: "jane-personal".into() },
             ),
             (
                 "Warning: Permanently added 'github.com' (ED25519) to the list of known hosts.\r\nHi octo-org! You've successfully authenticated, but GitHub does not provide shell access.\r\n",
@@ -1485,7 +1485,7 @@ mod tests {
     #[test]
     fn whoami_sid_parse() {
         assert_eq!(
-            parse_whoami_sid("\"desktop-x\\harshal\",\"S-1-5-21-390-301-410-1001\"\r\n").as_deref(),
+            parse_whoami_sid("\"desktop-x\\jane\",\"S-1-5-21-390-301-410-1001\"\r\n").as_deref(),
             Some("S-1-5-21-390-301-410-1001")
         );
         assert_eq!(

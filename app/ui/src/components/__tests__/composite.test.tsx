@@ -127,7 +127,7 @@ describe('ProfileCard', () => {
     expect(card.className).toContain('border-aqua');
     expect(screen.getByText('Default')).toBeInTheDocument();
     expect(screen.getByText(personal.email)).toHaveClass('font-mono');
-    expect(screen.getByText('github.com/harshal-personal')).toBeInTheDocument();
+    expect(screen.getByText('github.com/jane-personal')).toBeInTheDocument();
     expect(screen.getByText('githop_personal')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Edit Personal' }));
     expect(h.onEdit).toHaveBeenCalled();

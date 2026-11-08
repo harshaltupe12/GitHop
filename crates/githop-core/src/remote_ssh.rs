@@ -509,13 +509,10 @@ mod tests {
     fn github_https_table() {
         let gh = |o: &str, r: &str| Some((o.to_string(), r.to_string()));
         let cases: &[(&str, Option<(String, String)>)] = &[
+            ("https://github.com/janedoe/GitHop", gh("janedoe", "GitHop")),
             (
-                "https://github.com/harshaltupe12/GitHop",
-                gh("harshaltupe12", "GitHop"),
-            ),
-            (
-                "https://github.com/harshaltupe12/GitHop.git",
-                gh("harshaltupe12", "GitHop"),
+                "https://github.com/janedoe/GitHop.git",
+                gh("janedoe", "GitHop"),
             ),
             ("https://github.com/o/r.git/", gh("o", "r")),
             ("https://user@github.com/o/r.git", gh("o", "r")),
@@ -545,8 +542,8 @@ mod tests {
             assert_eq!(&github_https_parts(url), want, "url {url:?}");
         }
         assert_eq!(
-            ssh_equivalent("https://github.com/harshaltupe12/GitHop").as_deref(),
-            Some("git@github.com:harshaltupe12/GitHop.git")
+            ssh_equivalent("https://github.com/janedoe/GitHop").as_deref(),
+            Some("git@github.com:janedoe/GitHop.git")
         );
         assert_eq!(ssh_equivalent("https://gitlab.com/o/r"), None);
     }
@@ -647,7 +644,7 @@ mod tests {
     fn push_warning_only_for_github_https_and_not_under_never() {
         let w = https_push_warning(
             "Personal",
-            Some("https://github.com/harshaltupe12/GitHop.git"),
+            Some("https://github.com/janedoe/GitHop.git"),
             RemoteHttpsPolicy::Ask,
         )
         .unwrap();

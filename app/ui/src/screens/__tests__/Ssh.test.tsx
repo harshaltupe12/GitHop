@@ -17,7 +17,7 @@ import { SettingsScreen } from '../Settings';
 vi.mock('../../lib/ipc', async () => (await import('../../test/ipcMock')).createIpcMock());
 const m = vi.mocked(ipc);
 
-const https = (name: string, owner = 'harshal-personal'): RepoRow =>
+const https = (name: string, owner = 'jane-personal'): RepoRow =>
   repo(`C:/Personal/${name}`, {}, { https_remotes: [httpsRemote(owner, name)] });
 const switchedRow = (r: RepoRow): RepoRow => ({
   ...r,

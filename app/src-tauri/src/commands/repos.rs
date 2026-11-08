@@ -530,7 +530,7 @@ mod tests {
                 "remote",
                 "add",
                 "origin",
-                "https://github.com/harshaltupe12/GitHop.git",
+                "https://github.com/janedoe/GitHop.git",
             ],
         )
         .unwrap();
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(r.https_remotes.len(), 1);
         assert_eq!(
             r.https_remotes[0].ssh_url,
-            "git@github.com:harshaltupe12/GitHop.git"
+            "git@github.com:janedoe/GitHop.git"
         );
         assert!(r.ssh_switched.is_empty());
 

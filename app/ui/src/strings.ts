@@ -164,9 +164,10 @@ export const S = {
     editTitle: (label: string) => `Edit ${label}`,
     identity: 'Identity',
     label: 'Label',
-    labelHelp: 'For example “Personal” or “Office”.',
+    labelHelp:
+      'Any name you’ll recognise, for example “Work”, “Personal”, “Client” or “Open source”.',
     id: 'Profile ID',
-    idHelp: (id: string) => `Used in commands, for example githop pin ${id || 'personal'}.`,
+    idHelp: (id: string) => `Used in commands, for example githop pin ${id || 'work'}.`,
     name: 'Display name',
     nameHelp: 'Your git user.name.',
     email: 'Email',
@@ -181,8 +182,9 @@ export const S = {
     usedBy: (label: string) => `Used by ${label}`,
     owns: 'Owns',
     ownersLabel: 'GitHub owners',
-    ownersPlaceholder: 'harshal-personal',
-    ownersHelp: 'Users or orgs in repo URLs, for example office-org. Press Enter or comma to add.',
+    ownersPlaceholder: 'your-org or your-username',
+    ownersHelp:
+      'Users or orgs in repo URLs, for example acme-corp or your username. Press Enter or comma to add.',
     // Onboarding: Owns comes straight after Identity, with this question.
     ownsPrompt:
       'Which GitHub organisation or account owns this profile’s repos? For work, that’s your company’s org.',
@@ -586,7 +588,7 @@ export const S = {
     },
     another: {
       title: 'Add another',
-      body: 'Most people have an Office and a Personal profile. You can add more later.',
+      body: 'Add one profile for each git identity you use: work, personal, clients or open source. You can add more later.',
       add: 'Add another profile',
       added: (label: string) => `Profile added: ${label}`,
     },
@@ -604,8 +606,8 @@ export const S = {
       body: 'The tray icon shows your default profile’s colour and initial. A small vermillion dot means GitHop blocked something.',
       finish: 'Open GitHop',
     },
-    guessOffice: 'Office',
-    guessPersonal: 'Personal',
+    /** Suggested label for a free-mail or GitHub noreply identity (always editable). */
+    personalLabel: 'Personal',
   },
 
   tray: {

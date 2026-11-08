@@ -231,7 +231,7 @@ fn build_menu<R: Runtime>(
     Menu::with_items(app, &refs)
 }
 
-/// `Office   harshal@company.com` — `&` escaped (it marks accelerators).
+/// `Office   jane@company.com` — `&` escaped (it marks accelerators).
 fn menu_text(label: &str, email: &str) -> String {
     format!("{}\t{}", label.replace('&', "&&"), email.replace('&', "&&"))
 }

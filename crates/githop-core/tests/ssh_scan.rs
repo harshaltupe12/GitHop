@@ -125,7 +125,7 @@ fn scan_resolves_repos_in_temp_tree() {
             "remote",
             "add",
             "origin",
-            "https://github.com/harshal/site.git",
+            "https://github.com/jane/site.git",
         ],
         &personal,
     );
@@ -145,7 +145,7 @@ fn scan_resolves_repos_in_temp_tree() {
             profile(
                 "personal",
                 "me@personal.example",
-                "harshal",
+                "jane",
                 ProfileColor::Violet,
             ),
         ],

@@ -274,7 +274,7 @@ mod tests {
             default: Some("personal".into()),
             profiles: vec![
                 profile("office", "Office", office_owners),
-                profile("personal", "Personal", &["harshaltupe12"]),
+                profile("personal", "Personal", &["janedoe"]),
             ],
         }
     }
@@ -297,32 +297,32 @@ mod tests {
     #[test]
     fn hint_names_the_owner_and_the_ownerless_profile() {
         let s = set(&[]);
-        let res = default_only("miraki-labs");
+        let res = default_only("acme-labs");
         let (warn, hint) = owner_hint_lines(&s, &res, s.get("personal")).unwrap();
         assert_eq!(
             warn,
-            "No profile owns miraki-labs on GitHub, so this repo uses your default \
+            "No profile owns acme-labs on GitHub, so this repo uses your default \
              profile (Personal)."
         );
         assert_eq!(
             hint,
-            "If it's an Office repo, run: githop edit office --owner miraki-labs"
+            "If it's an Office repo, run: githop edit office --owner acme-labs"
         );
     }
 
     #[test]
     fn no_hint_when_routed_pinned_or_not_github() {
         // Office already has an owner: the default really is the fallback.
-        let routed = set(&["miraki-labs"]);
+        let routed = set(&["acme-labs"]);
         assert!(owner_hint_lines(&routed, &default_only("other"), None).is_none());
 
         let s = set(&[]);
-        let mut pinned = default_only("miraki-labs");
+        let mut pinned = default_only("acme-labs");
         pinned.source = Some(ResolutionSource::Pin);
         pinned.pinned = Some("personal".into());
         assert!(owner_hint_lines(&s, &pinned, None).is_none());
 
-        let mut by_owner = default_only("harshaltupe12");
+        let mut by_owner = default_only("janedoe");
         by_owner.source = Some(ResolutionSource::Owner);
         assert!(owner_hint_lines(&s, &by_owner, None).is_none());
 
@@ -341,17 +341,17 @@ mod tests {
     fn hint_with_no_default_profile() {
         let mut s = set(&[]);
         s.default = None;
-        let mut res = default_only("miraki-labs");
+        let mut res = default_only("acme-labs");
         res.profile_id = None;
         res.source = None;
         let (warn, hint) = owner_hint_lines(&s, &res, None).unwrap();
         assert_eq!(
             warn,
-            "No profile owns miraki-labs on GitHub, and there's no default profile."
+            "No profile owns acme-labs on GitHub, and there's no default profile."
         );
         assert_eq!(
             hint,
-            "If it's an Office repo, run: githop edit office --owner miraki-labs"
+            "If it's an Office repo, run: githop edit office --owner acme-labs"
         );
     }
 

@@ -8,7 +8,7 @@ import { Icons } from '../components/icons';
 import { useToast } from '../components/Toast';
 import { applyProfiles, STATE_KEY } from '../lib/appState';
 import { cx } from '../lib/cx';
-import { guessLabel, slugify, sortProfiles } from '../lib/format';
+import { slugify, sortProfiles, suggestLabel } from '../lib/format';
 import * as ipc from '../lib/ipc';
 import { invalidate } from '../lib/query';
 import { KEYS, readJson, removeKey, writeJson } from '../lib/storage';
@@ -56,9 +56,8 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
 
   const go = (n: number) => setStep(Math.max(0, Math.min(TOTAL - 1, n)));
   const g = state.onboarding.global_identity ?? null;
-  const guess = guessLabel(g?.email);
-  const firstLabel = guess === 'personal' ? S.onboarding.guessPersonal : S.onboarding.guessOffice;
-  const secondLabel = guess === 'personal' ? S.onboarding.guessOffice : S.onboarding.guessPersonal;
+  // A suggestion from the email domain, never a fixed Office/Personal pair.
+  const firstLabel = suggestLabel(g?.email, S.onboarding.personalLabel);
   const list = sortProfiles(state.profiles);
 
   const afterFirstSave = async (saved: Profile, hadDefault: boolean) => {
@@ -168,11 +167,13 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
       } else {
         content = (
           <div className="flex flex-col gap-4">
-            <p>{g ? S.onboarding.first.guess(firstLabel) : S.onboarding.first.fresh}</p>
+            <p>
+              {g && firstLabel ? S.onboarding.first.guess(firstLabel) : S.onboarding.first.fresh}
+            </p>
             <ProfileForm
               embedded
               ownersProminent
-              heading={firstLabel}
+              heading={firstLabel || undefined}
               profiles={state.profiles}
               seed={
                 g
@@ -197,9 +198,7 @@ export function Onboarding({ state, onFinish }: { state: AppState; onFinish: () 
           embedded
           ownersProminent
           autoFocusHeading
-          heading={secondLabel}
           profiles={state.profiles}
-          seed={{ label: secondLabel, id: slugify(secondLabel) }}
           onCancel={() => setAdding(false)}
           onSaved={(set, saved) => {
             applyProfiles(set);

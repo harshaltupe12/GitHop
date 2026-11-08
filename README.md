@@ -6,7 +6,7 @@
 </h1>
 
 <p align="center">
-  <b>Work and personal git on one Windows PC. The right name, email and SSH key in every repo, automatically.</b>
+  <b>Every git identity on one Windows PC: work, personal, clients, open source. The right name, email and SSH key in every repo, automatically.</b>
 </p>
 
 <p align="center">
@@ -28,20 +28,20 @@
 </p>
 
 <p align="center">
-  <img alt="GitHop Profiles screen with an Office and a Personal profile" src="docs/images/githop-profiles.png" width="820">
+  <img alt="GitHop Profiles screen with Work, Personal and Client profiles" src="docs/images/githop-profiles.png" width="820">
 </p>
 
 ---
 
 ## Why GitHop
 
-Most developers have more than one git identity: a work account, a personal one,
+Most developers have more than one git identity: a job, personal projects,
 maybe a client or two. On a single PC that goes wrong in quiet, permanent ways:
 
-- You commit an office fix while your **personal** email is configured. The commit
+- You commit a work fix while your **personal** email is configured. The commit
   is stamped with the wrong identity **forever**, and GitHub shows your personal
   avatar on company history.
-- You push a personal project and Windows signs in with your **office** account:
+- You push a personal project and Windows signs in with your **work** account:
   `403 Permission denied`.
 - You keep switching `git config --global user.email` by hand, and one day you forget.
 
@@ -55,7 +55,7 @@ your machine.
 
 | | |
 |---|---|
-| 🧭 **Automatic identity per repo** | Picks the profile from the repo's GitHub owner (`github.com/acme-corp/…` → Office) or folder (`C:\Personal\…` → Personal). |
+| 🧭 **Automatic identity per repo** | Picks the profile from the repo's GitHub owner (`github.com/acme-corp/…` → Work) or folder (`C:\Personal\…` → Personal). |
 | 🛑 **Blocks mistakes** | A commit or push that would use the wrong email is stopped with a clear message, before anything reaches GitHub. |
 | 🔑 **One SSH key per profile** | Generates keys, pins each repo to its profile's key, and switches HTTPS remotes to SSH so the right GitHub account pushes. |
 | 🩹 **Fix, safely** | Re-stamps wrong-identity commits that aren't pushed yet. Never touches pushed commits. Always keeps a backup you can undo. |
@@ -209,7 +209,7 @@ Pick a repo and see exactly which commits used the wrong identity.
 
 ## Set up in the app (10 minutes)
 
-Have both GitHub accounts handy (for example your **office** and **personal** accounts).
+Have each GitHub account handy (for example **work**, **personal** or a **client**'s). The steps below use two profiles; add as many as you need.
 
 ### Step 1 · Get a private commit email for each GitHub account
 
@@ -228,16 +228,16 @@ For **each** GitHub account:
    second safety net on GitHub's side.
 
 > Your work account may require your company email instead. That's fine, use it
-> for the Office profile.
+> for the Work profile.
 
 ### Step 2 · Your first profile (detected automatically)
 
 GitHop reads the git identity already on your PC (`git config --global user.name`
-and `user.email`) and pre-fills your **first profile**, usually *Office*.
+and `user.email`) and pre-fills your **first profile**. The label is suggested from your email (*Acme* for jane@acme.com, *Personal* for a Gmail or noreply address) and you can change it.
 
 | Field | What to enter | Example |
 |---|---|---|
-| **Label** \* | A name you'll recognise | `Office` |
+| **Label** \* | Any name you'll recognise | `Work`, `Personal`, `Client`, `Open source` |
 | **Name** \* | Your name as it should appear on commits | `Jane Doe` |
 | **Email** \* | The email for this account (Step 1) | `jane@company.com` |
 | **Colour** | Tray and card colour | Blue |
@@ -302,7 +302,7 @@ the right identity.
 |---|---|---|
 | Clone a repo | Nothing to do: it's pinned to the owner's profile automatically | `git clone git@github.com:owner/repo.git` |
 | Commit and push | Nothing new: use git or VS Code's **Sync** as always | `git commit` and `git push` |
-| Switch the default profile | **Tray icon** → pick a profile | `githop use office` |
+| Switch the default profile | **Tray icon** → pick a profile | `githop use work` |
 | See which identity a repo uses | **Repos** screen | `githop status` |
 | Pin a repo to a profile | **Repos → Pin** | `githop pin personal` |
 | Use the profile's key for an HTTPS repo | **Repos → Switch to SSH** | `githop remote ssh` |
@@ -314,13 +314,13 @@ the right identity.
 
 ```text
 ✗ GitHop: commit blocked
-This repo belongs to Office.
+This repo belongs to Work.
 Commit would use 12345678+janedoe@users.noreply.github.com.
-✓ Identity fixed for this repo: pinned to Office.
+✓ Identity fixed for this repo: pinned to Work.
 Run the commit again.
 ```
 
-Run the commit again. It now uses the Office identity.
+Run the commit again. It now uses the Work identity.
 
 ---
 
@@ -334,19 +334,19 @@ servers, or if you simply prefer the terminal.
 ```powershell
 # 1. Set up: back up your git config, turn your current identity into the first
 #    profile, install the hooks. Safe to run again.
-githop init --id office --label Office
-githop edit office --owner acme-corp
+githop init --id work --label Work
+githop edit work --owner acme-corp
 
 # 2. Add your personal identity
 githop add --id personal --label Personal --name "Jane Doe" `
   --email "12345678+janedoe@users.noreply.github.com" --owner janedoe
 
 # 3. One SSH key per profile (prints the public key to add on GitHub)
-githop keygen office
+githop keygen work
 githop keygen personal
 
 # 4. After adding each key on GitHub (Settings → SSH and GPG keys)
-githop test office          # ✓ Connected as jane-acme
+githop test work            # ✓ Connected as jane-acme
 githop test personal        # ✓ Connected as janedoe
 
 # 5. Pick the default profile, used for repos no owner or folder matches
@@ -373,7 +373,7 @@ Usage: `githop <command> [options]`. Run `githop <command> --help` for every opt
 #### First-time setup: `init`
 
 ```powershell
-githop init [--id office] [--label Office] [--name "…"] [--email "…"] [--color blue] [--key <path>] [-y] [--no-hooks]
+githop init [--id work] [--label Work] [--name "…"] [--email "…"] [--color blue] [--key <path>] [-y] [--no-hooks]
 ```
 
 Backs up your global git config, creates the first profile from your current
@@ -384,10 +384,10 @@ and installs the hooks. Running it again is safe: it repairs the hooks.
 
 ```powershell
 githop add --id personal --label Personal --name "Jane Doe" --email "…" --owner janedoe [--folder C:\Personal] [--color violet] [--key <path>]
-githop edit office --owner acme-corp --owner acme-labs     # replace owners (repeatable)
-githop edit office --email new@company.com --repin         # re-pin repos using this profile
-githop edit office --no-owners                             # clear owners (also --no-folders)
-githop remove personal [--new-default office] [-y]
+githop edit work --owner acme-corp --owner acme-labs       # replace owners (repeatable)
+githop edit work --email new@company.com --repin           # re-pin repos using this profile
+githop edit work --no-owners                               # clear owners (also --no-folders)
+githop remove personal [--new-default work] [-y]
 ```
 
 - `--owner` and `--folder` can be repeated. With two or more profiles, each needs at least one.
@@ -407,7 +407,7 @@ repos that no owner or folder rule matches. Pinned repos keep their own profile.
 
 ```powershell
 githop status               # profile, why (pin, owner, folder or default), identity, key, warnings
-githop pin office           # this repo always uses Office
+githop pin work             # this repo always uses Work
 githop unpin                # remove the pin
 ```
 
@@ -445,7 +445,7 @@ githop remote policy auto           # pinning switches without asking (ask, auto
 ```
 
 Over HTTPS, git signs in with the account Windows saved, not your profile's
-key, so a personal repo can push as your office account (`403`). SSH fixes that.
+key, so a personal repo can push as your work account (`403`). SSH fixes that.
 
 #### Repair commits: `fix`
 
@@ -543,7 +543,7 @@ key → Open GitHub SSH settings**, add it to the **right account**, then click 
 Click **Remember my passphrase** in the profile. VS Code can't show a passphrase
 prompt; with the passphrase in Windows' SSH agent it doesn't need to.
 
-#### "push blocked: N commits use the Office email in a Personal repo"
+#### "push blocked: N commits use the Work email in a Personal repo"
 
 Those commits were made with the wrong identity. Open **Fix commits** to re-stamp
 them (only unpushed commits are changed, with a backup), then push again.
@@ -560,7 +560,7 @@ No profile lists that repo's GitHub owner. Use the **Choose a profile for these
 GitHub owners** panel on the Repos screen. From a terminal:
 
 ```powershell
-githop edit office --owner <org>
+githop edit work --owner <org>
 ```
 
 #### Repos with husky, lefthook or pre-commit

@@ -13,8 +13,8 @@ use githop_core::check::push::{read_pushed, PUSHED_FILE};
 use githop_core::check::{self, CheckContext, Level, Outcome, Stage};
 use support::TestEnv;
 
-const OFFICE: &str = "harshal@office.example";
-const PERSONAL: &str = "harshal@personal.example";
+const OFFICE: &str = "jane@office.example";
+const PERSONAL: &str = "jane@personal.example";
 const ALICE: &str = "alice@contrib.example";
 const Z40: &str = "0000000000000000000000000000000000000000";
 
@@ -30,8 +30,8 @@ fn write_profiles(env: &TestEnv) {
         paths.profiles_file(),
         format!(
             "version = 1\n\n\
-             [[profile]]\nid = \"office\"\nlabel = \"Office\"\nname = \"Harshal Office\"\nemail = \"{OFFICE}\"\ncolor = \"blue\"\nssh_key = \"{}\"\nowners = [\"office-org\"]\n\n\
-             [[profile]]\nid = \"personal\"\nlabel = \"Personal\"\nname = \"Harshal\"\nemail = \"{PERSONAL}\"\ncolor = \"violet\"\nssh_key = \"{}\"\nowners = [\"harshal\"]\n",
+             [[profile]]\nid = \"office\"\nlabel = \"Office\"\nname = \"Jane Office\"\nemail = \"{OFFICE}\"\ncolor = \"blue\"\nssh_key = \"{}\"\nowners = [\"office-org\"]\n\n\
+             [[profile]]\nid = \"personal\"\nlabel = \"Personal\"\nname = \"Jane\"\nemail = \"{PERSONAL}\"\ncolor = \"violet\"\nssh_key = \"{}\"\nowners = [\"jane\"]\n",
             key("office"),
             key("personal")
         ),
@@ -51,8 +51,8 @@ impl Fx {
     fn new() -> Self {
         let env = TestEnv::new();
         write_profiles(&env);
-        env.set_global("user.name", "Harshal");
-        env.set_global("user.email", "harshal@old-laptop.example");
+        env.set_global("user.name", "Jane");
+        env.set_global("user.email", "jane@old-laptop.example");
         let repo = env.init_repo("billing-api");
         let remote = env.bare_remote("office-org/billing-api");
         env.git(&["remote", "add", "origin", &slash(&remote)], &repo);
@@ -63,7 +63,7 @@ impl Fx {
             remote,
             n: std::cell::Cell::new(0),
         };
-        fx.commit("Harshal Office", OFFICE);
+        fx.commit("Jane Office", OFFICE);
         fx.git(&["push", "-q", "origin", "main"]);
         fx
     }
@@ -138,7 +138,7 @@ impl Fx {
     fn merge_pr_as(&self, email: &str) {
         self.git(&[
             "-c",
-            "user.name=Harshal",
+            "user.name=Jane",
             "-c",
             &format!("user.email={email}"),
             "merge",
@@ -190,7 +190,7 @@ fn merge_with_the_wrong_identity_blocks_only_the_merge() {
 #[test]
 fn foreign_author_with_the_users_wrong_committer_is_committer_only() {
     let fx = Fx::new();
-    fx.commit2(("Alice", ALICE), ("Harshal", PERSONAL));
+    fx.commit2(("Alice", ALICE), ("Jane", PERSONAL));
     let r = fx.push_main();
     assert_eq!(r.exit_code(), 1);
     assert_eq!(r.offending.len(), 1);
@@ -207,7 +207,7 @@ fn foreign_author_with_the_users_wrong_committer_is_committer_only() {
 #[test]
 fn global_email_and_auto_detected_ident_are_the_users() {
     let fx = Fx::new();
-    fx.commit("Harshal", "Harshal@Old-Laptop.example");
+    fx.commit("Jane", "Jane@Old-Laptop.example");
     let r = fx.push_main();
     assert_eq!(r.exit_code(), 1, "{r:?}");
     assert_eq!(
@@ -216,7 +216,7 @@ fn global_email_and_auto_detected_ident_are_the_users() {
     );
 
     let fx = Fx::new();
-    fx.commit("Harshal", "hdev@buildbox7.corp.example");
+    fx.commit("Jane", "hdev@buildbox7.corp.example");
     let mut ctx = fx.ctx();
     ctx.git = ctx
         .git
@@ -264,7 +264,7 @@ fn annotated_tag_with_the_wrong_tagger_is_blocked() {
     let fx = Fx::new();
     fx.git(&[
         "-c",
-        "user.name=Harshal",
+        "user.name=Jane",
         "-c",
         &format!("user.email={PERSONAL}"),
         "tag",
@@ -319,7 +319,7 @@ fn good_lightweight_and_foreign_tags_pass() {
         assert_eq!(r.outcome, Outcome::Pass, "{tag}: {:?}", r.messages);
     }
     // A branch-only push keeps the 2-spawn budget.
-    fx.commit("Harshal Office", OFFICE);
+    fx.commit("Jane Office", OFFICE);
     let ctx = fx.ctx();
     let before = ctx.git.spawn_count();
     assert_eq!(
@@ -343,7 +343,7 @@ fn good_lightweight_and_foreign_tags_pass() {
 #[test]
 fn wrong_tag_and_wrong_commit_both_reported() {
     let fx = Fx::new();
-    let bad = fx.commit("Harshal", PERSONAL);
+    let bad = fx.commit("Jane", PERSONAL);
     fx.git(&[
         "-c",
         &format!("user.email={PERSONAL}"),
@@ -376,7 +376,7 @@ fn wrong_tag_and_wrong_commit_both_reported() {
 #[test]
 fn allowed_push_is_recorded_in_the_common_git_dir() {
     let fx = Fx::new();
-    let good = fx.commit("Harshal Office", OFFICE);
+    let good = fx.commit("Jane Office", OFFICE);
     assert_eq!(fx.push_main().outcome, Outcome::Pass);
     let rec = fx.record();
     assert_eq!(rec.len(), 1);
@@ -386,7 +386,7 @@ fn allowed_push_is_recorded_in_the_common_git_dir() {
     assert!(fx.repo.join(".git").join(PUSHED_FILE).is_file());
 
     // Blocked → not recorded; warn mode → goes through → recorded.
-    let bad = fx.commit("Harshal", PERSONAL);
+    let bad = fx.commit("Jane", PERSONAL);
     assert_eq!(fx.push_main().exit_code(), 1);
     assert_eq!(fx.record().len(), 1);
     std::fs::write(
@@ -410,7 +410,7 @@ fn unresolved_push_is_recorded_too() {
         "origin",
         "https://example.invalid/x/y.git",
     ]);
-    let c = fx.commit("Harshal", PERSONAL);
+    let c = fx.commit("Jane", PERSONAL);
     let stdin = format!("refs/heads/topic {c} refs/heads/topic {Z40}\n");
     let r = check::run_check(Stage::Push, &fx.args(), &stdin, &fx.ctx());
     assert_eq!(r.outcome, Outcome::Unresolved);

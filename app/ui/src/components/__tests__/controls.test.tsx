@@ -18,7 +18,7 @@ describe('Field + TextInput', () => {
         helper="Tip: use your GitHub noreply email to keep it private."
         issues={[{ severity: 'error', message: 'Email already used by Office' }]}
       >
-        {(p) => <TextInput {...p} mono defaultValue="harshal@company.com" />}
+        {(p) => <TextInput {...p} mono defaultValue="jane@company.com" />}
       </Field>,
     );
     const input = screen.getByRole('textbox', { name: 'Email' });
@@ -96,11 +96,11 @@ describe('ChipInput', () => {
     const { container } = render(<ChipHarness />);
     const input = screen.getByRole('textbox', { name: 'GitHub owners' });
     await userEvent.type(input, 'Office-Org{Enter}');
-    await userEvent.type(input, 'harshal,');
+    await userEvent.type(input, 'jane,');
     expect(screen.getByText('office-org')).toBeInTheDocument();
-    expect(screen.getByText('harshal')).toBeInTheDocument();
+    expect(screen.getByText('jane')).toBeInTheDocument();
     await userEvent.type(input, '{Backspace}');
-    expect(screen.queryByText('harshal')).toBeNull();
+    expect(screen.queryByText('jane')).toBeNull();
     await expectNoA11yViolations(container);
   });
 

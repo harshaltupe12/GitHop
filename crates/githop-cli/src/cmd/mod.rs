@@ -143,7 +143,7 @@ pub fn profile_ids(set: &ProfileSet) -> Vec<String> {
     set.profiles.iter().map(|p| p.id.clone()).collect()
 }
 
-/// `Office (harshal@company.com)`.
+/// `Office (jane@company.com)`.
 pub fn profile_display(p: &Profile) -> String {
     format!("{} ({})", p.label, p.email)
 }
@@ -185,15 +185,7 @@ pub fn split_list(answer: &str) -> Vec<String> {
         .collect()
 }
 
-/// Does this look like a personal profile (for the noreply email tip)?
-pub fn looks_personal(id: &str, label: &str) -> bool {
-    let text = format!("{id} {label}").to_lowercase();
-    ["personal", "home", "private", "side"]
-        .iter()
-        .any(|w| text.contains(w))
-}
-
-/// Tip shown before asking for a personal email (Design §9, Plan §9.3).
+/// Tip shown before asking for an email that may be someone's own (Design §9, Plan §9.3).
 pub const NOREPLY_TIP: &str = "Tip: a GitHub noreply email keeps your address private, e.g. \
      ID+username@users.noreply.github.com (GitHub → Settings → Emails).";
 
@@ -269,7 +261,7 @@ pub fn unmatched_owner(res: &Resolution) -> Option<&str> {
         .filter(|o| !o.trim().is_empty())
 }
 
-/// `githop edit office --owner miraki-labs`, or `<profile>` plus the choices.
+/// `githop edit office --owner acme-labs`, or `<profile>` plus the choices.
 /// `--owner` replaces a profile's owners, which is safe here: candidates have none.
 pub fn add_owner_command(candidates: &[&Profile], owners: &[&str]) -> String {
     let flags = owners
@@ -473,13 +465,6 @@ mod tests {
         assert_eq!(split_list("a, b;c"), vec!["a", "b", "c"]);
         assert!(split_list("-").is_empty());
         assert!(split_list("  ").is_empty());
-    }
-
-    #[test]
-    fn personal_detection() {
-        assert!(looks_personal("personal", "Personal"));
-        assert!(looks_personal("me", "Home stuff"));
-        assert!(!looks_personal("office", "Office"));
     }
 
     #[test]

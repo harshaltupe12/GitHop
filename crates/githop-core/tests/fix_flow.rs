@@ -13,10 +13,10 @@ use githop_core::fix::{self, Fault, FixBlocker};
 use githop_core::{CoreError, Profile, ProfileColor, ProfileSet, Settings, Store};
 use support::TestEnv;
 
-const OFFICE: &str = "harshal@company.com";
-const OFFICE_NAME: &str = "Harshal Office";
-const PERSONAL: &str = "harshal@personal.dev";
-const PERSONAL_NAME: &str = "Harshal";
+const OFFICE: &str = "jane@company.com";
+const OFFICE_NAME: &str = "Jane Office";
+const PERSONAL: &str = "jane@personal.dev";
+const PERSONAL_NAME: &str = "Jane";
 
 // ------------------------------------------------------------------ helpers
 
@@ -1433,8 +1433,8 @@ fn foreign_author_with_wrong_committer_keeps_the_author_exactly() {
 #[test]
 fn global_user_email_is_an_offender() {
     let fx = Fx::with_remote(1);
-    fx.env.set_global("user.email", "harshal@old-job.example");
-    fx.commit_as("Harshal", "harshal@old-job.example");
+    fx.env.set_global("user.email", "jane@old-job.example");
+    fx.commit_as("Jane", "jane@old-job.example");
     let plan = fx.plan();
     assert_eq!(plan.offenders.len(), 1);
     assert_eq!(plan.foreign, 0);

@@ -483,8 +483,8 @@ mod tests {
             version: 1,
             default: Some("personal".into()),
             profiles: vec![
-                profile("office", "Office", "harshal@office.example"),
-                profile("personal", "Personal", "harshal@personal.example"),
+                profile("office", "Office", "jane@office.example"),
+                profile("personal", "Personal", "jane@personal.example"),
             ],
         }
     }
@@ -500,11 +500,7 @@ mod tests {
 
     fn pinned_snapshot(local_email: &str) -> Vec<ConfigEntry> {
         vec![
-            entry(
-                ConfigScope::Global,
-                "user.email",
-                "harshal@personal.example",
-            ),
+            entry(ConfigScope::Global, "user.email", "jane@personal.example"),
             entry(ConfigScope::Local, "user.email", local_email),
             entry(ConfigScope::Local, "githop.profile", "office"),
         ]
@@ -536,7 +532,7 @@ mod tests {
 
     #[test]
     fn fast_path_pinned_and_matching() {
-        let s = ConfigSnapshot::from_entries(pinned_snapshot("Harshal@Office.example"));
+        let s = ConfigSnapshot::from_entries(pinned_snapshot("Jane@Office.example"));
         assert!(fast_path_ok(&s, &set(), &EnvOverrides::default()));
     }
 
@@ -544,10 +540,10 @@ mod tests {
     fn fast_path_rejects_each_unsafe_case() {
         let none = EnvOverrides::default();
         // wrong local email
-        let s = ConfigSnapshot::from_entries(pinned_snapshot("harshal@personal.example"));
+        let s = ConfigSnapshot::from_entries(pinned_snapshot("jane@personal.example"));
         assert!(!fast_path_ok(&s, &set(), &none));
         // env override
-        let s = ConfigSnapshot::from_entries(pinned_snapshot("harshal@office.example"));
+        let s = ConfigSnapshot::from_entries(pinned_snapshot("jane@office.example"));
         let env = EnvOverrides {
             author_email: Some("x@y".into()),
             committer_email: None,
@@ -557,11 +553,11 @@ mod tests {
         let s = ConfigSnapshot::from_entries(vec![entry(
             ConfigScope::Local,
             "user.email",
-            "harshal@office.example",
+            "jane@office.example",
         )]);
         assert!(!fast_path_ok(&s, &set(), &none));
         // pin to a profile that no longer exists
-        let mut e = pinned_snapshot("harshal@office.example");
+        let mut e = pinned_snapshot("jane@office.example");
         e[2] = entry(ConfigScope::Local, "githop.profile", "gone");
         assert!(!fast_path_ok(
             &ConfigSnapshot::from_entries(e),
@@ -569,7 +565,7 @@ mod tests {
             &none
         ));
         // pin at global scope doesn't count
-        let mut e = pinned_snapshot("harshal@office.example");
+        let mut e = pinned_snapshot("jane@office.example");
         e[2] = entry(ConfigScope::Global, "githop.profile", "office");
         assert!(!fast_path_ok(
             &ConfigSnapshot::from_entries(e),
@@ -577,11 +573,11 @@ mod tests {
             &none
         ));
         // `git -c user.email=…` (command scope) wins over local
-        let mut e = pinned_snapshot("harshal@office.example");
+        let mut e = pinned_snapshot("jane@office.example");
         e.push(entry(
             ConfigScope::Command,
             "user.email",
-            "harshal@office.example",
+            "jane@office.example",
         ));
         assert!(!fast_path_ok(
             &ConfigSnapshot::from_entries(e),
@@ -589,7 +585,7 @@ mod tests {
             &none
         ));
         // author.email overrides user.email
-        let mut e = pinned_snapshot("harshal@office.example");
+        let mut e = pinned_snapshot("jane@office.example");
         e.insert(0, entry(ConfigScope::Global, "author.email", "x@y"));
         assert!(!fast_path_ok(
             &ConfigSnapshot::from_entries(e),
@@ -604,8 +600,8 @@ mod tests {
         let s = set();
         let pinned = resolution(Some("office"), Some(ResolutionSource::Pin));
         let owner = resolution(Some("office"), Some(ResolutionSource::Owner));
-        let office = ident("harshal@office.example", "HARSHAL@office.example");
-        let personal = ident("harshal@personal.example", "harshal@personal.example");
+        let office = ident("jane@office.example", "JANE@office.example");
+        let personal = ident("jane@personal.example", "jane@personal.example");
 
         assert_eq!(
             decide(&pinned, &s, Some(&office), &none),
@@ -628,14 +624,14 @@ mod tests {
             panic!("expected mismatch")
         };
         assert!(!m.pinned);
-        assert_eq!(m.would_use.as_deref(), Some("harshal@personal.example"));
+        assert_eq!(m.would_use.as_deref(), Some("jane@personal.example"));
         assert_eq!(m.env_var, None);
         let CommitDecision::Mismatch(m) = decide(&pinned, &s, Some(&personal), &none) else {
             panic!("expected mismatch")
         };
         assert!(m.pinned);
         // committer only
-        let mixed = ident("harshal@office.example", "harshal@personal.example");
+        let mixed = ident("jane@office.example", "jane@personal.example");
         assert!(matches!(
             decide(&pinned, &s, Some(&mixed), &none),
             CommitDecision::Mismatch(_)
@@ -650,11 +646,11 @@ mod tests {
     #[test]
     fn decide_detects_env_override() {
         let env = EnvOverrides {
-            author_email: Some("harshal@personal.example".into()),
+            author_email: Some("jane@personal.example".into()),
             committer_email: None,
         };
         let pinned = resolution(Some("office"), Some(ResolutionSource::Pin));
-        let id = ident("harshal@personal.example", "harshal@office.example");
+        let id = ident("jane@personal.example", "jane@office.example");
         let CommitDecision::Mismatch(m) = decide(&pinned, &set(), Some(&id), &env) else {
             panic!("expected mismatch")
         };
@@ -665,8 +661,8 @@ mod tests {
         CommitMismatch {
             profile_id: "office".into(),
             label: "Office".into(),
-            expected_email: "harshal@office.example".into(),
-            would_use: Some("harshal@personal".into()),
+            expected_email: "jane@office.example".into(),
+            would_use: Some("jane@personal".into()),
             pinned,
             env_var,
         }
@@ -690,7 +686,7 @@ mod tests {
                 (Level::Info, "This repo belongs to Office.", None),
                 (
                     Level::Info,
-                    "Commit would use harshal@personal.",
+                    "Commit would use jane@personal.",
                     Some("Run: githop pin office")
                 ),
             ]
@@ -737,7 +733,7 @@ mod tests {
         );
         assert!(
             msgs.iter().any(|m| m.text
-                == "This commit's author email is harshal@personal (from --author or GIT_AUTHOR_EMAIL)."),
+                == "This commit's author email is jane@personal (from --author or GIT_AUTHOR_EMAIL)."),
             "{msgs:?}"
         );
         assert!(msgs.iter().all(|m| !m.text.contains("is set")), "{msgs:?}");
@@ -782,9 +778,9 @@ mod tests {
     #[test]
     fn env_equal_to_config_is_not_an_override() {
         // `git commit` exports GIT_AUTHOR_EMAIL to hooks with the configured value.
-        let s = ConfigSnapshot::from_entries(pinned_snapshot("harshal@office.example"));
+        let s = ConfigSnapshot::from_entries(pinned_snapshot("jane@office.example"));
         let exported = EnvOverrides {
-            author_email: Some("Harshal@Office.example".into()),
+            author_email: Some("Jane@Office.example".into()),
             committer_email: None,
         }
         .without_configured(&s);
@@ -793,14 +789,11 @@ mod tests {
 
         // A different value is a real override (C9).
         let real = EnvOverrides {
-            author_email: Some("harshal@personal.example".into()),
+            author_email: Some("jane@personal.example".into()),
             committer_email: None,
         }
         .without_configured(&s);
-        assert_eq!(
-            real.author_email.as_deref(),
-            Some("harshal@personal.example")
-        );
+        assert_eq!(real.author_email.as_deref(), Some("jane@personal.example"));
         assert!(!fast_path_ok(&s, &set(), &real));
     }
 }

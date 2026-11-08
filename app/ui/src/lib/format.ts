@@ -1,6 +1,7 @@
+import { domainStem } from './owners';
 import { PROFILE_COLORS, type Profile, type ProfileColor, type ProfileSet } from './types';
 
-/** `C:/Users/harshal/code/githop` → `C:/Users/…/githop` when longer than `max`. */
+/** `C:/Users/jane/code/githop` → `C:/Users/…/githop` when longer than `max`. */
 export function truncateMiddle(path: string, max = 36): string {
   if (path.length <= max) return path;
   const p = path.replace(/\\/g, '/');
@@ -75,14 +76,16 @@ export function initial(label: string): string {
   return ch ? ch.toUpperCase() : '?';
 }
 
-const NOREPLY = /@users\.noreply\.github\.com$/i;
-const PERSONAL_DOMAINS =
-  /@(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|proton|protonmail|pm|gmx|aol|yandex|zoho|fastmail)\./i;
-
-/** Onboarding guess: is this global identity personal or work? */
-export function guessLabel(email: string | undefined): 'personal' | 'office' {
-  if (!email) return 'office';
-  return NOREPLY.test(email) || PERSONAL_DOMAINS.test(email) ? 'personal' : 'office';
+/**
+ * Onboarding: a label suggestion for the git identity already on the PC, always
+ * editable. `jane@acmelabs.com` → `Acmelabs`; free-mail or GitHub noreply →
+ * `Personal`; nothing usable → `''` (the user names it).
+ */
+export function suggestLabel(email: string | undefined, personal: string): string {
+  const e = email?.trim() ?? '';
+  if (!e.includes('@')) return '';
+  const stem = domainStem(e);
+  return stem ? stem.charAt(0).toUpperCase() + stem.slice(1) : personal;
 }
 
 export const NOREPLY_TEMPLATE = (owner: string) =>

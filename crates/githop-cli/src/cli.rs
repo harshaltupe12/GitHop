@@ -13,7 +13,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
     bin_name = "githop",
     version,
     about = "Hop between git identities safely",
-    long_about = "Give each git identity (Office, Personal, …) its own name, email and SSH key.\n\
+    long_about = "Give each git identity (work, personal, clients, open source, …)\n\
+                  its own name, email and SSH key.\n\
                   GitHop picks the right profile for each repo and blocks commits and pushes\n\
                   made with the wrong one.",
     after_help = "Exit codes: 0 ok · 1 blocked/problem found · 2 usage error · 3 internal error",
@@ -118,10 +119,10 @@ pub enum Command {
 
 #[derive(Debug, Clone, Default, Args)]
 pub struct InitArgs {
-    /// Profile id for your current identity, e.g. "office"
+    /// Profile id for your current identity, e.g. "work"
     #[arg(long)]
     pub id: Option<String>,
-    /// Display name, e.g. "Office"
+    /// Display name, e.g. "Work"
     #[arg(long)]
     pub label: Option<String>,
     /// git user.name (defaults to your global user.name)
