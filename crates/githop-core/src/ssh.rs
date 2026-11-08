@@ -1084,16 +1084,18 @@ pub struct WindowsAgent;
 /// compile-time constant: no user input is ever part of it. Exit 1223 = the
 /// prompt was declined.
 ///
-/// The exe that gets elevated comes from `[Environment]::SystemDirectory`
-/// (GetSystemDirectory), never from an environment variable: another program
-/// running as the user could change `%SystemRoot%` and have its own `cmd.exe`
-/// elevated through GitHop's prompt. Inside the elevated `cmd.exe`,
-/// `%SystemRoot%` is safe: elevated processes get a fresh environment from the
-/// system, not the caller's.
+/// Both exe paths (the elevated `cmd.exe` and the `sc.exe` it runs) are absolute
+/// paths from `[Environment]::SystemDirectory` (GetSystemDirectory), never from
+/// an environment variable. Another program running as the user could change
+/// `%SystemRoot%` or `%windir%`, including in `HKCU\Environment`, which the
+/// elevated process reads too, and have its own exe run elevated through
+/// GitHop's prompt. `/d` skips cmd's AutoRun commands for the same reason.
 pub const ELEVATE_AGENT_SCRIPT: &str = "$ErrorActionPreference = 'Stop'; \
 try { \
-$p = Start-Process -FilePath (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') \
--ArgumentList '/d', '/c', '%SystemRoot%\\System32\\sc.exe config ssh-agent start= auto & %SystemRoot%\\System32\\sc.exe start ssh-agent' \
+$sys = [Environment]::SystemDirectory; \
+$sc = Join-Path $sys 'sc.exe'; \
+$p = Start-Process -FilePath (Join-Path $sys 'cmd.exe') \
+-ArgumentList '/d', '/c', ('{0} config ssh-agent start= auto & {0} start ssh-agent' -f $sc) \
 -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode \
 } catch { exit 1223 }";
 
@@ -1863,13 +1865,17 @@ mod tests {
     #[test]
     fn elevation_script_is_constant_and_runs_sc_once_elevated() {
         assert!(ELEVATE_AGENT_SCRIPT.contains("-Verb RunAs"));
-        assert!(ELEVATE_AGENT_SCRIPT.contains("sc.exe config ssh-agent start= auto"));
-        assert!(ELEVATE_AGENT_SCRIPT.contains("sc.exe start ssh-agent"));
+        assert!(ELEVATE_AGENT_SCRIPT.contains("{0} config ssh-agent start= auto"));
+        assert!(ELEVATE_AGENT_SCRIPT.contains("{0} start ssh-agent"));
+        assert!(ELEVATE_AGENT_SCRIPT.contains("Join-Path $sys 'sc.exe'"));
+        assert!(ELEVATE_AGENT_SCRIPT.contains("/d"));
         assert_eq!(ELEVATE_AGENT_SCRIPT.matches("Start-Process").count(), 1);
         assert!(!ELEVATE_AGENT_SCRIPT.contains('"'));
-        // The elevated exe's path never comes from an environment variable.
+        // No exe path, elevated or run by the elevated cmd, comes from an
+        // environment variable (cmd would expand %...% from HKCU\Environment).
         assert!(ELEVATE_AGENT_SCRIPT.contains("[Environment]::SystemDirectory"));
         assert!(!ELEVATE_AGENT_SCRIPT.contains("$env:"));
+        assert!(!ELEVATE_AGENT_SCRIPT.contains('%'));
     }
 
     #[test]

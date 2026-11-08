@@ -200,7 +200,8 @@ pub async fn save_diagnostics(path: String) -> IpcResult<()> {
     let target = validate::new_file_in_existing_dir(&path)?;
     blocking(move || {
         let report = run_doctor()?;
-        let text = diagnostics_text(&report);
+        let home = std::env::var("USERPROFILE").ok();
+        let text = mask_home(&diagnostics_text(&report), home.as_deref());
         std::fs::write(&target, text).map_err(|e| CoreError::io(&target, e))?;
         Ok(())
     })
@@ -223,6 +224,19 @@ fn diagnostics_text(report: &DoctorReport) -> String {
         }
     }
     out
+}
+
+/// The file is meant for sharing: write the user's home folder as
+/// `%USERPROFILE%` so paths don't reveal the Windows user name.
+fn mask_home(text: &str, home: Option<&str>) -> String {
+    let Some(home) = home.map(|h| h.trim_end_matches(['\\', '/'])) else {
+        return text.to_string();
+    };
+    if home.len() < 3 {
+        return text.to_string();
+    }
+    text.replace(home, "%USERPROFILE%")
+        .replace(&home.replace('\\', "/"), "%USERPROFILE%")
 }
 
 /// Design §8.7 "Restore last backup": replace `profiles.toml` with the newest
@@ -330,6 +344,18 @@ mod tests {
     use super::*;
 
     const GOOD: &str = "version = 1\ndefault = \"office\"\n\n[[profile]]\nid = \"office\"\nlabel = \"Office\"\nname = \"Me\"\nemail = \"me@company.com\"\ncolor = \"blue\"\nssh_key = \"C:/k/githop_office\"\n";
+
+    #[test]
+    fn diagnostics_hide_the_home_folder() {
+        let text = "[ok] Data — GitHop data at C:/Users/jane/AppData/Roaming/githop\n\
+                    [ok] Key — C:\\Users\\jane\\.ssh\\githop_office\n";
+        let masked = mask_home(text, Some("C:\\Users\\jane"));
+        assert!(!masked.contains("jane"), "{masked}");
+        assert!(masked.contains("%USERPROFILE%/AppData/Roaming/githop"));
+        assert!(masked.contains("%USERPROFILE%\\.ssh\\githop_office"));
+        assert_eq!(mask_home(text, None), text);
+        assert_eq!(mask_home(text, Some("C:\\")), text);
+    }
 
     #[test]
     fn newest_valid_backup_wins_and_bad_ones_are_skipped() {
