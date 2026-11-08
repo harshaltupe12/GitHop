@@ -38,6 +38,10 @@ tauri-plugin-autostart = "2"
 notify = { version = "8", default-features = false }
 notify-debouncer-mini = { version = "0.7", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+# Brand-coloured native title bar (DWM caption colour); already in the tree via tauri.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 

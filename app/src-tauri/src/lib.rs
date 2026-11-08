@@ -8,6 +8,7 @@ pub mod commands;
 pub mod dto;
 pub mod events;
 pub mod ops;
+pub mod titlebar;
 pub mod tray;
 pub mod validate;
 pub mod watcher;
@@ -113,6 +114,9 @@ pub fn run() -> i32 {
         })
         .setup(move |app| {
             let handle = app.handle();
+            if let Some(w) = handle.get_webview_window(MAIN_WINDOW) {
+                titlebar::apply(&w);
+            }
             tray::init(handle)?;
             watcher::start(handle.clone());
             if !hidden {
