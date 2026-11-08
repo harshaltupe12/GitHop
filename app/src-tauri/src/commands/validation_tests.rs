@@ -53,6 +53,7 @@ fn validate_profile_rejects_bad_original_id() {
         ssh_key: "C:/k".into(),
         owners: vec![],
         folders: vec![],
+        sign_commits: false,
     };
     for id in BAD_IDS {
         assert_eq!(
@@ -115,11 +116,11 @@ fn passphrase_commands_reject_bad_ids() {
             ErrorCode::BadInput
         );
         assert_eq!(
-            code(block_on(keys::remember_passphrase(id.into()))),
+            code(block_on(keys::remember_passphrase(id.into(), None))),
             ErrorCode::BadInput
         );
         assert_eq!(
-            code(block_on(keys::turn_on_agent(id.into()))),
+            code(block_on(keys::turn_on_agent(id.into(), None))),
             ErrorCode::BadInput
         );
     }

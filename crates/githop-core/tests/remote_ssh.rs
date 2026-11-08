@@ -212,6 +212,7 @@ fn pinned_ssh_command_runs_under_gits_sh() {
         ssh_key: key.clone(),
         owners: vec!["janedoe".into()],
         folders: vec![],
+        sign_commits: false,
     };
     let repo = Repo::discover(&git, &dir).unwrap();
     pin::pin_repo(&repo, &profile).unwrap();

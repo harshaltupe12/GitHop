@@ -212,6 +212,7 @@ mod tests {
                 ssh_key: PathBuf::from("C:/k"),
                 owners: vec![],
                 folders: vec![],
+                sign_commits: false,
             }],
         }
     }

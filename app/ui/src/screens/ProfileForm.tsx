@@ -14,7 +14,7 @@ import { ChipInput } from '../components/ChipInput';
 import { ColorPicker } from '../components/ColorPicker';
 import { ConnectionResult, useTestConnection } from '../components/ConnectionResult';
 import { PassphraseStatus } from '../components/PassphraseStatus';
-import { Checkbox, Field, RequiredMark, TextInput } from '../components/Field';
+import { Checkbox, Field, PasswordInput, RequiredMark, TextInput } from '../components/Field';
 import { FolderField } from '../components/FolderField';
 import { Ico, Icons } from '../components/icons';
 import { Avatar } from '../components/Avatar';
@@ -29,6 +29,15 @@ import { S } from '../strings';
 
 const FIELDS = ['label', 'id', 'name', 'email', 'color', 'owners', 'folders', 'ssh_key'] as const;
 type FieldName = (typeof FIELDS)[number];
+
+/** Core's tip for a free-mail address (`profile.rs`, `is_public_mail`): a warning only. */
+function isPublicEmailTip(i: ValidationIssue): boolean {
+  return (
+    i.field === 'email' &&
+    i.severity === 'warning' &&
+    i.message.startsWith('This is a public email address')
+  );
+}
 
 type KeyMode = 'generate' | 'existing';
 
@@ -106,6 +115,14 @@ export function ProfileForm({
   const [generating, setGenerating] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [keyReused, setKeyReused] = useState(false);
+  // Key passphrase (ADR 0007): kept only in this form's state until Generate key,
+  // then cleared. Never saved.
+  const [pass, setPass] = useState('');
+  const [pass2, setPass2] = useState('');
+  const [passTouched, setPassTouched] = useState(false);
+  const passShort = !noPassphrase && pass.length > 0 && pass.length < 8;
+  const passMismatch = !noPassphrase && pass2.length > 0 && pass !== pass2;
+  const passReady = noPassphrase || (pass.length >= 8 && pass === pass2);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [ownersNudged, setOwnersNudged] = useState(false);
   // The set as saved most recently from this form (an inline owner fix for
@@ -223,7 +240,11 @@ export function ProfileForm({
   // form's fields: they get their own banner with a way to fix that profile.
   const isOther = (i: ValidationIssue) =>
     !!i.profile_id && i.profile_id !== draft.id && i.profile_id !== original?.id;
-  const ownIssues = issues.filter((i) => !isOther(i));
+  // The public-email tip is for the moment the email is chosen: once a profile
+  // is saved with it, the choice is made, so it isn't repeated on every visit.
+  const emailUnchanged =
+    !!original && draft.email.trim().toLowerCase() === original.email.trim().toLowerCase();
+  const ownIssues = issues.filter((i) => !isOther(i) && !(emailUnchanged && isPublicEmailTip(i)));
   const otherProfileIssues = issues.filter(
     (i) =>
       isOther(i) && i.severity === 'error' && !othersNeedingRule.some((o) => o.id === i.profile_id),
@@ -305,12 +326,31 @@ export function ProfileForm({
     setKeyError(null);
     setGenerating(true);
     try {
-      // Works before the profile is saved; the key path is saved with it.
-      const res = await ipc.generateKey(draft.id, draft.email, noPassphrase);
+      // Works before the profile is saved; the key path is saved with it. The
+      // passphrase is used once by the backend (in memory) and then forgotten.
+      const res = await ipc.generateKey(
+        draft.id,
+        draft.email,
+        noPassphrase ? null : pass,
+        noPassphrase,
+      );
+      setPass('');
+      setPass2('');
+      setPassTouched(false);
       setPublicKey(res.public_key.trim());
       setKeyReused(res.reused);
       set('ssh_key', normalizePath(res.path));
-      toast({ message: res.reused ? S.form.keyReused(fileName(res.path)) : S.form.keyCreated });
+      if (res.remembered === 'remembered') {
+        toast({
+          message: res.reused
+            ? `${S.form.keyReused(fileName(res.path))} ${S.passphrase.done}`
+            : S.form.keyCreatedRemembered,
+        });
+      } else if (res.remembered === 'no-passphrase') {
+        toast({ message: res.reused ? S.form.keyReused(fileName(res.path)) : S.form.keyCreated });
+      } else {
+        toast({ kind: 'warning', message: S.form.keyNotRemembered });
+      }
     } catch (err) {
       setKeyError((err as IpcError).message);
     } finally {
@@ -649,20 +689,68 @@ export function ProfileForm({
               {suggested ? (
                 <p className="font-mono text-mono text-ink-muted">{S.form.willCreate(suggested)}</p>
               ) : null}
-              <Banner kind="info" live={false}>
-                {S.form.passphraseNote}
-              </Banner>
-              <Checkbox
-                label={S.form.noPassphrase}
-                checked={noPassphrase}
-                onChange={setNoPassphrase}
-              />
-              <div>
+              {publicKey ? null : (
+                <>
+                  <Banner kind="info" live={false}>
+                    {S.form.passphraseNote}
+                  </Banner>
+                  {noPassphrase ? null : (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field
+                        label={S.form.passphrase}
+                        helper={S.form.passphraseHelp}
+                        issues={
+                          passTouched && passShort
+                            ? [{ severity: 'error', message: S.form.passphraseShort }]
+                            : []
+                        }
+                      >
+                        {(p) => (
+                          <PasswordInput
+                            {...p}
+                            value={pass}
+                            onChange={(e) => setPass(e.target.value)}
+                            onBlur={() => setPassTouched(true)}
+                          />
+                        )}
+                      </Field>
+                      <Field
+                        label={S.form.passphraseConfirm}
+                        issues={
+                          passMismatch
+                            ? [{ severity: 'error', message: S.form.passphraseMismatch }]
+                            : []
+                        }
+                      >
+                        {(p) => (
+                          <PasswordInput
+                            {...p}
+                            value={pass2}
+                            onChange={(e) => setPass2(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && passReady && draft.id) {
+                                e.preventDefault();
+                                void generate();
+                              }
+                            }}
+                          />
+                        )}
+                      </Field>
+                    </div>
+                  )}
+                  <Checkbox
+                    label={S.form.noPassphrase}
+                    checked={noPassphrase}
+                    onChange={setNoPassphrase}
+                  />
+                </>
+              )}
+              <div className={publicKey ? 'hidden' : undefined}>
                 <Button
                   icon={Icons.key}
                   onClick={generate}
                   loading={generating}
-                  disabled={!draft.id}
+                  disabled={!draft.id || !passReady}
                   ref={(el) => {
                     if (keyMode === 'generate') refs.current.ssh_key = el;
                   }}
@@ -763,6 +851,20 @@ export function ProfileForm({
                     </dl>
                     <span>{S.form.ghSteps.add}</span>
                   </li>
+                  {draft.sign_commits ? (
+                    // ADR 0008: GitHub needs the same key a second time, as a Signing Key.
+                    <li className="flex flex-col gap-2">
+                      <span>{S.form.ghSteps.signing}</span>
+                      <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1 text-small">
+                        <dt className="text-ink-muted">{S.form.ghSteps.titleLabel}</dt>
+                        <dd className="font-mono text-mono-small text-ink">
+                          {S.form.ghSteps.signingTitle(draft.label || draft.id)}
+                        </dd>
+                        <dt className="text-ink-muted">{S.form.ghSteps.typeLabel}</dt>
+                        <dd className="text-ink">{S.form.ghSteps.signingType}</dd>
+                      </dl>
+                    </li>
+                  ) : null}
                   <li className="flex flex-col gap-2">
                     <span>{original ? S.form.ghSteps.test : S.form.ghSteps.testAfterSave}</span>
                     {original ? (
@@ -790,6 +892,16 @@ export function ProfileForm({
           ) : original && keyMode === 'existing' && draft.ssh_key ? (
             <p className="text-small text-ink-muted">{S.form.noPublicKey}</p>
           ) : null}
+
+          {/* Commit signing (ADR 0008): same key, GitHub shows commits as Verified. */}
+          <div className="flex flex-col gap-1 border-t border-line pt-4">
+            <Checkbox
+              label={S.form.signCommits}
+              checked={!!draft.sign_commits}
+              onChange={(v) => set('sign_commits', v)}
+            />
+            <p className="pl-6 text-small text-ink-muted">{S.form.signCommitsHelp}</p>
+          </div>
         </FormSection>
 
         {/* 5. Danger zone */}

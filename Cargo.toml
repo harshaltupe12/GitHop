@@ -31,6 +31,9 @@ base64 = "0.21" # same version age uses (no duplicate)
 zeroize = "1"
 # Hidden password prompt for `githop export/import` (console only, no network).
 rpassword = "7"
+# In-app SSH key creation and unlock (ed25519, bcrypt-pbkdf + aes256-ctr, OpenSSH format).
+# Local crypto only: no network features.
+ssh-key = { version = "0.6", default-features = false, features = ["std", "ed25519", "encryption", "getrandom"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

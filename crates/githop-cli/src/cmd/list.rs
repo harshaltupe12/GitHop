@@ -96,6 +96,7 @@ mod tests {
                 ssh_key: "C:/k".into(),
                 owners: vec!["office-org".into()],
                 folders: vec![],
+                sign_commits: false,
             }],
         };
         let v = list_json(&set);

@@ -476,6 +476,7 @@ mod tests {
                 ssh_key: "C:/k".into(),
                 owners: vec![],
                 folders: vec![],
+                sign_commits: false,
             }],
         }
     }
@@ -571,6 +572,7 @@ mod tests {
             ssh_key: format!("C:/k/{id}").into(),
             owners: owners.iter().map(|o| o.to_string()).collect(),
             folders: vec![],
+            sign_commits: false,
         }
     }
 

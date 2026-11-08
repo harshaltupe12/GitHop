@@ -726,6 +726,7 @@ mod tests {
             ssh_key: PathBuf::from(format!("C:/Users/me/.ssh/githop_{id}")),
             owners: vec![],
             folders: vec![],
+            sign_commits: false,
         }
     }
 

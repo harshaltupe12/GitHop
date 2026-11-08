@@ -23,6 +23,8 @@ export type Profile = {
   ssh_key: string;
   owners: string[];
   folders: string[];
+  /** Sign commits with the SSH key (GitHub "Verified"). Absent = off. */
+  sign_commits?: boolean;
 };
 
 export type ProfileSet = {
@@ -130,6 +132,8 @@ export type GeneratedKey = {
   path: string;
   /** An existing GitHop key at `path` was used instead of a new one. */
   reused: boolean;
+  /** Whether the Windows ssh-agent now holds the key (no prompt on push). */
+  remembered: RememberOutcome;
 };
 
 export type ConnectionTest =

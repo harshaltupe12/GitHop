@@ -171,6 +171,9 @@ pub struct AddArgs {
     /// Private SSH key path (default: ~/.ssh/githop_<id>)
     #[arg(long)]
     pub key: Option<PathBuf>,
+    /// Sign commits with the SSH key (Verified on GitHub)
+    #[arg(long)]
+    pub sign: bool,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -204,6 +207,12 @@ pub struct EditArgs {
     /// New path to the private SSH key
     #[arg(long)]
     pub key: Option<PathBuf>,
+    /// Sign commits with the SSH key (Verified on GitHub)
+    #[arg(long, conflicts_with = "no_sign")]
+    pub sign: bool,
+    /// Stop signing commits
+    #[arg(long)]
+    pub no_sign: bool,
     /// Re-pin repos pinned to this profile without asking
     #[arg(long)]
     pub repin: bool,

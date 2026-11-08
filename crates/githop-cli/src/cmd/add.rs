@@ -43,6 +43,7 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
         mut owners,
         mut folders,
         key,
+        sign,
     } = args;
 
     let mut color = color.as_deref().and_then(ProfileColor::parse);
@@ -147,6 +148,7 @@ pub fn run(ctx: &Ctx, args: AddArgs) -> Result<Exit> {
         ssh_key,
         owners,
         folders,
+        sign_commits: sign,
     };
     let added = store.update(|p, _| {
         p.profiles.push(profile);

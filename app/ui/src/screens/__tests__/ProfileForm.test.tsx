@@ -159,22 +159,40 @@ describe('ProfileForm', () => {
     expect(await screen.findByText('Couldn’t write profiles.toml.')).toBeInTheDocument();
   });
 
-  it('generate key: passphrase note (console), never asks passphrase in UI', async () => {
+  it('generate key: passphrase typed in the app, key created and remembered in one step', async () => {
     const { user } = renderWith(<ProfileForm profiles={profileSet()} onSaved={vi.fn()} />);
-    expect(
-      screen.getByText(/A console window opens so you can type a passphrase/),
-    ).toBeInTheDocument();
-    expect(document.querySelector('input[type="password"]')).toBeNull();
+    expect(screen.getByText(/It’s never saved\./)).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Label' }), 'Work');
-    await user.click(screen.getByRole('button', { name: 'Generate key' }));
+    const generate = screen.getByRole('button', { name: 'Generate key' });
+    // Needs a passphrase of 8+ characters, typed twice the same.
+    expect(generate).toBeDisabled();
+    await user.type(screen.getByLabelText('Passphrase'), 'short');
+    await user.tab();
+    expect(screen.getByText('Use at least 8 characters.')).toBeInTheDocument();
+    await user.clear(screen.getByLabelText('Passphrase'));
+    await user.type(screen.getByLabelText('Passphrase'), 'correct horse');
+    await user.type(screen.getByLabelText('Confirm passphrase'), 'correct hors');
+    expect(screen.getByText('The passphrases don’t match.')).toBeInTheDocument();
+    expect(generate).toBeDisabled();
+    await user.type(screen.getByLabelText('Confirm passphrase'), 'e');
+    await user.click(generate);
     await waitFor(() =>
-      expect(m.generateKey).toHaveBeenCalledWith('work', expect.any(String), false),
+      expect(m.generateKey).toHaveBeenCalledWith(
+        'work',
+        expect.any(String),
+        'correct horse',
+        false,
+      ),
     );
     expect(await screen.findByRole('textbox', { name: 'Public key' })).toHaveValue(
       'ssh-ed25519 AAAAC3Nza githop',
     );
+    expect(
+      await screen.findByText('Key created and remembered. Pushes won’t ask for the passphrase.'),
+    ).toBeInTheDocument();
+    // The passphrase fields are gone once the key exists.
+    expect(screen.queryByLabelText('Passphrase')).toBeNull();
     // Works before the profile is saved; the generated path is used.
-    expect(m.generateKey).toHaveBeenCalledWith('work', expect.any(String), false);
     expect(screen.queryByText(/No key yet/)).toBeNull();
     // Guided steps for adding the key on GitHub, in the app.
     const steps = screen.getByRole('region', { name: 'Add this key to GitHub' });
@@ -343,5 +361,59 @@ describe('ProfileForm required fields', () => {
     expect(screen.getByRole('textbox', { name: 'Email' })).not.toHaveAttribute('aria-invalid');
     await user.click(screen.getByRole('button', { name: 'Edit Office' }));
     expect(onEditProfile).toHaveBeenCalledWith('office');
+  });
+});
+
+describe('ProfileForm public email tip', () => {
+  const tip = {
+    profile_id: 'personal',
+    field: 'email',
+    severity: 'warning' as const,
+    message:
+      'This is a public email address and commit emails are public. Consider your GitHub noreply email (…@users.noreply.github.com) so your real email stays private.',
+  };
+
+  it('shows while choosing the email, not on a saved profile whose email is unchanged', async () => {
+    const saved = { ...personal, email: 'jane@gmail.com' };
+    m.validateProfile.mockResolvedValue([tip]);
+    const { user, unmount } = renderWith(
+      <ProfileForm profiles={profileSet()} original={saved} onSaved={vi.fn()} />,
+    );
+    await waitFor(() => expect(m.validateProfile).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 300));
+    expect(screen.queryByText(/This is a public email address/)).toBeNull();
+    // Changing the email brings it back.
+    const email = screen.getByRole('textbox', { name: 'Email' });
+    await user.clear(email);
+    await user.type(email, 'jane@outlook.com');
+    expect(await screen.findByText(/This is a public email address/)).toBeInTheDocument();
+    unmount();
+    m.validateProfile.mockReset();
+    m.validateProfile.mockResolvedValue([]);
+  });
+});
+
+describe('ProfileForm commit signing', () => {
+  it('Sign my commits: saved with the profile, extra GitHub step for the Signing Key', async () => {
+    const onSaved = vi.fn();
+    m.readPublicKey.mockResolvedValueOnce('ssh-ed25519 AAAA personal');
+    const { user } = renderWith(
+      <ProfileForm profiles={profileSet()} original={personal} onSaved={onSaved} />,
+    );
+    await screen.findByRole('textbox', { name: 'Public key' });
+    const steps = screen.getByRole('region', { name: 'Add this key to GitHub' });
+    expect(within(steps).queryByText('Signing Key')).toBeNull();
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Sign my commits (GitHub shows them as Verified)' }),
+    );
+    expect(within(steps).getByText('Signing Key')).toBeInTheDocument();
+    expect(within(steps).getByText('GitHop (Personal) signing')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    await waitFor(() =>
+      expect(m.saveProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'personal', sign_commits: true }),
+        'personal',
+      ),
+    );
   });
 });

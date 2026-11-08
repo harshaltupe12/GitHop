@@ -351,6 +351,7 @@ mod tests {
             ssh_key: PathBuf::from(format!("C:/keys/{id}")),
             owners: owners.iter().map(|s| s.to_string()).collect(),
             folders: folders.iter().map(|s| s.to_string()).collect(),
+            sign_commits: false,
         }
     }
 

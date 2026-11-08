@@ -15,6 +15,7 @@ pub mod git;
 pub mod gitconfig;
 pub mod hooks;
 pub mod identity;
+pub mod keyfile;
 pub mod log;
 pub mod paths;
 pub mod pin;

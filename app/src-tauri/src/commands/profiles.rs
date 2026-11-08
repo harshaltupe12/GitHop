@@ -197,6 +197,7 @@ fn save_profile_blocking(profile: Profile, original_id: Option<String>) -> IpcRe
         b.name != candidate.name
             || !b.email.eq_ignore_ascii_case(&candidate.email)
             || b.ssh_key != candidate.ssh_key
+            || b.sign_commits != candidate.sign_commits
     });
     // A profile with a key: trust GitHub's published host keys now, so its
     // first push never asks yes/no (ADR 0006). Best effort.
@@ -302,6 +303,7 @@ mod tests {
             ssh_key: PathBuf::from(format!("C:/k/githop_{id}")),
             owners: vec![],
             folders: vec![],
+            sign_commits: false,
         }
     }
 

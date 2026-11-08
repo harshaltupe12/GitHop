@@ -582,6 +582,7 @@ mod tests {
                     ssh_key: PathBuf::from("C:/Users/My Name/.ssh/githop_office"),
                     owners: vec!["office-org".into()],
                     folders: vec!["C:/My Work/".into()],
+                    sign_commits: false,
                 },
                 Profile {
                     id: "personal".into(),
@@ -592,6 +593,7 @@ mod tests {
                     ssh_key: PathBuf::from("D:/Schl\u{fc}ssel mit Leerzeichen/id_ed25519"),
                     owners: vec!["jane-personal".into()],
                     folders: vec!["D:/\u{c9}t\u{e9} projets/".into()],
+                    sign_commits: false,
                 },
             ],
         }

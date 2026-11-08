@@ -222,10 +222,19 @@ export const S = {
     generating: 'Generating…',
     willCreate: (path: string) => `Creates ${path}`,
     passphraseNote:
-      'A console window opens so you can type a passphrase (recommended). GitHop never sees or stores it.',
+      'The passphrase protects your key. GitHop uses it once to create the key and hand it to Windows’ SSH agent, so pushes from VS Code and the terminal never ask. It’s never saved.',
+    passphrase: 'Passphrase',
+    passphraseConfirm: 'Confirm passphrase',
+    passphraseHelp: 'At least 8 characters. Three random words work well.',
+    passphraseExistingHelp: 'Type the passphrase of your existing key.',
+    passphraseShort: 'Use at least 8 characters.',
+    passphraseMismatch: 'The passphrases don’t match.',
     noPassphrase: 'Create the key without a passphrase (not recommended)',
     keyCreated: 'Key created.',
+    keyCreatedRemembered: 'Key created and remembered. Pushes won’t ask for the passphrase.',
     keyReused: (file: string) => `Using your existing key ${file}.`,
+    keyNotRemembered:
+      'Key created, but Windows’ SSH agent doesn’t have it yet. Use Remember my passphrase on the profile after saving.',
     // After Generate key: adding it on GitHub, step by step (no terminal needed).
     ghSteps: {
       title: 'Add this key to GitHub',
@@ -251,7 +260,14 @@ export const S = {
       test: 'Come back here and click Test connection.',
       testAfterSave:
         'Save this profile, then click Test connection on its card to check GitHub accepts the key.',
+      signing:
+        'Signing is on: add the same key once more, on the same page, as a Signing Key. Paste the same public key.',
+      signingTitle: (label: string) => `GitHop (${label}) signing`,
+      signingType: 'Signing Key',
     },
+    signCommits: 'Sign my commits (GitHub shows them as Verified)',
+    signCommitsHelp:
+      'Uses this profile’s SSH key. Remember the passphrase so signing never asks. Needs Git 2.34 or newer.',
     keyNotCreated:
       'No key yet. Click Generate key, or the profile is saved without a working SSH key.',
     publicKey: 'Public key',
@@ -293,6 +309,12 @@ export const S = {
     notAdded:
       'The passphrase wasn’t saved: the console was closed or the passphrase was wrong. Try again.',
     stillOff: 'ssh-agent is still off. Try Turn on and remember again.',
+    fieldLabel: 'Key passphrase',
+    workingInApp: 'Remembering…',
+    inAppNote:
+      'Used once to hand the key to Windows’ SSH agent. GitHop never saves your passphrase.',
+    notAddedInApp: 'Windows’ SSH agent didn’t take the key. Try again.',
+    useConsole: 'Type it in a console window instead',
   },
 
   deleteDialog: {

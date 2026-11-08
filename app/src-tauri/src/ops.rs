@@ -15,8 +15,8 @@ use githop_core::{
 use crate::dto::{IpcError, IpcResult};
 
 /// Global git keys GitHop writes when switching the default profile (and
-/// `wipe` restores). Same list as the CLI's `MANAGED_GLOBAL_KEYS`.
-pub const MANAGED_GLOBAL_KEYS: [&str; 3] = ["user.name", "user.email", "core.sshCommand"];
+/// `wipe` restores). The same list the CLI uses.
+pub use githop_core::wipe::MANAGED_GLOBAL_KEYS;
 
 /// Serialises the app's own read-modify-write commands so two UI actions can't
 /// interleave. Cross-process safety (CLI vs app) is the core store lock.

@@ -21,6 +21,7 @@ export async function createIpcMock() {
         public_key: 'ssh-ed25519 AAAAC3Nza githop',
         path: `C:/Users/jane/.ssh/githop_${id}`,
         reused: false,
+        remembered: 'remembered' as const,
       }),
     ),
     readPublicKey: vi.fn(() =>

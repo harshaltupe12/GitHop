@@ -26,7 +26,9 @@ pub fn run(ctx: &Ctx, args: EditArgs) -> Result<Exit> {
         || !args.owners.is_empty()
         || args.no_owners
         || !args.folders.is_empty()
-        || args.no_folders;
+        || args.no_folders
+        || args.sign
+        || args.no_sign;
 
     let mut after = before.clone();
     if any_flag {
@@ -54,6 +56,11 @@ pub fn run(ctx: &Ctx, args: EditArgs) -> Result<Exit> {
             after.folders.clear();
         } else if !args.folders.is_empty() {
             after.folders = args.folders.clone();
+        }
+        if args.sign {
+            after.sign_commits = true;
+        } else if args.no_sign {
+            after.sign_commits = false;
         }
     } else if ui.interactive {
         ui.hint("Press Enter to keep a value. Type - to clear a list.");
@@ -111,7 +118,8 @@ pub fn run(ctx: &Ctx, args: EditArgs) -> Result<Exit> {
 
     let identity_changed = after.name != before.name
         || !after.email.eq_ignore_ascii_case(&before.email)
-        || after.ssh_key != before.ssh_key;
+        || after.ssh_key != before.ssh_key
+        || after.sign_commits != before.sign_commits;
     if !identity_changed {
         return Ok(Exit::Ok);
     }

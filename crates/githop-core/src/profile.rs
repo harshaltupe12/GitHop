@@ -81,6 +81,14 @@ pub struct Profile {
     /// Folder rules, normalised (`/`, trailing `/`).
     #[serde(default)]
     pub folders: Vec<String>,
+    /// Sign this profile's commits with its SSH key, so GitHub shows them as
+    /// Verified (ADR 0008). Off unless the user turns it on.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sign_commits: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Contents of `profiles.toml`.
@@ -832,6 +840,7 @@ mod tests {
             ssh_key: PathBuf::from(format!("C:/Users/me/.ssh/githop_{id}")),
             owners: vec![format!("{id}-org")],
             folders: vec![format!("C:/{id}/")],
+            sign_commits: false,
         }
     }
 
@@ -941,6 +950,7 @@ mod tests {
                 ssh_key: PathBuf::from(".ssh/key"),
                 owners: vec!["https://github.com/x".into()],
                 folders: vec!["relative/dir".into()],
+                sign_commits: false,
             }],
         };
         let issues = s.validate().unwrap_err();
@@ -1153,6 +1163,7 @@ mod tests {
                 "relative".into(),
                 String::new(),
             ],
+            sign_commits: false,
         };
         p.normalize();
         assert_eq!(p.id, "office");

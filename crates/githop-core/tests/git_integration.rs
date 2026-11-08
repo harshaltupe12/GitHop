@@ -34,6 +34,7 @@ fn profile(id: &str, name: &str, email: &str, key: &str) -> Profile {
         ssh_key: PathBuf::from(key),
         owners: vec![],
         folders: vec![],
+        sign_commits: false,
     }
 }
 
@@ -784,4 +785,99 @@ fn repo_from_hook_env_needs_no_spawn() {
         Repo::from_hook_env(&git, &env.home()),
         Err(CoreError::NotARepo)
     ));
+}
+
+#[test]
+fn signing_profile_sets_ssh_signing_and_unpin_restores_user_values() {
+    let env = TestEnv::new();
+    let repo = env.init_repo("signed");
+    // The user's own (GPG) signing setup in this repo.
+    env.git(&["config", "--local", "user.signingkey", "ABCDEF12"], &repo);
+    env.git(&["config", "--local", "commit.gpgsign", "true"], &repo);
+    let r = Repo::discover(&env.git_handle(), &repo).unwrap();
+    let mut work = profile("work", "Work", "work@example.invalid", "C:/k/githop_work");
+    work.sign_commits = true;
+
+    pin::pin_repo(&r, &work).unwrap();
+    let s = r.config_snapshot().unwrap();
+    assert_eq!(s.get_scoped("gpg.format", ConfigScope::Local), Some("ssh"));
+    assert_eq!(
+        s.get_scoped("user.signingkey", ConfigScope::Local),
+        Some("C:/k/githop_work.pub")
+    );
+    assert_eq!(
+        s.get_scoped("commit.gpgsign", ConfigScope::Local),
+        Some("true")
+    );
+    assert!(s
+        .get_scoped("gpg.ssh.program", ConfigScope::Local)
+        .is_some());
+    assert_eq!(s.get("githop.signing"), Some("true"));
+    assert_eq!(s.get("githop.saved-signingkey"), Some("ABCDEF12"));
+
+    // Re-pin without signing: GitHop's signing keys go, the user's come back.
+    work.sign_commits = false;
+    pin::pin_repo(&r, &work).unwrap();
+    let s = r.config_snapshot().unwrap();
+    assert_eq!(
+        s.get_scoped("user.signingkey", ConfigScope::Local),
+        Some("ABCDEF12")
+    );
+    assert_eq!(s.get_scoped("gpg.format", ConfigScope::Local), None);
+    assert_eq!(s.get("githop.signing"), None);
+
+    // Sign again, then unpin: same clean result.
+    work.sign_commits = true;
+    pin::pin_repo(&r, &work).unwrap();
+    assert!(pin::unpin_repo(&r).unwrap());
+    let s = r.config_snapshot().unwrap();
+    assert_eq!(
+        s.get_scoped("user.signingkey", ConfigScope::Local),
+        Some("ABCDEF12")
+    );
+    assert_eq!(
+        s.get_scoped("commit.gpgsign", ConfigScope::Local),
+        Some("true")
+    );
+    for key in [
+        "gpg.format",
+        "gpg.ssh.program",
+        "githop.signing",
+        "githop.saved-signingkey",
+        "githop.saved-gpgsign",
+    ] {
+        assert_eq!(s.get_scoped(key, ConfigScope::Local), None, "{key}");
+    }
+}
+
+#[test]
+fn default_profile_signing_is_written_and_removed_globally() {
+    let env = TestEnv::new();
+    let git = env.git_handle();
+    let mut work = profile("work", "Work", "work@example.invalid", "C:/k/githop_work");
+    work.sign_commits = true;
+    pin::set_default_profile_global(&git, &work).unwrap();
+    assert_eq!(
+        gitconfig::get_global(&git, "gpg.format")
+            .unwrap()
+            .as_deref(),
+        Some("ssh")
+    );
+    assert_eq!(
+        gitconfig::get_global(&git, "commit.gpgsign")
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+
+    let me = profile("me", "Me", "me@example.invalid", "C:/k/githop_me");
+    pin::set_default_profile_global(&git, &me).unwrap();
+    for key in [
+        "gpg.format",
+        "user.signingkey",
+        "commit.gpgsign",
+        "githop.signing",
+    ] {
+        assert_eq!(gitconfig::get_global(&git, key).unwrap(), None, "{key}");
+    }
 }

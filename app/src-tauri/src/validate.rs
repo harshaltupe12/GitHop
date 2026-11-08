@@ -317,6 +317,7 @@ mod tests {
             ssh_key: PathBuf::from("C:/Users/h/.ssh/githop_office"),
             owners: vec!["office-org".into()],
             folders: vec!["C:/Office/".into()],
+            sign_commits: false,
         }
     }
 

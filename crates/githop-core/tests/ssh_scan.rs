@@ -99,6 +99,7 @@ fn profile(id: &str, email: &str, owner: &str, color: ProfileColor) -> Profile {
         ssh_key: PathBuf::from(format!("C:/keys/githop_{id}")),
         owners: vec![owner.into()],
         folders: vec![],
+        sign_commits: false,
     }
 }
 

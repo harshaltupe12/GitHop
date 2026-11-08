@@ -184,19 +184,32 @@ describe('Settings: GitHub HTTPS remotes', () => {
 });
 
 describe('Remember my passphrase', () => {
-  it('agent running, key not added: status + Remember my passphrase', async () => {
+  it('agent running, key not added: type the passphrase in GitHop, remembered', async () => {
     m.passphraseState.mockResolvedValueOnce('asks-each-time');
+    m.rememberPassphrase.mockRejectedValueOnce({
+      code: 'bad_input',
+      message: 'That passphrase doesn’t unlock this key. Check it and try again.',
+    });
     m.rememberPassphrase.mockResolvedValueOnce('remembered');
     const { container, user } = renderWith(
       <PassphraseStatus profileId="personal" keyPath="C:/k/githop_personal" />,
     );
     expect(await screen.findByText('Asks for your passphrase on each push')).toBeInTheDocument();
-    expect(
-      screen.getByText('A console window opens. Type your passphrase there; GitHop never sees it.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/GitHop never saves your passphrase/)).toBeInTheDocument();
     await expectNoA11yViolations(container);
+    const field = screen.getByLabelText('Key passphrase');
+    const button = screen.getByRole('button', { name: 'Remember my passphrase' });
+    expect(button).toBeDisabled();
+    // Wrong passphrase: explained at the field, nothing remembered.
+    await user.type(field, 'wrong one');
+    await user.click(button);
+    expect(m.rememberPassphrase).toHaveBeenCalledWith('personal', 'wrong one');
+    expect(await screen.findByRole('alert')).toHaveTextContent('doesn’t unlock this key');
+    // Right passphrase: remembered, field cleared.
+    await user.clear(field);
+    await user.type(field, 'correct horse');
     await user.click(screen.getByRole('button', { name: 'Remember my passphrase' }));
-    expect(m.rememberPassphrase).toHaveBeenCalledWith('personal');
+    expect(m.rememberPassphrase).toHaveBeenLastCalledWith('personal', 'correct horse');
     expect(m.turnOnAgent).not.toHaveBeenCalled();
     expect(await screen.findByText('Passphrase remembered by Windows')).toBeInTheDocument();
     expect(
@@ -215,14 +228,25 @@ describe('Remember my passphrase', () => {
         'Windows’ ssh-agent, which remembers passphrases, is turned off. Turning it on needs one admin prompt.',
       ),
     ).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Key passphrase'), 'correct horse');
     await user.click(screen.getByRole('button', { name: 'Turn on and remember' }));
-    expect(m.turnOnAgent).toHaveBeenCalledWith('office');
+    expect(m.turnOnAgent).toHaveBeenCalledWith('office', 'correct horse');
     expect(
       await screen.findByText(
         'Windows didn’t turn on ssh-agent because the admin prompt was declined.',
       ),
     ).toBeInTheDocument();
     m.passphraseState.mockReset();
+  });
+
+  it('console fallback for keys the app can’t unlock', async () => {
+    m.passphraseState.mockResolvedValueOnce('asks-each-time');
+    m.rememberPassphrase.mockResolvedValueOnce('remembered');
+    const { user } = renderWith(<PassphraseStatus profileId="rsa" keyPath="C:/k/id_rsa" />);
+    await user.click(
+      await screen.findByRole('button', { name: 'Type it in a console window instead' }),
+    );
+    expect(m.rememberPassphrase).toHaveBeenCalledWith('rsa', undefined);
   });
 
   it('no passphrase: one muted line, no button; unknown: nothing', async () => {

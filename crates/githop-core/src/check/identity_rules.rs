@@ -374,6 +374,7 @@ mod tests {
             ssh_key: std::path::PathBuf::from("k"),
             owners: vec![],
             folders: vec![],
+            sign_commits: false,
         };
         let set = ProfileSet {
             version: 1,

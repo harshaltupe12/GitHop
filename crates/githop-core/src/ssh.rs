@@ -921,6 +921,9 @@ pub trait AgentHost {
     /// Elevated (UAC): set the service to start automatically and start it.
     /// `Ok(false)` when the prompt was declined.
     fn turn_on_service(&self) -> Result<bool>;
+    /// Send one agent-protocol request (an unlocked key, ADR 0007) to the
+    /// Windows ssh-agent over its local pipe. `Ok(true)` when it accepted.
+    fn send_agent_request(&self, request: &[u8]) -> Result<bool>;
 }
 
 /// `SHA256:<base64, no padding>` of a public key line (`type blob [comment]`). Pure.
@@ -1054,24 +1057,72 @@ pub fn turn_on_agent_and_remember(host: &dyn AgentHost, key: &Path) -> Result<Re
     if key.is_file() && key_encrypted(key) == Some(false) {
         return Ok(RememberOutcome::NoPassphrase);
     }
-    if host.service() != AgentStatus::Running {
-        if !host.turn_on_service()? {
-            return Ok(RememberOutcome::Cancelled);
-        }
-        // The service can take a moment to report RUNNING.
-        let mut running = false;
-        for _ in 0..20 {
-            if host.service() == AgentStatus::Running {
-                running = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
-        if !running {
-            return Ok(RememberOutcome::AgentOff);
-        }
+    if let Some(stopped) = ensure_agent_running(host)? {
+        return Ok(stopped);
     }
     remember_passphrase(host, key)
+}
+
+/// Start the agent if needed (one UAC prompt). `Some(outcome)` when it isn't
+/// running afterwards (prompt declined, or the service never came up).
+fn ensure_agent_running(host: &dyn AgentHost) -> Result<Option<RememberOutcome>> {
+    if host.service() == AgentStatus::Running {
+        return Ok(None);
+    }
+    if !host.turn_on_service()? {
+        return Ok(Some(RememberOutcome::Cancelled));
+    }
+    // The service can take a moment to report RUNNING.
+    for _ in 0..20 {
+        if host.service() == AgentStatus::Running {
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    Ok(Some(RememberOutcome::AgentOff))
+}
+
+/// In-app "Remember my passphrase" (ADR 0007): unlock `key` with the passphrase
+/// typed in GitHop and hand it to the Windows ssh-agent directly. The
+/// passphrase lives only in memory for this call. With `turn_on`, a stopped
+/// agent is started first (one UAC prompt); otherwise it reports `AgentOff`.
+///
+/// [`CoreError::WrongPassphrase`] when the passphrase doesn't match;
+/// [`CoreError::Key`] for a key type that needs the console flow instead.
+pub fn remember_with_passphrase(
+    host: &dyn AgentHost,
+    key: &Path,
+    passphrase: Option<&str>,
+    turn_on: bool,
+) -> Result<RememberOutcome> {
+    if !key.is_file() {
+        return Err(CoreError::io(
+            key,
+            io::Error::new(io::ErrorKind::NotFound, "the key file doesn't exist"),
+        ));
+    }
+    if key_encrypted(key) == Some(false) {
+        return Ok(RememberOutcome::NoPassphrase);
+    }
+    // Check the passphrase before any UAC prompt, so a typo never costs one.
+    let unlocked = crate::keyfile::unlock_ed25519(key, passphrase)?;
+    if turn_on {
+        if let Some(stopped) = ensure_agent_running(host)? {
+            return Ok(stopped);
+        }
+    } else if host.service() != AgentStatus::Running {
+        return Ok(RememberOutcome::AgentOff);
+    }
+    let accepted = host.send_agent_request(&crate::keyfile::agent_add_request(&unlocked))?;
+    let held = match (key_fingerprint(key), host.fingerprints()) {
+        (Some(fp), Some(list)) => list.contains(&fp),
+        _ => accepted,
+    };
+    Ok(if held {
+        RememberOutcome::Remembered
+    } else {
+        RememberOutcome::NotAdded
+    })
 }
 
 /// The real Windows ssh-agent (`sc`, Windows OpenSSH's `ssh-add`, UAC).
@@ -1143,6 +1194,10 @@ impl AgentHost for WindowsAgent {
         }
         let status = cmd.status().map_err(|e| CoreError::io(&exe, e))?;
         Ok(status.success())
+    }
+
+    fn send_agent_request(&self, request: &[u8]) -> Result<bool> {
+        crate::keyfile::agent_send(request)
     }
 
     fn turn_on_service(&self) -> Result<bool> {
@@ -1762,6 +1817,59 @@ mod tests {
             }
             Ok(self.accept_uac)
         }
+        fn send_agent_request(&self, request: &[u8]) -> Result<bool> {
+            assert_eq!(request[4], 17, "SSH2_AGENTC_ADD_IDENTITY");
+            self.added_calls.set(self.added_calls.get() + 1);
+            if self.add_ok {
+                self.held.borrow_mut().push(self.to_add.clone());
+            }
+            Ok(self.add_ok)
+        }
+    }
+
+    /// A real encrypted ed25519 key (in-app flow); returns (key, fingerprint).
+    fn real_key(dir: &Path, passphrase: &str) -> (PathBuf, String) {
+        let key = dir.join("githop_real");
+        let public = crate::keyfile::create_ed25519(&key, "t", Some(passphrase)).unwrap();
+        (key, public_key_fingerprint(&public).unwrap())
+    }
+
+    #[test]
+    fn in_app_remember_checks_the_passphrase_before_any_uac_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, fp) = real_key(dir.path(), "correct horse");
+        // Agent off, wrong passphrase: error, and no UAC prompt was shown.
+        let agent = FakeAgent::new(false, &fp);
+        assert!(matches!(
+            remember_with_passphrase(&agent, &key, Some("nope"), true),
+            Err(CoreError::WrongPassphrase)
+        ));
+        assert_eq!(agent.uac_calls.get(), 0);
+        // Right passphrase, agent off, not allowed to turn on: AgentOff.
+        assert_eq!(
+            remember_with_passphrase(&agent, &key, Some("correct horse"), false).unwrap(),
+            RememberOutcome::AgentOff
+        );
+        // Allowed to turn on: one UAC prompt, then remembered.
+        assert_eq!(
+            remember_with_passphrase(&agent, &key, Some("correct horse"), true).unwrap(),
+            RememberOutcome::Remembered
+        );
+        assert_eq!(agent.uac_calls.get(), 1);
+        assert_eq!(passphrase_state(&agent, &key), PassphraseState::Remembered);
+    }
+
+    #[test]
+    fn in_app_remember_of_a_key_without_passphrase_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("k");
+        crate::keyfile::create_ed25519(&key, "t", None).unwrap();
+        let agent = FakeAgent::new(true, "x");
+        assert_eq!(
+            remember_with_passphrase(&agent, &key, None, true).unwrap(),
+            RememberOutcome::NoPassphrase
+        );
+        assert_eq!(agent.added_calls.get(), 0);
     }
 
     /// An encrypted-looking OpenSSH key plus its `.pub`; returns (key, fingerprint).

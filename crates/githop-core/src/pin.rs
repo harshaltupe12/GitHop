@@ -26,6 +26,45 @@ pub const SAVED_KEYS: [&str; 3] = [
     "githop.saved-sshcommand",
 ];
 
+/// Keys GitHop writes for a profile that signs its commits (ADR 0008), in the
+/// repo (on pin) and globally (default profile).
+pub const SIGN_KEYS: [&str; 4] = [
+    "gpg.format",
+    "user.signingkey",
+    "commit.gpgsign",
+    "gpg.ssh.program",
+];
+
+/// Where `pin_repo` keeps the user's own value of each of [`SIGN_KEYS`].
+pub const SAVED_SIGN_KEYS: [&str; 4] = [
+    "githop.saved-gpgformat",
+    "githop.saved-signingkey",
+    "githop.saved-gpgsign",
+    "githop.saved-gpgsshprogram",
+];
+
+/// Marks that the [`SIGN_KEYS`] in this config file were written by GitHop.
+pub const SIGNING_MARK: &str = "githop.signing";
+
+/// Values for [`SIGN_KEYS`] (same order): SSH signing with the profile's key.
+///
+/// `gpg.ssh.program` is Windows' own `ssh-keygen` when present: like
+/// `core.sshCommand` (ADR 0006), only Windows OpenSSH talks to the Windows
+/// ssh-agent, so a remembered passphrase signs without a prompt (VS Code too).
+pub fn signing_values(profile: &Profile) -> [String; 4] {
+    let program = crate::ssh::windows_openssh_tool("ssh-keygen")
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|| "ssh-keygen".to_string());
+    let mut public = profile.ssh_key.as_os_str().to_owned();
+    public.push(".pub");
+    [
+        "ssh".to_string(),
+        public.to_string_lossy().replace('\\', "/"),
+        "true".to_string(),
+        program,
+    ]
+}
+
 /// `ssh -i "<key with forward slashes>" -o IdentitiesOnly=yes` (always quoted, C16).
 ///
 /// git runs `core.sshCommand` through `sh`, so inside the double quotes the
@@ -248,7 +287,43 @@ pub fn pin_repo(repo: &Repo, profile: &Profile) -> Result<()> {
         "core.sshCommand",
         &ssh_command_for(&profile.ssh_key),
     )?;
+    if profile.sign_commits {
+        sign_local(git, root, &local, profile)?;
+    } else if local.get(SIGNING_MARK).is_some() {
+        unsign_local(git, root, &local)?;
+    }
     Ok(())
+}
+
+/// Turn on SSH signing in the repo. The user's own values are saved once
+/// (like the identity keys) and come back with [`unsign_local`].
+fn sign_local(git: &Git, root: &Path, local: &ConfigSnapshot, profile: &Profile) -> Result<()> {
+    if local.get(SIGNING_MARK).is_none() {
+        for (key, saved) in SIGN_KEYS.iter().zip(SAVED_SIGN_KEYS) {
+            if let (Some(value), None) = (local.get(key), local.get(saved)) {
+                gitconfig::set_local(git, root, saved, value)?;
+            }
+        }
+        gitconfig::set_local(git, root, SIGNING_MARK, "true")?;
+    }
+    for (key, value) in SIGN_KEYS.iter().zip(signing_values(profile)) {
+        gitconfig::set_local(git, root, key, &value)?;
+    }
+    Ok(())
+}
+
+/// Undo [`sign_local`]: the user's own values back, GitHop's removed.
+fn unsign_local(git: &Git, root: &Path, local: &ConfigSnapshot) -> Result<()> {
+    for (key, saved) in SIGN_KEYS.iter().zip(SAVED_SIGN_KEYS) {
+        match local.get(saved) {
+            Some(value) => {
+                gitconfig::set_local(git, root, key, value)?;
+                gitconfig::unset_local(git, root, saved)?;
+            }
+            None => gitconfig::unset_local(git, root, key)?,
+        }
+    }
+    gitconfig::unset_local(git, root, SIGNING_MARK)
 }
 
 /// Remove the keys `pin_repo` set — only if `githop.profile` is present.
@@ -273,16 +348,34 @@ pub fn unpin_repo(repo: &Repo) -> Result<bool> {
             None => gitconfig::unset_local(git, root, key)?,
         }
     }
+    if local.get(SIGNING_MARK).is_some() {
+        unsign_local(git, root, &local)?;
+    }
     gitconfig::unset_local(git, root, PIN_KEY)?;
     Ok(true)
 }
 
-/// Set global `user.name`, `user.email`, `core.sshCommand` to `profile`.
+/// Set global `user.name`, `user.email`, `core.sshCommand` to `profile`, plus
+/// the [`SIGN_KEYS`] when it signs its commits. Switching to a profile that
+/// doesn't sign removes only signing keys GitHop wrote ([`SIGNING_MARK`]), so a
+/// user's own global signing setup is never touched. Wipe restores the
+/// originals from the backup (`wipe::MANAGED_GLOBAL_KEYS`).
 /// Caller is responsible for `backup::backup_global_gitconfig` first.
 pub fn set_default_profile_global(git: &Git, profile: &Profile) -> Result<()> {
     gitconfig::set_global(git, "user.name", &profile.name)?;
     gitconfig::set_global(git, "user.email", &profile.email)?;
     gitconfig::set_global(git, "core.sshCommand", &ssh_command_for(&profile.ssh_key))?;
+    if profile.sign_commits {
+        for (key, value) in SIGN_KEYS.iter().zip(signing_values(profile)) {
+            gitconfig::set_global(git, key, &value)?;
+        }
+        gitconfig::set_global(git, SIGNING_MARK, "true")?;
+    } else if gitconfig::get_global(git, SIGNING_MARK)?.is_some() {
+        for key in SIGN_KEYS {
+            gitconfig::unset_global(git, key)?;
+        }
+        gitconfig::unset_global(git, SIGNING_MARK)?;
+    }
     Ok(())
 }
 

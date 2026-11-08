@@ -45,7 +45,17 @@ use crate::ssh;
 use crate::store::Store;
 
 /// Global keys `githop use` writes; the fallback list when settings can't be read.
-pub const MANAGED_GLOBAL_KEYS: [&str; 3] = ["user.name", "user.email", "core.sshCommand"];
+/// Signing keys (ADR 0008) are included: absent originals are unset again on wipe.
+pub const MANAGED_GLOBAL_KEYS: [&str; 8] = [
+    "user.name",
+    "user.email",
+    "core.sshCommand",
+    "gpg.format",
+    "user.signingkey",
+    "commit.gpgsign",
+    "gpg.ssh.program",
+    "githop.signing",
+];
 
 /// Env var that skips the registry step (set by every test helper).
 pub const NO_REGISTRY_ENV: &str = "GITHOP_NO_REGISTRY";

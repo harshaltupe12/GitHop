@@ -37,6 +37,7 @@ fn profile(env: &TestEnv, id: &str, name: &str, email: &str, color: ProfileColor
             "{}/no-repos-here/{id}",
             env.home().to_string_lossy().replace('\\', "/")
         )],
+        sign_commits: false,
     }
 }
 

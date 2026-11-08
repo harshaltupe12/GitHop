@@ -316,6 +316,9 @@ struct BundleProfile {
     owners: Vec<String>,
     #[serde(default)]
     folders: Vec<String>,
+    /// Older exports don't have it: off.
+    #[serde(default)]
+    sign_commits: bool,
 }
 
 /// Settings subset carried by a bundle.
@@ -654,6 +657,7 @@ pub fn export_with_work_factor(
             ssh_key: name,
             owners: p.owners.clone(),
             folders: p.folders.clone(),
+            sign_commits: p.sign_commits,
         });
     }
 
@@ -930,6 +934,7 @@ fn to_profile(p: &BundleProfile, ssh_dir: &Path) -> Profile {
         ssh_key: PathBuf::from(to_slash(&ssh_dir.join(&p.ssh_key))),
         owners: p.owners.clone(),
         folders: p.folders.clone(),
+        sign_commits: p.sign_commits,
     };
     profile.normalize();
     profile

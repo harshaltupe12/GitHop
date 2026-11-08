@@ -132,6 +132,8 @@ impl From<CoreError> for IpcError {
             // Already a full user-facing sentence with the next step.
             CoreError::FixRefused(msg) => IpcError::new(ErrorCode::BadInput, msg),
             CoreError::NoDataDir => IpcError::new(ErrorCode::Internal, message),
+            CoreError::WrongPassphrase => IpcError::new(ErrorCode::BadInput, format!("{message}.")),
+            CoreError::Key(_) => IpcError::new(ErrorCode::BadInput, message),
         }
     }
 }
@@ -200,6 +202,8 @@ pub struct GeneratedKey {
     pub path: String,
     /// A GitHop key already existed at `path` and is used instead of a new one.
     pub reused: bool,
+    /// Whether the Windows ssh-agent now holds the key (no prompt on push).
+    pub remembered: githop_core::ssh::RememberOutcome,
 }
 
 /// About box.

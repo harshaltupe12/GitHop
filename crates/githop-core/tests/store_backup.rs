@@ -26,6 +26,7 @@ fn profiles() -> ProfileSet {
                 ssh_key: PathBuf::from("C:/Users/Me/.ssh/githop_office"),
                 owners: vec!["Office-Org".into()],
                 folders: vec![r"C:\Office Work".into()],
+                sign_commits: false,
             },
             Profile {
                 id: "personal".into(),
@@ -36,6 +37,7 @@ fn profiles() -> ProfileSet {
                 ssh_key: PathBuf::from("C:/Users/Me/.ssh/githop_personal"),
                 owners: vec!["jane-personal".into()],
                 folders: vec![],
+                sign_commits: false,
             },
         ],
     }

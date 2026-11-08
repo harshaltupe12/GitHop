@@ -89,18 +89,28 @@ export const setDefault = (id: string) => call<ProfileSet>('set_default', { id }
 // ---- Keys --------------------------------------------------------------------
 
 export const suggestKeyPath = (id: string) => call<string>('suggest_key_path', { id });
-export const generateKey = (id: string, email: string, noPassphrase: boolean) =>
-  call<GeneratedKey>('generate_key', { id, email, noPassphrase });
+/** Create (or reuse) the key and remember it; the passphrase is used once, in memory (ADR 0007). */
+export const generateKey = (
+  id: string,
+  email: string,
+  passphrase: string | null,
+  noPassphrase: boolean,
+) => call<GeneratedKey>('generate_key', { id, email, passphrase, noPassphrase });
 export const readPublicKey = (id: string) => call<string>('read_public_key', { id });
 /** Network (ssh -T) — only ever called from a user click. */
 export const testConnection = (id: string) => call<ConnectionTest>('test_connection', { id });
 /** Is the key's passphrase remembered by the Windows ssh-agent? (local only) */
 export const passphraseState = (id: string) => call<PassphraseState>('passphrase_state', { id });
-/** ssh-add in a visible console window; the passphrase is typed there, never here. */
-export const rememberPassphrase = (id: string) =>
-  call<RememberOutcome>('remember_passphrase', { id });
-/** One UAC prompt turns the ssh-agent service on, then ssh-add as above. */
-export const turnOnAgent = (id: string) => call<RememberOutcome>('turn_on_agent', { id });
+/**
+ * Remember the key in the Windows ssh-agent. With `passphrase` (typed in GitHop,
+ * ADR 0007) the backend unlocks the key in memory and never stores it; without
+ * it, ssh-add runs in a visible console window instead.
+ */
+export const rememberPassphrase = (id: string, passphrase?: string) =>
+  call<RememberOutcome>('remember_passphrase', { id, passphrase: passphrase ?? null });
+/** One UAC prompt turns the ssh-agent service on, then remembers as above. */
+export const turnOnAgent = (id: string, passphrase?: string) =>
+  call<RememberOutcome>('turn_on_agent', { id, passphrase: passphrase ?? null });
 
 // ---- Repos -------------------------------------------------------------------
 

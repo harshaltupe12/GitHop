@@ -119,6 +119,7 @@ pub fn run(ctx: &Ctx, args: InitArgs) -> Result<Exit> {
         ssh_key,
         owners: Vec::new(),
         folders: Vec::new(),
+        sign_commits: false,
     };
 
     // Regression D17: check everything before writing anything (no backup

@@ -135,6 +135,9 @@ pub fn diagnose(paths: &Paths, git: Option<&Git>, opts: &DoctorOptions) -> Docto
     let mut store = check_store(&mut r, paths);
     if let Some(store) = &store {
         check_profiles(&mut r, store.profiles());
+        if let Some(git) = git {
+            check_signing_git(&mut r, git, &cwd, store.profiles());
+        }
         check_backups(&mut r, store);
     }
 
@@ -357,6 +360,48 @@ fn check_store(r: &mut DoctorReport, paths: &Paths) -> Option<Store> {
             );
             None
         }
+    }
+}
+
+/// Git version needed for SSH commit signing (`gpg.format = ssh`, ADR 0008).
+pub const MIN_GIT_SSH_SIGNING: (u32, u32) = (2, 34);
+
+/// Only when a profile signs its commits: is this git new enough to sign with SSH?
+fn check_signing_git(r: &mut DoctorReport, git: &Git, cwd: &Path, set: &ProfileSet) {
+    let signers: Vec<&str> = set
+        .profiles
+        .iter()
+        .filter(|p| p.sign_commits)
+        .map(|p| p.label.as_str())
+        .collect();
+    if signers.is_empty() {
+        return;
+    }
+    let version = git
+        .run_text(cwd, &["--version"])
+        .ok()
+        .as_deref()
+        .and_then(parse_git_version);
+    match version {
+        Some((maj, min, _)) if (maj, min) < MIN_GIT_SSH_SIGNING => r.add(
+            "signing-git",
+            CheckStatus::Problem,
+            "Commit signing",
+            format!(
+                "{} {} commits, but git {maj}.{min} can't sign with SSH keys. It needs {}.{} or newer.",
+                signers.join(", "),
+                if signers.len() == 1 { "signs its" } else { "sign their" },
+                MIN_GIT_SSH_SIGNING.0,
+                MIN_GIT_SSH_SIGNING.1
+            ),
+            Some("Update Git for Windows."),
+        ),
+        Some(_) => r.ok(
+            "signing-git",
+            "Commit signing",
+            format!("Commits from {} are signed with SSH.", signers.join(", ")),
+        ),
+        None => {}
     }
 }
 

@@ -265,6 +265,7 @@ mod tests {
             ssh_key: format!("C:/k/{id}").into(),
             owners: owners.iter().map(|o| o.to_string()).collect(),
             folders: vec![],
+            sign_commits: false,
         }
     }
 

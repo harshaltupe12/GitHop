@@ -62,6 +62,7 @@ fn profile(env: &TestEnv, id: &str, email: &str, color: ProfileColor, owner: &st
         ssh_key: PathBuf::from(slash(&ssh_dir(env).join(format!("githop_{id}")))),
         owners: vec![owner.into()],
         folders: vec![format!("C:/{id} work/")],
+        sign_commits: false,
     }
 }
 

@@ -159,6 +159,9 @@ Your identities as cards: colour, label, email, owners, folders and key at a gla
 - **SSH key panel:** **Generate key**, **Use existing key file**, **Copy public key**,
   **Open GitHub SSH settings**, **Test connection** (shows
   *"✓ Connected to GitHub as …"* right on the card) and **Remember my passphrase**.
+- The passphrase is typed in the form; the key is remembered by Windows' SSH agent
+  as soon as it's created. **Sign my commits** gives a profile's commits GitHub's
+  Verified badge.
 - Warns you if a key belongs to a different GitHub account than the profile owns.
 - **Make default**, **Test connection** and **Delete** from each card's menu.
 
@@ -258,28 +261,38 @@ personal noreply email, and your personal GitHub username under **Owns**.
 
 ### Step 4 · Create the SSH key
 
-In each profile's **SSH key** section, click **Generate key**.
+In each profile's **SSH key** section:
 
-- A console window opens and asks for a **passphrase**. Type one you'll remember
-  (for example three random words plus a number, like `Mango-Rocket-Window-42`, but
-  your own) and press Enter twice. GitHop never sees or stores it.
-- The public key appears in the profile (`ssh-ed25519 AAAA… you@example.com`).
+1. Type a **passphrase** twice, right in the form. Pick one you'll remember (for
+   example three random words plus a number, like `Mango-Rocket-Window-42`, but
+   your own).
+2. Click **Generate key**.
+
+GitHop creates the key and hands it to Windows' SSH agent in the same step, so
+**pushes from the terminal and VS Code never ask for the passphrase**. Your
+passphrase is used once in memory and never saved. If the agent is off, Windows
+shows one admin prompt to turn it on. The public key then appears in the profile
+(`ssh-ed25519 AAAA… you@example.com`).
 
 ### Step 5 · Add the key to the right GitHub account
 
-1. Click **Copy public key**, then **Open GitHub SSH settings**.
+The app walks you through it under **Add this key to GitHub**:
+
+1. Click **Copy public key**, then **Open GitHub SSH settings** (it opens GitHub's
+   "Add new SSH key" page).
 2. Check you're signed in to the **right account** (avatar, top right).
-3. Click **New SSH key**. Title: `GitHop on my PC`. Key type: **Authentication Key**. Paste the key and click **Add SSH key**.
+3. Title: `GitHop (Work)` (there's a **Copy** button). Key type: **Authentication Key**. Paste the key and click **Add SSH key**.
 4. Back in GitHop, click **Test connection**. You should see
    **✓ Connected to GitHub as your-username**.
 
 Repeat for the other profile with the other GitHub account.
 
-### Step 6 · Remember the passphrase (once)
+### Step 6 · Optional: signed commits (Verified badge)
 
-Click **Remember my passphrase** in each profile. Windows' SSH agent keeps it, so
-**pushes from the terminal and VS Code never ask again**. If the agent is off,
-the button says **Turn on and remember** and shows one Windows admin prompt.
+Tick **Sign my commits** in a profile and GitHub shows its commits as
+**Verified**. The app adds one more step: add the same public key on GitHub a
+second time, with Key type **Signing Key**. It uses the profile's SSH key, so
+there's nothing new to manage (needs Git 2.34 or newer).
 
 ### Step 7 · Connect your existing repos
 
@@ -383,10 +396,11 @@ and installs the hooks. Running it again is safe: it repairs the hooks.
 #### Manage profiles: `add`, `edit`, `remove`
 
 ```powershell
-githop add --id personal --label Personal --name "Jane Doe" --email "…" --owner janedoe [--folder C:\Personal] [--color violet] [--key <path>]
+githop add --id personal --label Personal --name "Jane Doe" --email "…" --owner janedoe [--folder C:\Personal] [--color violet] [--key <path>] [--sign]
 githop edit work --owner acme-corp --owner acme-labs       # replace owners (repeatable)
 githop edit work --email new@company.com --repin           # re-pin repos using this profile
 githop edit work --no-owners                               # clear owners (also --no-folders)
+githop edit work --sign                                    # sign commits (Verified on GitHub); --no-sign to stop
 githop remove personal [--new-default work] [-y]
 ```
 
@@ -540,8 +554,10 @@ key → Open GitHub SSH settings**, add it to the **right account**, then click 
 
 #### Asked for the passphrase on every push, or VS Code push hangs
 
-Click **Remember my passphrase** in the profile. VS Code can't show a passphrase
-prompt; with the passphrase in Windows' SSH agent it doesn't need to.
+VS Code can't show a passphrase prompt, so its push fails (sometimes with
+`Git: CreateProcessW failed error:193`). Open the profile, type the key's
+passphrase under **Remember my passphrase** and click the button. With the key in
+Windows' SSH agent, nothing needs to ask.
 
 #### "push blocked: N commits use the Work email in a Personal repo"
 

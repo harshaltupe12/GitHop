@@ -73,6 +73,14 @@ pub enum CoreError {
     /// complete, user-facing sentence with the next step (Design §9).
     #[error("{0}")]
     FixRefused(String),
+
+    /// The passphrase typed in GitHop doesn't unlock the SSH key.
+    #[error("That passphrase doesn't unlock this key. Check it and try again")]
+    WrongPassphrase,
+
+    /// An SSH key couldn't be created or read in the app (format, key type).
+    #[error("SSH key: {0}")]
+    Key(String),
 }
 
 /// First non-empty line of a (possibly multi-line) parser message, trimmed.
