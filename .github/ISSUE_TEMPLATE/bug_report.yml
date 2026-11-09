@@ -1,0 +1,57 @@
+name: Bug report
+description: Something in GitHop doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please don't include personal emails, tokens or private repo names.
+        For security problems, use **Security → Report a vulnerability** instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: I clicked Pin all on the Repos screen and…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open GitHop
+        2. Go to …
+        3. Click …
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `githop doctor`
+      description: Run it in a terminal (or Settings → Run doctor) and paste the result.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: GitHop version
+      description: Settings → About, or `githop --version`
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows and Git versions
+      placeholder: Windows 11 24H2, git 2.47.0.windows.1
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it happen?
+      multiple: true
+      options:
+        - The app (tray or main window)
+        - A git commit or push (hooks)
+        - The command line (githop.exe)
+        - VS Code or another editor
+        - Installer or uninstaller

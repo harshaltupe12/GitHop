@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an idea that would make GitHop more useful
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Tell us about the situation. What's hard or annoying today?
+      placeholder: I use GitLab for a client, and…
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like GitHop to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you've tried instead?
+  - type: checkboxes
+    id: offline
+    attributes:
+      label: GitHop's promises
+      options:
+        - label: This idea works without GitHop making network requests or storing secrets.
