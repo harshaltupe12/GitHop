@@ -427,3 +427,10 @@ html.tray body {
     background-color: CanvasText;
   }
 }
+
+/* WebView2 (Edge) adds its own eye button to password fields; GitHop's
+   PasswordInput already has a show/hide button, so hide Edge's. */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}

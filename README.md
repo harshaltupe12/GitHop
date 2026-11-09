@@ -28,7 +28,11 @@
 </p>
 
 <p align="center">
-  <img alt="GitHop Profiles screen with Work, Personal and Client profiles" src="docs/images/githop-profiles.png" width="820">
+  <img alt="A commit with the wrong email is blocked by GitHop, the repo is pinned to the right profile, and the next commit goes through" src="media/githop-demo.gif" width="820">
+</p>
+
+<p align="center">
+  <a href="media/githop-overview.mp4"><b>▶ Watch the 2-minute overview (with voice-over)</b></a>
 </p>
 
 ---
@@ -153,6 +157,10 @@ A short guided setup (six steps) that you can leave and resume:
 ### 👤 Profiles
 
 Your identities as cards: colour, label, email, owners, folders and key at a glance.
+
+<p align="center">
+  <img alt="GitHop Profiles screen with Work, Personal and Client profiles" src="docs/images/githop-profiles.png" width="820">
+</p>
 
 - **Add profile** and **Edit** open a clear form. Required fields are marked, and
   mistakes are explained right under the field.
