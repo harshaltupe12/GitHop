@@ -2488,7 +2488,7 @@ SOFTWARE.
 
 #### MIT License
 
-Used by: `githop-cli 0.1.0`, `githop-core 0.1.0`, `age-core 0.11.0`, `age 0.11.5`, `bech32 0.9.1`, `cookie-factory 0.3.3`, `fluent-langneg 0.13.1`, `intl_pluralrules 7.0.2`, `io_tee 0.1.1`, `type-map 0.5.1`, `windows-link 0.2.1`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows_x86_64_msvc 0.52.6`
+Used by: `githop-cli 0.1.1`, `githop-core 0.1.1`, `age-core 0.11.0`, `age 0.11.5`, `bech32 0.9.1`, `cookie-factory 0.3.3`, `fluent-langneg 0.13.1`, `intl_pluralrules 7.0.2`, `io_tee 0.1.1`, `type-map 0.5.1`, `windows-link 0.2.1`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows_x86_64_msvc 0.52.6`
 
 <details><summary>Licence text</summary>
 

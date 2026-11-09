@@ -4,7 +4,36 @@ All notable changes to GitHop are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and GitHop uses
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — Unreleased
+## [0.1.1] - 2026-11-09
+
+First public release. Everything in 0.1.0 below, plus:
+
+### Added
+- **SSH keys in one step:** type the key's passphrase in the app; GitHop creates
+  the key and hands it to the Windows ssh-agent, so pushes from VS Code and the
+  terminal never ask (ADR 0007). "Remember my passphrase" uses the same in-app
+  field, with a console fallback for other key types.
+- **Guided "Add this key to GitHub" steps** after a key is created, with a direct
+  link to GitHub's "Add new SSH key" page.
+- **Signed commits:** "Sign my commits" per profile for GitHub's Verified badge
+  (`githop add --sign`, `githop edit --sign/--no-sign`, ADR 0008).
+- Brand-coloured title bar.
+
+### Changed
+- Wording for any number of identities (work, personal, clients, open source);
+  the first profile's label is suggested from the email domain.
+- The noreply tip appears for any public email address, and not again on a saved
+  profile whose email is unchanged.
+- Generate key works before a profile is saved, and reuses a GitHop key kept
+  from an earlier install.
+
+### Fixed
+- The elevated ssh-agent command uses absolute system paths only.
+- The diagnostics file hides your Windows user name.
+- Uninstall also removes GitHop's HTTPS-to-SSH notes from repos.
+- Password fields no longer show two eye buttons.
+
+## [0.1.0] - not published (internal)
 
 First release. Windows only, GitHub only, SSH keys only.
 

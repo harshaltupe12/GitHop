@@ -1,7 +1,7 @@
 {
   "name": "githop-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "GitHop tray app: Tauri CLI scripts. The UI lives in ui/.",
   "scripts": {
     "tauri": "tauri",
